@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from engine.ratios import RatioSnapshot
 from engine.scenarios import run_scenarios
 from engine.valuation import DCFResult
 
@@ -49,6 +50,7 @@ class MemoInput:
     deviation_vs_market: Optional[float] = None
     deviation_vs_consensus: Optional[float] = None
     warnings_raised: list[str] = field(default_factory=list)
+    ratios: Optional[dict] = None
 
 
 CONSERVATIVE_SCENARIO_NAME = "Conservador (reversión a la media)"
@@ -70,9 +72,15 @@ def build_memo_input(ticker: str, wacc: float, terminal_growth_rate: float,
                       scenario_results: dict[str, DCFResult], key_assumptions: dict,
                       company_name: Optional[str] = None, market_price: Optional[float] = None,
                       analyst_target_price: Optional[float] = None,
-                      warnings_raised: Optional[list[str]] = None) -> MemoInput:
+                      warnings_raised: Optional[list[str]] = None,
+                      ratios: Optional[RatioSnapshot] = None) -> MemoInput:
     """Ensambla el MemoInput. La desviación vs. mercado/consenso se mide
-    sobre el escenario conservador (el valor por defecto del motor)."""
+    sobre el escenario conservador (el valor por defecto del motor).
+
+    ratios: snapshot de engine.ratios.latest_ratio_snapshot() (ROE,
+    ROIC vs. WACC, Debt/EBITDA, cobertura de intereses, current ratio) —
+    opcional, da al memo contexto de rentabilidad/apalancamiento además
+    del precio objetivo. Si se omite, el prompt no lo menciona."""
     base_result = scenario_results.get(CONSERVATIVE_SCENARIO_NAME)
     base_price = base_result.implied_share_price if base_result else None
 
@@ -84,12 +92,31 @@ def build_memo_input(ticker: str, wacc: float, terminal_growth_rate: float,
         for name, result in scenario_results.items()
     ]
 
+    ratios_dict = None
+    if ratios is not None:
+        # interest_coverage puede ser float("inf") (empresa sin deuda) --
+        # json.dumps() lo serializaría como el token "Infinity", inválido
+        # en JSON estricto (RFC 8259). Se representa como texto explícito.
+        interest_coverage = ("sin deuda (cobertura infinita)"
+                              if ratios.interest_coverage == float("inf")
+                              else ratios.interest_coverage)
+        ratios_dict = {
+            "fiscal_year": ratios.fiscal_year,
+            "roe": ratios.roe,
+            "roic": ratios.roic,
+            "crea_valor_roic_mayor_que_wacc": bool(ratios.creates_value),
+            "debt_to_ebitda": ratios.debt_to_ebitda,
+            "interest_coverage": interest_coverage,
+            "current_ratio": ratios.current_ratio,
+        }
+
     return MemoInput(
         ticker=ticker, company_name=company_name, wacc=wacc,
         terminal_growth_rate=terminal_growth_rate, scenarios=scenarios,
         key_assumptions=key_assumptions, market_price=market_price,
         analyst_target_price=analyst_target_price, deviation_vs_market=dev_market,
         deviation_vs_consensus=dev_consensus, warnings_raised=warnings_raised or [],
+        ratios=ratios_dict,
     )
 
 
@@ -112,6 +139,7 @@ def build_prompt(memo_input: MemoInput) -> tuple[str, str]:
         "desviacion_vs_consenso_escenario_conservador": memo_input.deviation_vs_consensus,
         "avisos_tecnicos_del_modelo": memo_input.warnings_raised,
         "supuestos_clave_de_proyeccion": memo_input.key_assumptions,
+        "ratios_financieros": memo_input.ratios,
     }
     user_prompt = (
         "Redacta el Investment Memo para el siguiente paquete de datos. "

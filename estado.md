@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-05 (sesión 12)
+**Última actualización:** 2026-09-05 (sesión 13)
 
 ---
 
@@ -590,37 +590,73 @@ Nuevo test de regresión con CAGR sintético del 21% (lejos de cualquier
 tasa terminal, para que no pueda pasar por coincidencia). 88 tests en
 total, todos en verde.
 
+### Detalle sesión 13 — comprobación del fade de margen/CapEx + `ratios.py` conectado
+
+Dos piezas, siguiendo el mismo estándar de rigor de la sesión anterior:
+
+**1. Comprobación (no asumida) de si el fade lineal es correcto también
+para margen/D&A/CapEx.** Regresión lineal sobre las series reales del
+Excel: margen EBIT R²=0.978, D&A R²=0.982 (el fade lineal es una réplica
+excelente de cómo el analista los modela — sin bug), CapEx R²=0.625
+(ajuste mediocre, pero rango tan estrecho en el Excel de 2024 que el
+impacto es bajo, y no comparable con el CapEx real de hoy que refleja el
+supercycle de IA). Conclusión: sin cambios, comprobado y descartado, no
+pendiente. Detalle en `docs/METHODOLOGY.md` sección 14.
+
+**2. `engine/ratios.py` conectado al memo y a la interfaz** (ya no
+huérfano). Nuevo `RatioSnapshot` + `compute_ratio_snapshot()` +
+`latest_ratio_snapshot()`. `ai/memo_generator.py` acepta `ratios`
+opcional; el prompt de sistema añade una sección "Rentabilidad y
+Solvencia" que se omite si no hay ratios. `app/streamlit_app.py` muestra
+ROE, ROIC vs. WACC, Debt/EBITDA, cobertura de intereses y current ratio.
+
+**Guarda añadida** (mismo patrón que el spread WACC-g): `roic()` avisa
+si el capital invertido es `<=0` (equity negativo por recompras
+agresivas) — no observado en los 8 tickers piloto, pero es un caso real.
+
+**Dos bugs de serialización JSON encontrados al conectar esto a un
+payload real por primera vez** (nunca se había hecho): `creates_value`
+es `np.bool_`, que sin cuidado se serializaba como la CADENA `"True"` en
+vez del booleano JSON `true` — corregido con `bool()` explícito.
+`interest_coverage=inf` (empresa sin deuda) generaba el token `Infinity`,
+inválido en JSON estricto — corregido representándolo como texto. Ninguno
+de los dos rompía nada visible; se encontraron verificando de punta a
+punta con datos reales de AMZN antes de dar la integración por cerrada.
+
+10 tests nuevos (96 en total, todos en verde). `comps.py` sigue sin
+conectar — candidato claro para la próxima sesión.
+
 ## 5. Próximo paso inmediato
 
-El motor está validado en ocho capas independientes: fórmulas exactas
+El motor está validado en nueve capas independientes: fórmulas exactas
 contra Excel, datos exactos contra Excel, comportamiento sistemático en
 growth/maduras, dos mecanismos de desviación identificados, un bug real
-de datos corregido, y ahora la forma del fade de crecimiento alineada
-con el propio modelo de referencia. Opciones para la próxima sesión, de
-más a menos prioritaria:
+de datos corregido, la forma del fade de crecimiento alineada con el
+modelo de referencia (y la de margen/D&A/CapEx verificada como ya
+correcta), y ahora ratios de rentabilidad/apalancamiento conectados de
+punta a punta. Opciones para la próxima sesión, de más a menos
+prioritaria:
 
-1. **Conectar `ratios.py` y `comps.py` al resto del pipeline** — hoy son
-   módulos correctos y ya validados con datos reales, pero huérfanos: no
-   aparecen ni en el memo ni en la interfaz.
+1. **Conectar `comps.py`** — tabla de comparables real en la interfaz
+   (múltiplos EV/EBITDA de los peers ya cargados) y usarla como múltiplo
+   de salida real en vez de la constante puntual `snap["ev_to_ebitda"]"
+   usada hasta ahora (el propio múltiplo de la empresa, no el de sus
+   comparables).
 2. **Auditoría de campos similares** al bug de `interest_expense`:
-   revisar si `ebit`, `d_and_a` o `capex` tienen el mismo patrón (cero
-   espurio en el año más reciente) en algún ticker del universo.
-3. **Revisar si el margen/CapEx también deberían tener una forma de
-   fade distinta** tras el hallazgo de esta sesión — el Excel SÍ mueve
-   el margen dentro del horizonte explícito (no lo mantiene plano), así
-   que el fade lineal actual para márgenes puede que ya esté bien
-   alineado; merece una comprobación explícita, no asumirlo.
-4. **Validación visual de la interfaz** en una sesión con navegador
+   revisar `ebit`, `d_and_a`, `capex` por el mismo patrón (cero espurio
+   en el año más reciente) en algún ticker del universo.
+3. **Validación visual de la interfaz** en una sesión con navegador
    disponible — pospuesto explícitamente hasta que lo matemático/técnico
    esté impecable.
-5. Cuando se decida dar el paso a la API de pago: añadir
-   `ANTHROPIC_API_KEY` y probar `generate_memo()` en vivo.
-6. Fase 8 (despliegue) — sin remoto configurado, decisión pendiente del
+4. Cuando se decida dar el paso a la API de pago: añadir
+   `ANTHROPIC_API_KEY` y probar `generate_memo()` en vivo (ahora con
+   ratios incluidos en el memo).
+5. Fase 8 (despliegue) — sin remoto configurado, decisión pendiente del
    usuario.
 
 **Principio de fondo que sigue aplicando:** cualquier UI debe mostrar el
-número junto a su explicación (supuestos, mecanismo de desviación
-detectado, rango de escenarios), nunca el número solo — ya implementado
-en `app/streamlit_app.py`. Y ahora también: no dar por válido un
-resultado agregado solo porque "parece razonable" — auditar inputs
-individuales, como reveló el bug de `interest_expense`.
+número junto a su explicación, nunca el número solo. Y: no dar por
+válido un resultado agregado solo porque "parece razonable" — auditar
+inputs individuales (reveló el bug de `interest_expense`) y verificar
+con datos reales antes de dar una pieza por terminada (reveló los dos
+bugs de serialización JSON de esta sesión).

@@ -764,3 +764,94 @@ verifica que el crecimiento sale plano e idéntico en todos los años del
 horizonte, sobre un histórico sintético con CAGR sostenido del 21% —
 lejos de cualquier tasa terminal razonable, para que el test no pueda
 pasar por coincidencia. 88 tests en total, todos en verde.
+
+### Comprobación adicional: ¿el fade lineal es la forma correcta para margen/D&A/CapEx?
+
+El fix de crecimiento generó la duda obvia: si la forma del fade estaba
+mal para crecimiento, ¿también lo está para el resto de drivers? Se
+comprobó con evidencia, no se asumió. Ajuste de regresión lineal sobre
+las series reales del Excel (2024-2029, 6 puntos cada una):
+
+| Driver | Pendiente (pp/año) | R² | Deltas año a año |
+|---|---|---|---|
+| Margen EBIT | 1.06 | **0.978** | 1.2, 1.5, 1.1, 0.7, 0.7 |
+| D&A % ventas | 0.23 | **0.982** | 0.3, 0.2, 0.1, 0.3, 0.3 |
+| CapEx % ventas | 0.22 | 0.625 | -0.3, -0.2, +0.8, +0.2, +0.4 |
+
+**Margen y D&A: el fade lineal es una réplica excelente** (R²>0.97) de
+cómo el analista los modela dentro del horizonte explícito — a
+diferencia del crecimiento, aquí SÍ hay una evolución gradual real
+dentro de la ventana, no un valor plano. Confirma que `_margin_fade_from_recent_to_average()`
+usa la forma correcta para estos dos drivers; la única diferencia real
+que queda (dirección: reversión a la media vs. continuación de
+tendencia) es la ya documentada en las secciones 5-7, una postura de
+modelado deliberada, no una forma de curva equivocada.
+
+**CapEx: ajuste mediocre (R²=0.625)** — el patrón real del Excel es un
+valle seguido de recuperación, no una línea recta. No se traduce en un
+fix por dos razones: (a) el rango es muy estrecho (11.6%-13.0%, 1.4pp),
+así que el impacto práctico de acertar la forma exacta es pequeño; (b)
+el CapEx *real* de AMZN hoy (18.4%→13.5% en nuestros datos de 2026)
+refleja el supercycle de inversión en IA, un régimen que el Excel de
+nov-2024 no podía conocer — no es una base comparable para validar o
+invalidar la forma de nuestro fade actual. Sin cambios; anotado como
+comprobado y descartado, no como pendiente.
+
+## 15. `engine/ratios.py` conectado al pipeline (memo + interfaz)
+
+Desde la Fase 3, `ratios.py` y `comps.py` existían testeados pero
+huérfanos — nadie los llamaba fuera de sus propios tests. `ratios.py`
+ya se conectó:
+
+- `engine/ratios.py`: nueva `RatioSnapshot` + `compute_ratio_snapshot(row, wacc)`
+  (función pura, como el resto del módulo) + `latest_ratio_snapshot(history, wacc)`
+  (selecciona el último año con todos los campos necesarios vía
+  `dropna`, única función del módulo que sí toma un DataFrame, por
+  conveniencia de quien la llama).
+- `ai/memo_generator.py`: `build_memo_input()` acepta un `ratios: Optional[RatioSnapshot]`
+  opcional; si se pasa, `MemoInput.ratios` lo expone como dict en el
+  payload del prompt. `ai/prompts/investment_memo_system.md` añade una
+  sección "Rentabilidad y Solvencia" (ROE, ROIC vs. WACC, apalancamiento,
+  liquidez) que el LLM debe omitir por completo si `ratios_financieros`
+  es `null`, no dejarla vacía.
+- `app/streamlit_app.py`: nueva sección con `st.metric` para ROE, ROIC
+  vs. WACC (con etiqueta "Crea valor"/"No crea valor"), Debt/EBITDA,
+  cobertura de intereses y current ratio, justo después de la tabla de
+  supuestos. El mismo `RatioSnapshot` se pasa también al memo.
+
+**Guarda añadida durante la integración** (mismo patrón que
+`MIN_PRUDENT_WACC_GROWTH_SPREAD`): `roic()` ahora emite un `warnings.warn`
+si el capital invertido es `<= 0` (equity contable negativo por
+recompras agresivas — no observado en los 8 tickers piloto, pero es un
+caso real conocido en otras compañías). No bloquea el cálculo, solo
+avisa de que el resultado no es comparable de la forma habitual.
+
+**Dos bugs de serialización JSON encontrados y corregidos al conectar
+ratios.py a un payload JSON real (nunca se había serializado a JSON
+antes de esta sesión):**
+
+1. `creates_value` es `np.bool_` (resultado de una comparación numpy),
+   no un `bool` nativo de Python. `json.dumps()` no lo serializa sin la
+   salvaguarda `default=str` del código — y con ella, lo convertía en
+   la CADENA `"True"` en vez del booleano JSON `true`. Corregido con
+   `bool(ratios.creates_value)` explícito antes de meterlo en el
+   payload.
+2. `interest_coverage` puede ser `float("inf")` (empresa sin deuda,
+   caso legítimo). `json.dumps(float("inf"))` produce el token
+   `Infinity`, no válido en JSON estricto (RFC 8259) aunque el propio
+   parser de Python lo acepte al releerlo (por eso un test que solo
+   hiciera `json.loads()` no habría detectado el problema — el test de
+   regresión comprueba directamente que la subcadena `"Infinity"` no
+   aparece en el texto crudo). Corregido representándolo como el texto
+   `"sin deuda (cobertura infinita)"`.
+
+Ninguno de los dos bugs rompía nada de forma visible (el memo generado
+a mano en esta sesión no pasó por este código) — se encontraron al
+verificar de punta a punta con datos reales antes de dar la integración
+por terminada, no por casualidad.
+
+6 tests nuevos en `test_ratios.py` (12 en total) + 4 en
+`test_memo_generator.py` (12 en total). 96 tests en el proyecto, todos
+en verde. `comps.py` sigue sin conectar — candidato para una próxima
+sesión (tabla de comparables en la interfaz, múltiplo de salida real en
+vez de las constantes puntuales usadas hasta ahora).

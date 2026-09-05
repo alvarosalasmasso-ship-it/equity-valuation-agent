@@ -4,6 +4,7 @@ build_prompt son funciones puras sobre datos ya calculados."""
 
 import json
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -106,6 +107,71 @@ def test_build_memo_input_handles_missing_market_data():
     )
     assert memo_input.deviation_vs_market is None
     assert memo_input.deviation_vs_consensus is None
+    assert memo_input.ratios is None
+
+
+def test_build_memo_input_includes_ratios_when_provided():
+    from engine.ratios import RatioSnapshot
+
+    snapshot = RatioSnapshot(
+        fiscal_year=2025, net_margin=0.1, asset_turnover=0.5, equity_multiplier=4.0,
+        roe=0.20, roic=0.15, creates_value=True, debt_to_ebitda=1.5,
+        interest_coverage=7.5, current_ratio=1.5,
+    )
+    memo_input = build_memo_input(
+        ticker="TEST", wacc=0.08, terminal_growth_rate=0.025,
+        scenario_results=_sample_scenario_results(), key_assumptions={}, ratios=snapshot,
+    )
+    assert memo_input.ratios == {
+        "fiscal_year": 2025, "roe": 0.20, "roic": 0.15,
+        "crea_valor_roic_mayor_que_wacc": True, "debt_to_ebitda": 1.5,
+        "interest_coverage": 7.5, "current_ratio": 1.5,
+    }
+    assert type(memo_input.ratios["crea_valor_roic_mayor_que_wacc"]) is bool
+
+
+def test_build_memo_input_converts_numpy_bool_to_native_bool():
+    """Regresión: engine.ratios.creates_value() puede devolver np.bool_
+    (de una comparación numpy), que json.dumps() no serializa sin la
+    salvaguarda default=str -- y con ella lo convertiría en la CADENA
+    "True" en vez del booleano JSON true. Debe quedar como bool nativo."""
+    from engine.ratios import RatioSnapshot
+
+    snapshot = RatioSnapshot(
+        fiscal_year=2025, net_margin=0.1, asset_turnover=0.5, equity_multiplier=4.0,
+        roe=0.20, roic=0.15, creates_value=np.True_, debt_to_ebitda=1.5,
+        interest_coverage=7.5, current_ratio=1.5,
+    )
+    memo_input = build_memo_input(
+        ticker="TEST", wacc=0.08, terminal_growth_rate=0.025,
+        scenario_results=_sample_scenario_results(), key_assumptions={}, ratios=snapshot,
+    )
+    assert memo_input.ratios["crea_valor_roic_mayor_que_wacc"] is True
+
+
+def test_build_memo_input_represents_infinite_interest_coverage_as_text():
+    """Regresión: interest_coverage=inf (empresa sin deuda) rota JSON
+    estricto si se serializa tal cual (json.dumps produce el token no
+    estándar 'Infinity', inválido según RFC 8259)."""
+    from engine.ratios import RatioSnapshot
+
+    snapshot = RatioSnapshot(
+        fiscal_year=2025, net_margin=0.1, asset_turnover=0.5, equity_multiplier=4.0,
+        roe=0.20, roic=0.15, creates_value=True, debt_to_ebitda=0.0,
+        interest_coverage=float("inf"), current_ratio=1.5,
+    )
+    memo_input = build_memo_input(
+        ticker="TEST", wacc=0.08, terminal_growth_rate=0.025,
+        scenario_results=_sample_scenario_results(), key_assumptions={}, ratios=snapshot,
+    )
+    assert memo_input.ratios["interest_coverage"] == "sin deuda (cobertura infinita)"
+
+    _, user_prompt = build_prompt(memo_input)
+    json_start = user_prompt.index("{")
+    raw_json = user_prompt[json_start:]
+    payload = json.loads(raw_json)  # Python acepta "Infinity" al leer (no es prueba suficiente)
+    assert payload["ratios_financieros"]["interest_coverage"] == "sin deuda (cobertura infinita)"
+    assert "Infinity" not in raw_json  # la prueba real: el token no estándar no debe aparecer
 
 
 # --- build_prompt -------------------------------------------------------------

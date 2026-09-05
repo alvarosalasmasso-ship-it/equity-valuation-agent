@@ -196,6 +196,27 @@ assumptions_df = pd.DataFrame([
 ])
 st.dataframe(assumptions_df, hide_index=True, use_container_width=True)
 
+# --- Ratios financieros --------------------------------------------------------
+
+from engine.ratios import latest_ratio_snapshot
+
+st.subheader("Ratios financieros (último ejercicio disponible)")
+try:
+    ratio_snapshot = latest_ratio_snapshot(hist, wacc_value)
+    ratio_cols = st.columns(5)
+    ratio_cols[0].metric("ROE", f"{ratio_snapshot.roe*100:.1f}%")
+    ratio_cols[1].metric("ROIC vs. WACC",
+                          f"{ratio_snapshot.roic*100:.1f}%",
+                          "Crea valor" if ratio_snapshot.creates_value else "No crea valor")
+    ratio_cols[2].metric("Debt/EBITDA", f"{ratio_snapshot.debt_to_ebitda:.2f}x")
+    ratio_cols[3].metric("Cobertura de intereses",
+                          f"{ratio_snapshot.interest_coverage:.1f}x" if ratio_snapshot.interest_coverage != float("inf") else "∞")
+    ratio_cols[4].metric("Current ratio", f"{ratio_snapshot.current_ratio:.2f}")
+    st.caption(f"Ejercicio fiscal {ratio_snapshot.fiscal_year}")
+except ValueError as e:
+    ratio_snapshot = None
+    st.caption(f"No se pudieron calcular los ratios: {e}")
+
 # --- Matriz de sensibilidad ---------------------------------------------------
 
 st.subheader("Sensibilidad: WACC × tasa de crecimiento terminal")
@@ -245,7 +266,7 @@ memo_input = build_memo_input(
     ticker=target, wacc=wacc_value, terminal_growth_rate=terminal_growth_rate,
     scenario_results=scenario_results, key_assumptions=key_assumptions,
     market_price=snap.get("price"), analyst_target_price=snap.get("analyst_target_price"),
-    warnings_raised=warnings_text,
+    warnings_raised=warnings_text, ratios=ratio_snapshot,
 )
 
 import os

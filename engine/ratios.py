@@ -3,10 +3,16 @@ rentabilidad, apalancamiento, liquidez, creación de valor).
 
 Cada función corresponde a una fila de la tabla de "Ratios y comparables"
 del blueprint. Reciben números sueltos (no DataFrames) para que sean
-triviales de testear y de reutilizar fuera de un pipeline de pandas.
+triviales de testear y de reutilizar fuera de un pipeline de pandas —
+excepto `latest_ratio_snapshot()`, que sí opera sobre el DataFrame de
+`engine.data_provider.historical_financials` por conveniencia de los
+consumidores (`ai/memo_generator.py`, `app/streamlit_app.py`).
 """
 
+import warnings
 from dataclasses import dataclass
+
+import pandas as pd
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +50,23 @@ def invested_capital(total_debt: float, total_equity: float, cash: float) -> flo
 
 
 def roic(ebit: float, tax_rate: float, invested_capital_: float) -> float:
-    """ROIC = NOPAT / Capital invertido"""
+    """ROIC = NOPAT / Capital invertido.
+
+    Emite un warning (no bloquea el cálculo) si el capital invertido es
+    <= 0 -- ocurre en compañías con equity contable negativo por
+    recompras de acciones muy agresivas (no observado en los 8 tickers
+    piloto, pero es un caso real conocido, p.ej. algunas consumer
+    staples muy apalancadas en recompras). Con capital invertido <= 0 el
+    ROIC resultante no es interpretable de la forma habitual (puede
+    salir negativo o desproporcionado sin reflejar mal desempeño real)."""
+    if invested_capital_ <= 0:
+        warnings.warn(
+            f"Capital invertido <= 0 ({invested_capital_:,.0f}) -- el ROIC resultante "
+            "no es comparable al de una empresa con capital invertido positivo "
+            "(equity contable negativo, típico de recompras de acciones agresivas). "
+            "Trátalo con cautela.",
+            stacklevel=2,
+        )
     nopat = ebit * (1 - tax_rate)
     return nopat / invested_capital_
 
@@ -75,3 +97,58 @@ def interest_coverage(ebit: float, interest_expense: float) -> float:
 
 def current_ratio(current_assets: float, current_liabilities: float) -> float:
     return current_assets / current_liabilities
+
+
+# ---------------------------------------------------------------------------
+# Snapshot completo (conveniencia para ai/memo_generator.py y app/streamlit_app.py)
+# ---------------------------------------------------------------------------
+
+REQUIRED_COLUMNS_FOR_RATIOS = [
+    "fiscal_year", "net_income", "revenue", "total_assets", "total_equity",
+    "total_debt", "cash", "ebit", "tax_rate", "ebitda", "interest_expense",
+    "current_assets", "current_liabilities",
+]
+
+
+@dataclass
+class RatioSnapshot:
+    fiscal_year: int
+    net_margin: float
+    asset_turnover: float
+    equity_multiplier: float
+    roe: float
+    roic: float
+    creates_value: bool
+    debt_to_ebitda: float
+    interest_coverage: float
+    current_ratio: float
+
+
+def compute_ratio_snapshot(row, wacc: float) -> RatioSnapshot:
+    """row: cualquier objeto indexable por nombre de columna (una fila de
+    pandas, un dict...) con las columnas de REQUIRED_COLUMNS_FOR_RATIOS.
+    wacc: para comparar contra ROIC (¿crea valor esta compañía?)."""
+    dupont = roe_dupont(row["net_income"], row["revenue"], row["total_assets"], row["total_equity"])
+    ic = invested_capital(row["total_debt"], row["total_equity"], row["cash"])
+    r = roic(row["ebit"], row["tax_rate"], ic)
+    return RatioSnapshot(
+        fiscal_year=int(row["fiscal_year"]),
+        net_margin=dupont.net_margin,
+        asset_turnover=dupont.asset_turnover,
+        equity_multiplier=dupont.equity_multiplier,
+        roe=dupont.roe,
+        roic=r,
+        creates_value=creates_value(r, wacc),
+        debt_to_ebitda=debt_to_ebitda(row["total_debt"], row["ebitda"]),
+        interest_coverage=interest_coverage(row["ebit"], row["interest_expense"]),
+        current_ratio=current_ratio(row["current_assets"], row["current_liabilities"]),
+    )
+
+
+def latest_ratio_snapshot(history: pd.DataFrame, wacc: float) -> RatioSnapshot:
+    """Selecciona el último año con todos los campos necesarios
+    disponibles (dropna) y calcula el snapshot de ratios sobre él."""
+    clean = history.dropna(subset=REQUIRED_COLUMNS_FOR_RATIOS)
+    if clean.empty:
+        raise ValueError("No hay ningún año con todos los datos necesarios para calcular los ratios")
+    return compute_ratio_snapshot(clean.iloc[-1], wacc)
