@@ -1,0 +1,227 @@
+"""Motor de datos: extrae estados financieros de Alpha Vantage y los
+normaliza en un DataFrame limpio, cacheado localmente en disco.
+
+Alpha Vantage free tier limita a 25 peticiones/día -> cachear en
+`data/cache/alpha_vantage/` es obligatorio, no una optimización.
+
+Este módulo NO calcula nada de valoración (eso es engine/valuation.py).
+Su única responsabilidad es: llamar a la API, cachear la respuesta cruda,
+y normalizar a las series que el motor de valoración necesita como
+input (revenue, ebit, tax_rate, d_and_a, capex, change_in_nwc).
+"""
+
+import json
+import os
+import time
+from pathlib import Path
+from typing import Optional
+
+import pandas as pd
+import requests
+from dotenv import load_dotenv
+
+load_dotenv()
+
+ALPHA_VANTAGE_BASE_URL = "https://www.alphavantage.co/query"
+CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "cache" / "alpha_vantage"
+
+# Funciones de Alpha Vantage usadas (blueprint sección 1)
+_FUNCTIONS = {
+    "income_statement": "INCOME_STATEMENT",
+    "balance_sheet": "BALANCE_SHEET",
+    "cash_flow": "CASH_FLOW",
+    "earnings": "EARNINGS",
+    "company_overview": "OVERVIEW",
+}
+
+
+class AlphaVantageError(RuntimeError):
+    """La API respondió pero con una nota de error/rate-limit, no datos."""
+
+
+class AlphaVantageClient:
+    def __init__(self, api_key: Optional[str] = None, cache_dir: Path = CACHE_DIR,
+                 cache_ttl_seconds: int = 24 * 3600):
+        self.api_key = api_key or os.environ.get("ALPHA_VANTAGE_API_KEY")
+        if not self.api_key:
+            raise RuntimeError(
+                "Falta ALPHA_VANTAGE_API_KEY. Defínela en un archivo .env "
+                "en la raíz del proyecto."
+            )
+        self.cache_dir = cache_dir
+        self.cache_ttl_seconds = cache_ttl_seconds
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._last_request_time = 0.0
+        self._min_seconds_between_requests = 15.0
+
+    def _cache_path(self, symbol: str, function: str) -> Path:
+        return self.cache_dir / f"{symbol.upper()}_{function}.json"
+
+    def _read_cache(self, path: Path) -> Optional[dict]:
+        if not path.exists():
+            return None
+        age = time.time() - path.stat().st_mtime
+        if age > self.cache_ttl_seconds:
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _write_cache(self, path: Path, data: dict) -> None:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+    def _fetch(self, symbol: str, endpoint_key: str, use_cache: bool = True) -> dict:
+        function = _FUNCTIONS[endpoint_key]
+        cache_path = self._cache_path(symbol, function)
+
+        if use_cache:
+            cached = self._read_cache(cache_path)
+            if cached is not None:
+                return cached
+
+        elapsed = time.time() - self._last_request_time
+        if elapsed < self._min_seconds_between_requests:
+            time.sleep(self._min_seconds_between_requests - elapsed)
+
+        response = requests.get(
+            ALPHA_VANTAGE_BASE_URL,
+            params={"function": function, "symbol": symbol, "apikey": self.api_key},
+            timeout=30,
+        )
+        self._last_request_time = time.time()
+        response.raise_for_status()
+        data = response.json()
+
+        if "Note" in data or "Information" in data:
+            raise AlphaVantageError(
+                data.get("Note") or data.get("Information")
+            )
+        if "Error Message" in data:
+            raise AlphaVantageError(data["Error Message"])
+
+        self._write_cache(cache_path, data)
+        return data
+
+    def income_statement(self, symbol: str, use_cache: bool = True) -> dict:
+        return self._fetch(symbol, "income_statement", use_cache)
+
+    def balance_sheet(self, symbol: str, use_cache: bool = True) -> dict:
+        return self._fetch(symbol, "balance_sheet", use_cache)
+
+    def cash_flow(self, symbol: str, use_cache: bool = True) -> dict:
+        return self._fetch(symbol, "cash_flow", use_cache)
+
+    def earnings(self, symbol: str, use_cache: bool = True) -> dict:
+        return self._fetch(symbol, "earnings", use_cache)
+
+    def company_overview(self, symbol: str, use_cache: bool = True) -> dict:
+        return self._fetch(symbol, "company_overview", use_cache)
+
+
+# ---------------------------------------------------------------------------
+# Normalización
+# ---------------------------------------------------------------------------
+
+def _to_float(value) -> Optional[float]:
+    if value is None or value == "None":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _annual_reports_by_year(payload: dict) -> dict:
+    return {r["fiscalDateEnding"][:4]: r for r in payload.get("annualReports", [])}
+
+
+def historical_financials(client: AlphaVantageClient, symbol: str,
+                           use_cache: bool = True) -> pd.DataFrame:
+    """Combina INCOME_STATEMENT + BALANCE_SHEET + CASH_FLOW en un
+    DataFrame anual limpio, con las columnas que necesita
+    engine.valuation.unlevered_fcf: revenue, ebit, tax_rate, d_and_a,
+    capex, change_in_nwc. Ordenado de año más antiguo a más reciente.
+
+    Net Working Capital = (Current Assets - Cash) - (Current Liabilities - Deuda a corto)
+    Delta NWC = NWC(t) - NWC(t-1)   (positivo = consumo de caja)
+    """
+    income = _annual_reports_by_year(client.income_statement(symbol, use_cache))
+    balance = _annual_reports_by_year(client.balance_sheet(symbol, use_cache))
+    cash_flow = _annual_reports_by_year(client.cash_flow(symbol, use_cache))
+
+    years = sorted(set(income) & set(balance) & set(cash_flow))
+    rows = []
+    nwc_by_year = {}
+
+    for year in years:
+        bs = balance[year]
+        current_assets = _to_float(bs.get("totalCurrentAssets"))
+        cash = _to_float(bs.get("cashAndShortTermInvestments"))
+        current_liabilities = _to_float(bs.get("totalCurrentLiabilities"))
+        short_term_debt = _to_float(bs.get("shortTermDebt")) or 0.0
+        if current_assets is None or current_liabilities is None:
+            nwc_by_year[year] = None
+        else:
+            nwc_by_year[year] = (current_assets - (cash or 0.0)) - (current_liabilities - short_term_debt)
+
+    for i, year in enumerate(years):
+        inc = income[year]
+        cf = cash_flow[year]
+
+        revenue = _to_float(inc.get("totalRevenue"))
+        ebit = _to_float(inc.get("ebit")) or _to_float(inc.get("operatingIncome"))
+        pretax_income = _to_float(inc.get("incomeBeforeTax"))
+        tax_expense = _to_float(inc.get("incomeTaxExpense"))
+        tax_rate = (tax_expense / pretax_income) if (tax_expense is not None
+                    and pretax_income not in (None, 0)) else None
+
+        d_and_a = (_to_float(inc.get("depreciationAndAmortization"))
+                   or _to_float(cf.get("depreciationDepletionAndAmortization")))
+        capex = _to_float(cf.get("capitalExpenditures"))
+
+        prev_nwc = nwc_by_year[years[i - 1]] if i > 0 else None
+        curr_nwc = nwc_by_year[year]
+        change_in_nwc = (curr_nwc - prev_nwc) if (curr_nwc is not None and prev_nwc is not None) else None
+
+        rows.append({
+            "fiscal_year": int(year),
+            "revenue": revenue,
+            "ebit": ebit,
+            "tax_rate": tax_rate,
+            "d_and_a": d_and_a,
+            "capex": capex,
+            "change_in_nwc": change_in_nwc,
+            "net_income": _to_float(inc.get("netIncome")),
+        })
+
+    df = pd.DataFrame(rows).sort_values("fiscal_year").reset_index(drop=True)
+    return df
+
+
+def market_snapshot(client: AlphaVantageClient, symbol: str, use_cache: bool = True) -> dict:
+    """Datos de mercado puntuales desde COMPANY_OVERVIEW: precio implícito
+    vía market cap / shares, beta, deuda y caja más recientes, múltiplo
+    EV/EBITDA de mercado (útil como múltiplo de salida, ver
+    engine.valuation.exit_multiple_terminal_value).
+    """
+    overview = client.company_overview(symbol, use_cache)
+    balance = _annual_reports_by_year(client.balance_sheet(symbol, use_cache))
+    latest_year = max(balance) if balance else None
+    latest_bs = balance.get(latest_year, {})
+
+    shares_outstanding = _to_float(overview.get("SharesOutstanding"))
+    market_cap = _to_float(overview.get("MarketCapitalization"))
+
+    return {
+        "symbol": symbol.upper(),
+        "sector": overview.get("Sector"),
+        "industry": overview.get("Industry"),
+        "market_cap": market_cap,
+        "shares_outstanding": shares_outstanding,
+        "price": (market_cap / shares_outstanding) if (market_cap and shares_outstanding) else None,
+        "beta": _to_float(overview.get("Beta")),
+        "ev_to_ebitda": _to_float(overview.get("EVToEBITDA")),
+        "analyst_target_price": _to_float(overview.get("AnalystTargetPrice")),
+        "cash": _to_float(latest_bs.get("cashAndShortTermInvestments")),
+        "total_debt": _to_float(latest_bs.get("shortLongTermDebtTotal")),
+    }
