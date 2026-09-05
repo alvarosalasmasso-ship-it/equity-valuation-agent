@@ -27,7 +27,7 @@ reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
 y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
-**1 hallazgo crítico (✅ corregido), 4 importantes (1 ✅ corregido), 5
+**1 hallazgo crítico (✅ corregido), 4 importantes (2 ✅ corregidos), 5
 moderados, 3 informativos.** Se está corrigiendo uno por uno, en el
 orden de prioridad de la sección final — este documento se actualiza a
 medida que cada uno se cierra.
@@ -94,7 +94,7 @@ ni negativa).
 
 ## Importante
 
-### I1. Risk-free rate y prima de riesgo de mercado: constantes congeladas, no en vivo
+### I1. Risk-free rate y prima de riesgo de mercado: constantes congeladas, no en vivo — ✅ CORREGIDO (sesión 15)
 
 **Qué es:** `RISK_FREE_RATE = 0.03909` y `MARKET_RISK_PREMIUM = 0.0406`
 en `app/streamlit_app.py`, copiadas literalmente del Excel de
@@ -111,12 +111,41 @@ ajustable desde la interfaz (a diferencia de `terminal_growth_rate`,
 valores en toda la base de código, sin ninguna fuente de datos en vivo
 detrás.
 
-**Cómo se arreglaría:** Alpha Vantage tiene `TREASURY_YIELD` (ya
-disponible como conector en esta sesión) y yfinance puede leer el
-ticker `^TNX`. Cualquiera de los dos sustituye la constante por un dato
-fresco. La prima de riesgo de mercado es más discutible (no hay un
-consenso único "correcto"), pero como mínimo debería ser un slider
-ajustable, no una constante oculta en el código.
+**Cómo se corrigió:** el risk-free rate y la prima de riesgo se tratan
+de forma distinta a propósito, porque tienen disponibilidad de datos
+distinta:
+
+- **Risk-free rate:** sí tiene una fuente en vivo estándar y gratuita
+  (rendimiento del Treasury a 10 años). Nuevo `treasury_yield_10y()` en
+  `engine/yfinance_provider.py` (vía el índice `^TNX`) y
+  `AlphaVantageClient.treasury_yield()` en `engine/data_provider.py`
+  (función económica `TREASURY_YIELD`, como alternativa testeada pero
+  no usada en la app por motivo de cuota — ver abajo). La app siempre
+  usa la vía yfinance, incluso en modo "universo cacheado con Alpha
+  Vantage": es un dato de mercado ambiental, igual para cualquier
+  compañía, y así no se gasta la cuota de 25 peticiones/día de Alpha
+  Vantage en algo que no depende del ticker. Si la consulta en vivo
+  falla (sin red, Yahoo no disponible), cae a la constante congelada
+  original con un aviso explícito en la interfaz — nunca fallaba en
+  silencio, y sigue sin hacerlo.
+- **Prima de riesgo de mercado (ERP):** no tiene un equivalente en vivo
+  gratuito y fiable — el estándar del sector (series de Damodaran) se
+  publica de forma manual y periódica, no vía una API estable. En vez
+  de fingir una fuente en vivo que no existe, se convirtió en un
+  `st.slider` ajustable en la sidebar, con el valor del Excel de
+  referencia como valor por defecto documentado y explicado.
+
+**Verificado con datos reales:** el 2026-09-06 el Treasury 10Y real
+(vía `^TNX`) cotizaba a **4.784%**, frente al 3.909% congelado del
+Excel (~noviembre 2024) — una diferencia de +0.875 puntos porcentuales,
+nada trivial. Revalorando AMZN con el resto de supuestos idénticos: el
+WACC pasa de 8.266% a 9.096%, y el precio implícito del escenario
+conservador de **$108.80 a $98.00 (-9.93%)**. Confirma que el hallazgo
+no era cosmético: la constante congelada estaba inflando materialmente
+el precio implícito de todas las valoraciones de esta sesión (incluida
+la propia validación del fix de C1, hecha con esa misma tasa vieja).
+7 tests de regresión nuevos (4 en `data_provider.py`, 3 en
+`yfinance_provider.py`). 118 tests en total, todos en verde.
 
 ### I2. El Treasury Stock Method está construido y validado, pero nunca se usa
 
@@ -326,7 +355,7 @@ aviso en la interfaz.
 - **El múltiplo de salida se corrigió** de "propio de la empresa" a
   "mediana de comparables" (sesión 14), con el efecto mixto reportado
   con honestidad en vez de maquillado.
-- **97 tests, cero dependen de red** — toda la suite corre offline con
+- **118 tests, cero dependen de red** — toda la suite corre offline con
   fixtures fieles al formato real de las APIs.
 - **Capa generativa desacoplada del cálculo por diseño**, no como
   parche — el LLM nunca ve datos crudos, solo un paquete ya cerrado.
@@ -339,8 +368,9 @@ aviso en la interfaz.
 2. ~~**I3 (excepciones no controladas)**~~ — ✅ corregido en esta sesión
    (y encontrado/corregido un bug real de raíz de paso: `historical_financials()`
    crasheaba con `KeyError` para un ticker inexistente, en ambos proveedores).
-3. **I1 (risk-free rate en vivo)** — mejora de precisión real,
-   Alpha Vantage ya tiene el endpoint.
+3. ~~**I1 (risk-free rate en vivo)**~~ — ✅ corregido en esta sesión
+   (risk-free rate vía `^TNX`/yfinance con fallback explícito; ERP
+   convertida en slider ajustable, sin fuente en vivo fiable disponible).
 4. **M1 (pin de versiones)** — trivial, buena higiene antes de
    compartir el repo públicamente.
 5. Resto, según interés — I2 y M5 son limitaciones más estructurales

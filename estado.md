@@ -772,14 +772,46 @@ señalaba).
 2 tests de regresión nuevos (uno por proveedor). **111 tests en total,
 todos en verde.** Servidor Streamlit re-verificado arrancando limpio.
 
+### Detalle — I1 corregido: risk-free rate en vivo, prima de riesgo como slider
+
+Los dos parámetros se trataron de forma distinta a propósito, porque
+tienen disponibilidad de datos distinta:
+
+1. **Risk-free rate (Treasury 10Y):** sí tiene fuente en vivo gratuita
+   y fiable. Nuevo `treasury_yield_10y()` en `engine/yfinance_provider.py`
+   (índice `^TNX`) y `AlphaVantageClient.treasury_yield()` en
+   `engine/data_provider.py` (función económica `TREASURY_YIELD`, con
+   refactor de `_fetch()` para soportar endpoints sin `symbol`). La app
+   siempre usa la vía yfinance (sin cuota diaria), incluso en modo
+   "universo cacheado con Alpha Vantage" — es un dato de mercado
+   ambiental igual para cualquier ticker, no tiene sentido gastar la
+   cuota de 25 peticiones/día de Alpha Vantage en él. Si la consulta en
+   vivo falla, cae a la constante congelada original con aviso
+   explícito en la interfaz (nunca en silencio).
+2. **Prima de riesgo de mercado (ERP):** sin fuente en vivo gratuita
+   fiable (Damodaran se publica a mano, no vía API estable) — convertida
+   en `st.slider` ajustable en la sidebar, con el valor del Excel como
+   valor por defecto documentado.
+
+**Validado con datos reales:** el 2026-09-06 el Treasury 10Y real
+cotizaba a **4.784%** frente al 3.909% congelado — +0.875 puntos.
+Revalorando AMZN con el resto de supuestos idénticos: WACC 8.266% →
+9.096%, precio implícito **$108.80 → $98.00 (-9.93%)**. La constante
+congelada estaba inflando de forma material el precio de todas las
+valoraciones de la sesión, incluida la propia verificación numérica del
+fix de C1.
+
+7 tests de regresión nuevos. **118 tests en total, todos en verde.**
+Servidor Streamlit reiniciado y verificado arrancando limpio (puerto
+8514, `/_stcore/health` → `ok`, sin tracebacks en el log).
+
 ## 5. Próximo paso inmediato
 
 Seguir corrigiendo uno por uno, en el orden de `docs/AUDIT.md`:
 
 1. ~~C1 — Stub period.~~ ✅ Corregido sesión 15.
 2. ~~I3 — Excepciones no controladas.~~ ✅ Corregido sesión 15 (continuación).
-3. **I1 — Risk-free rate en vivo.** Sustituir la constante por
-   `TREASURY_YIELD` (Alpha Vantage) o `^TNX` (yfinance).
+3. ~~I1 — Risk-free rate en vivo.~~ ✅ Corregido sesión 15 (continuación).
 4. **M1 — Fijar versiones** en `requirements.txt`.
 5. Resto según interés — I2 y M5 son limitaciones estructurales, no
    arreglos rápidos.

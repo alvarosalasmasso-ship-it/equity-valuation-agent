@@ -8,7 +8,12 @@ más un dict .info. Confirmado a mano contra la API real de yfinance
 import pandas as pd
 import pytest
 
-from engine.yfinance_provider import HISTORICAL_FINANCIALS_COLUMNS, historical_financials, market_snapshot
+from engine.yfinance_provider import (
+    HISTORICAL_FINANCIALS_COLUMNS,
+    historical_financials,
+    market_snapshot,
+    treasury_yield_10y,
+)
 
 
 class FakeTicker:
@@ -171,6 +176,34 @@ def test_market_snapshot_falls_back_to_market_cap_over_shares_when_no_price_fiel
     ticker = FakeTicker(FINANCIALS, BALANCE_SHEET, CASHFLOW, info)
     snapshot = market_snapshot(ticker)
     assert snapshot["price"] == pytest.approx(1000.0 / 10.0)
+
+
+class FakeIndexTicker:
+    """Doble de prueba para yf.Ticker('^TNX') -- solo necesita .history()."""
+
+    def __init__(self, close_values: list):
+        self._history = pd.DataFrame({"Close": close_values})
+
+    def history(self, period="5d"):
+        return self._history
+
+
+def test_treasury_yield_10y_converts_percentage_points_to_fraction():
+    """Auditoría sesión 15, hallazgo I1: risk-free rate en vivo. ^TNX
+    cotiza en puntos porcentuales (Close=4.15 significa 4.15%, no 415%)."""
+    ticker = FakeIndexTicker([4.10, 4.12, 4.15])
+    assert treasury_yield_10y(ticker) == pytest.approx(0.0415)
+
+
+def test_treasury_yield_10y_uses_most_recent_close():
+    ticker = FakeIndexTicker([4.30, 4.20, 4.10])  # el más reciente es el último, no el mayor
+    assert treasury_yield_10y(ticker) == pytest.approx(0.0410)
+
+
+def test_treasury_yield_10y_raises_when_history_empty():
+    ticker = FakeIndexTicker([])
+    with pytest.raises(ValueError):
+        treasury_yield_10y(ticker)
 
 
 def test_historical_financials_returns_empty_dataframe_for_invalid_ticker():

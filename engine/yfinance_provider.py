@@ -29,6 +29,22 @@ def get_ticker(symbol: str):
     return yf.Ticker(symbol)
 
 
+def treasury_yield_10y(ticker) -> float:
+    """Rendimiento del Treasury de EE.UU. a 10 años vía el índice ^TNX de
+    Yahoo Finance (cotiza en puntos porcentuales -- un Close de 4.25
+    significa 4.25%, no 425%). Mismo propósito que
+    engine.data_provider.AlphaVantageClient.treasury_yield(): risk-free
+    rate en vivo para el CAPM, en vez de la constante congelada que usaba
+    toda la app antes de esta corrección (auditoría sesión 15, hallazgo
+    I1). `ticker`: objeto con método `.history()` (yfinance.Ticker("^TNX"),
+    o un doble de prueba con la misma forma) -- misma inyección de
+    dependencia que el resto de este módulo, para poder testear sin red."""
+    hist = ticker.history(period="5d")
+    if hist.empty:
+        raise ValueError("Yahoo Finance no devolvió cotización para ^TNX.")
+    return float(hist["Close"].iloc[-1]) / 100.0
+
+
 def _clean(value) -> Optional[float]:
     if value is None:
         return None

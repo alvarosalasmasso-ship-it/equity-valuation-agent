@@ -91,7 +91,13 @@ class AlphaVantageClient:
         self._last_request_time = time.time()
         response.raise_for_status()
         data = response.json()
+        self._validate_response(data)
 
+        self._write_cache(cache_path, data)
+        return data
+
+    @staticmethod
+    def _validate_response(data: dict) -> None:
         if "Note" in data or "Information" in data:
             raise AlphaVantageError(
                 data.get("Note") or data.get("Information")
@@ -99,8 +105,55 @@ class AlphaVantageClient:
         if "Error Message" in data:
             raise AlphaVantageError(data["Error Message"])
 
+    def _fetch_economic_indicator(self, function: str, extra_params: dict,
+                                   cache_key: str, use_cache: bool = True) -> dict:
+        """Igual que `_fetch`, pero para las funciones económicas de Alpha
+        Vantage (TREASURY_YIELD, CPI, ...), que no cuelgan de un `symbol`
+        sino de sus propios parámetros -- no se puede reutilizar `_fetch`
+        tal cual porque este construye la cache key y los params de la
+        petición a partir de un símbolo."""
+        cache_path = self.cache_dir / f"{cache_key}.json"
+
+        if use_cache:
+            cached = self._read_cache(cache_path)
+            if cached is not None:
+                return cached
+
+        elapsed = time.time() - self._last_request_time
+        if elapsed < self._min_seconds_between_requests:
+            time.sleep(self._min_seconds_between_requests - elapsed)
+
+        response = requests.get(
+            ALPHA_VANTAGE_BASE_URL,
+            params={"function": function, **extra_params, "apikey": self.api_key},
+            timeout=30,
+        )
+        self._last_request_time = time.time()
+        response.raise_for_status()
+        data = response.json()
+        self._validate_response(data)
+
         self._write_cache(cache_path, data)
         return data
+
+    def treasury_yield(self, maturity: str = "10year", use_cache: bool = True) -> float:
+        """Rendimiento del Treasury de EE.UU. a `maturity` (10 años por
+        defecto -- la convención estándar de risk-free rate en un CAPM),
+        vía la función económica TREASURY_YIELD. Antes de esta corrección
+        (auditoría sesión 15, hallazgo I1) el risk-free rate usado en toda
+        la app era una constante congelada de cuando se construyó el
+        Excel de referencia (~noviembre 2024). Devuelve la tasa como
+        fracción (0.0415 para 4.15%), no en puntos porcentuales -- el
+        payload de Alpha Vantage sí viene en puntos porcentuales."""
+        data = self._fetch_economic_indicator(
+            "TREASURY_YIELD", {"interval": "daily", "maturity": maturity},
+            f"ECON_TREASURY_YIELD_{maturity}", use_cache,
+        )
+        points = [p for p in data.get("data", []) if p.get("value") not in (None, ".", "")]
+        if not points:
+            raise AlphaVantageError("TREASURY_YIELD no devolvió ningún dato válido.")
+        latest = max(points, key=lambda p: p["date"])
+        return float(latest["value"]) / 100.0
 
     def income_statement(self, symbol: str, use_cache: bool = True) -> dict:
         return self._fetch(symbol, "income_statement", use_cache)

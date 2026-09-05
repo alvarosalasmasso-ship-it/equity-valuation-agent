@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from engine.data_provider import AlphaVantageClient, historical_financials, market_snapshot
+from engine.data_provider import AlphaVantageClient, AlphaVantageError, historical_financials, market_snapshot
 
 INCOME_FIXTURE = {
     "annualReports": [
@@ -218,6 +218,56 @@ def test_historical_financials_returns_empty_dataframe_when_no_years_overlap():
     df = historical_financials(client, "INVALID")
     assert df.empty
     assert list(df.columns) == HISTORICAL_FINANCIALS_COLUMNS
+
+
+def test_treasury_yield_converts_percentage_points_to_fraction():
+    """Auditoría sesión 15, hallazgo I1: risk-free rate en vivo en vez de
+    una constante congelada. Alpha Vantage devuelve el valor en puntos
+    porcentuales (p.ej. '4.15'), treasury_yield() debe convertirlo a
+    fracción (0.0415)."""
+    client = make_fake_client()
+    client._fetch_economic_indicator = MagicMock(return_value={
+        "data": [
+            {"date": "2026-09-04", "value": "4.15"},
+            {"date": "2026-09-03", "value": "4.12"},
+        ]
+    })
+    assert client.treasury_yield() == pytest.approx(0.0415)
+
+
+def test_treasury_yield_picks_most_recent_date_regardless_of_order():
+    """No se puede asumir que Alpha Vantage devuelve la serie ordenada --
+    debe elegir la fecha más reciente por comparación explícita, no
+    tomar el primer elemento a ciegas."""
+    client = make_fake_client()
+    client._fetch_economic_indicator = MagicMock(return_value={
+        "data": [
+            {"date": "2026-08-01", "value": "4.00"},
+            {"date": "2026-09-04", "value": "4.15"},  # más reciente, no es el primero
+            {"date": "2026-09-01", "value": "4.10"},
+        ]
+    })
+    assert client.treasury_yield() == pytest.approx(0.0415)
+
+
+def test_treasury_yield_skips_placeholder_values():
+    """Alpha Vantage usa '.' como marcador de dato faltante en algunas
+    series económicas -- no debe tratarse como un 0% real."""
+    client = make_fake_client()
+    client._fetch_economic_indicator = MagicMock(return_value={
+        "data": [
+            {"date": "2026-09-04", "value": "."},
+            {"date": "2026-09-03", "value": "4.12"},
+        ]
+    })
+    assert client.treasury_yield() == pytest.approx(0.0412)
+
+
+def test_treasury_yield_raises_when_no_valid_data():
+    client = make_fake_client()
+    client._fetch_economic_indicator = MagicMock(return_value={"data": []})
+    with pytest.raises(AlphaVantageError):
+        client.treasury_yield()
 
 
 def test_client_requires_api_key():

@@ -1027,3 +1027,86 @@ sintéticos que fuerzan cada caso por separado.
 verificación manual de las 4 ramas de guarda de la app, que no tiene
 tests automatizados por sí misma — ver hallazgo N2). 111 tests en
 total, todos en verde.
+
+## 19. Risk-free rate en vivo, prima de riesgo como slider (auditoría sesión 15, hallazgo I1)
+
+`app/streamlit_app.py` usaba dos constantes de módulo,
+`RISK_FREE_RATE = 0.03909` y `MARKET_RISK_PREMIUM = 0.0406`, copiadas
+literalmente de `WACC!F11`/`WACC!F13` del Excel de referencia (datos de
+~noviembre 2024). Cada valoración, se ejecutara cuando se ejecutara,
+usaba el tipo libre de riesgo de hace año y medio.
+
+**Los dos parámetros no se tratan igual, porque no tienen la misma
+disponibilidad de datos:**
+
+- **Risk-free rate (rendimiento del Treasury a 10 años):** tiene una
+  fuente en vivo estándar y gratuita. Se añadieron dos implementaciones
+  equivalentes, testeadas por separado:
+  - `engine/yfinance_provider.py::treasury_yield_10y(ticker)` — lee el
+    índice `^TNX` de Yahoo Finance (cotiza en puntos porcentuales, un
+    `Close` de 4.78 significa 4.78%) vía `ticker.history()`. Sigue el
+    mismo patrón de inyección de dependencia que el resto del módulo
+    (recibe el objeto `Ticker` ya construido, no el símbolo), para
+    poder testear sin red.
+  - `engine/data_provider.py::AlphaVantageClient.treasury_yield(maturity="10year")`
+    — función económica `TREASURY_YIELD` de Alpha Vantage. Requirió
+    generalizar `_fetch()`: las funciones económicas (a diferencia de
+    `INCOME_STATEMENT`, `OVERVIEW`, etc.) no cuelgan de un `symbol`, así
+    que se extrajo `_fetch_economic_indicator(function, extra_params, cache_key)`
+    como método hermano, reutilizando la validación de respuesta
+    (`_validate_response`, antes duplicada dentro de `_fetch`). El
+    payload de Alpha Vantage no garantiza el orden de la serie temporal,
+    así que se elige el punto más reciente por comparación explícita de
+    fecha (`max(points, key=lambda p: p["date"])`), no el primer
+    elemento — y se descartan los marcadores de dato faltante (`"."`,
+    usados por varias series económicas de Alpha Vantage).
+
+  La app **siempre usa la vía yfinance**, incluso en modo "universo
+  cacheado con Alpha Vantage": el Treasury yield es un dato de mercado
+  ambiental, igual para cualquier compañía en cualquier momento, y usar
+  Alpha Vantage para él gastaría cuota (25 peticiones/día) en algo que
+  no depende del ticker que se esté valorando. El método de
+  `AlphaVantageClient` queda como alternativa ya testeada, no muerta —
+  documentado aquí por si en el futuro conviene usarlo (p. ej. si
+  yfinance deja de exponer `^TNX` de forma fiable).
+
+  Si la consulta en vivo falla (sin red, Yahoo Finance no disponible),
+  `get_live_risk_free_rate()` en `app/streamlit_app.py` cae a
+  `FALLBACK_RISK_FREE_RATE` (la constante congelada original) con un
+  aviso explícito en la interfaz — mismo principio que el resto de la
+  sesión: nunca fallar en silencio.
+
+- **Prima de riesgo de mercado (ERP):** no tiene un equivalente en vivo
+  gratuito y fiable. El estándar de facto del sector (las series de
+  Aswath Damodaran) se publica de forma manual y periódica en una
+  página web, no vía una API estable — construir un scraper para eso
+  sería frágil y rompería en silencio ante cualquier cambio de
+  formato, cambiando un problema conocido (constante congelada, visible
+  y documentada) por uno peor (fuente de datos silenciosamente rota).
+  En vez de fingir una fuente en vivo que no existe con garantías, se
+  convirtió en un `st.slider` ajustable en la sidebar (`DEFAULT_MARKET_RISK_PREMIUM`
+  como valor por defecto, con un `help` que explica por qué no es un
+  dato en vivo y sugiere Damodaran como referencia para actualizarlo a
+  mano).
+
+**Verificado con datos reales:** el 2026-09-06 el Treasury 10Y real
+(vía `^TNX`) cotizaba a **4.784%**, frente al 3.909% de la constante
+congelada — una diferencia de +0.875 puntos porcentuales. Revalorando
+AMZN con el resto de supuestos idénticos (misma prima de riesgo,
+mismos comparables, mismo escenario conservador): el WACC pasa de
+8.266% a 9.096%, y el precio implícito de **$108.80 a $98.00 (-9.93%)**.
+La constante congelada estaba inflando de forma material el precio
+implícito de todas las valoraciones — incluida, irónicamente, la propia
+verificación numérica del fix de C1 en la sección 17, hecha con la tasa
+vieja (ese número histórico de la sección 17 queda tal cual, como
+registro de lo que se verificó en su momento; no se reescribe con
+efecto retroactivo).
+
+7 tests de regresión nuevos (4 en `test_data_provider.py`: conversión a
+fracción, selección de la fecha más reciente sin asumir orden,
+descarte de marcadores `"."`, error si no hay datos válidos; 3 en
+`test_yfinance_provider.py`: conversión a fracción, uso del cierre más
+reciente, error si el histórico viene vacío). 118 tests en total, todos
+en verde. Servidor Streamlit reiniciado y verificado arrancando limpio
+tras el cambio (puerto 8514, `/_stcore/health` responde `ok`, sin
+tracebacks en el log del servidor).

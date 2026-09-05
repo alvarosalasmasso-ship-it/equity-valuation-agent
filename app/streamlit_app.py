@@ -27,6 +27,7 @@ from engine.wacc_builder import build_wacc
 from engine.yfinance_provider import get_ticker as yf_get_ticker
 from engine.yfinance_provider import historical_financials as yf_historical_financials
 from engine.yfinance_provider import market_snapshot as yf_market_snapshot
+from engine.yfinance_provider import treasury_yield_10y as yf_treasury_yield_10y
 
 # ---------------------------------------------------------------------------
 # Universos con comparables ya validados en sesiones anteriores (ver estado.md)
@@ -36,8 +37,39 @@ CACHED_GROUPS = {
     "Big Tech / Cloud (Alpha Vantage)": ["AMZN", "MSFT", "GOOGL", "META", "AAPL"],
     "Consumo defensivo (yfinance)": ["KO", "PG", "JNJ"],
 }
-RISK_FREE_RATE = 0.03909
-MARKET_RISK_PREMIUM = 0.0406
+
+# Auditoría sesión 15, hallazgo I1: estos dos valores eran constantes
+# congeladas de cuando se construyó el Excel de referencia (~nov-2024) y
+# se usaban en todas las valoraciones sin importar cuándo se ejecutaran.
+# El risk-free rate SÍ tiene una fuente en vivo estándar (Treasury 10Y) y
+# ahora se consulta siempre por esa vía -- FALLBACK_RISK_FREE_RATE solo se
+# usa si la consulta en vivo falla (sin red, símbolo no disponible), y la
+# interfaz avisa explícitamente cuando eso ocurre. La prima de riesgo de
+# mercado (ERP) no tiene un equivalente: no existe una API gratuita fiable
+# que la sirva en vivo (el estándar del sector, Damodaran, se publica a
+# mano de forma periódica) -- por eso se deja como un slider ajustable en
+# vez de fingir que también es un dato en vivo.
+FALLBACK_RISK_FREE_RATE = 0.03909
+DEFAULT_MARKET_RISK_PREMIUM = 0.0406
+
+
+@st.cache_data(ttl=3600, show_spinner="Consultando risk-free rate en vivo (Treasury 10Y)...")
+def get_live_risk_free_rate() -> tuple[float, str]:
+    """Devuelve (tasa, descripción de la fuente). Siempre vía yfinance
+    (^TNX), incluso en modo "universo cacheado con Alpha Vantage": es un
+    dato de mercado ambiental, igual para cualquier compañía, y así no
+    consume la cuota de 25 peticiones/día de Alpha Vantage por algo que
+    no depende del ticker. engine.data_provider.AlphaVantageClient.
+    treasury_yield() existe como alternativa y está testeado, pero no se
+    usa aquí por ese motivo de cuota."""
+    try:
+        rate = yf_treasury_yield_10y(yf_get_ticker("^TNX"))
+        return rate, "Treasury 10Y (^TNX, Yahoo Finance, en vivo)"
+    except Exception as e:
+        return (
+            FALLBACK_RISK_FREE_RATE,
+            f"⚠️ Fallback congelado (~nov-2024) -- la consulta en vivo falló: {e}",
+        )
 
 
 @st.cache_data(show_spinner="Cargando datos cacheados de Alpha Vantage...")
@@ -58,7 +90,8 @@ def load_yf_universe(tickers: tuple) -> tuple[dict, dict]:
     return hist, snap
 
 
-def build_peer_wacc(target: str, hist_data: dict, snap_data: dict):
+def build_peer_wacc(target: str, hist_data: dict, snap_data: dict,
+                     risk_free_rate: float, market_risk_premium: float):
     """Reutiliza build_peer_set (ya testeado en tests/test_validation.py)
     en vez de reconstruir la lista de comparables aquí."""
     hist, snap = hist_data[target], snap_data[target]
@@ -66,8 +99,8 @@ def build_peer_wacc(target: str, hist_data: dict, snap_data: dict):
     return build_wacc(
         peers=peers, target_tax_rate=float(hist["tax_rate"].dropna().iloc[-1]),
         target_net_debt=(snap.get("total_debt") or 0) - (snap.get("cash") or 0),
-        target_market_cap=snap["market_cap"], risk_free_rate=RISK_FREE_RATE,
-        market_risk_premium=MARKET_RISK_PREMIUM,
+        target_market_cap=snap["market_cap"], risk_free_rate=risk_free_rate,
+        market_risk_premium=market_risk_premium,
         target_interest_expense=float(hist["interest_expense"].dropna().iloc[-1]),
         target_total_debt=snap["total_debt"],
     )
@@ -86,6 +119,20 @@ st.caption(
 
 with st.sidebar:
     st.header("Configuración")
+
+    st.subheader("Parámetros de mercado (CAPM)")
+    risk_free_rate, rf_source = get_live_risk_free_rate()
+    st.metric("Risk-free rate (Treasury 10Y)", f"{risk_free_rate*100:.3f}%")
+    st.caption(f"Fuente: {rf_source}")
+    market_risk_premium = st.slider(
+        "Prima de riesgo de mercado (ERP)", 0.02, 0.08, DEFAULT_MARKET_RISK_PREMIUM, 0.001,
+        format="%.3f",
+        help="Sin fuente gratuita en vivo fiable (auditoría sesión 15, hallazgo I1) — "
+             "el valor por defecto es el heredado del Excel de referencia (~nov-2024). "
+             "Ajusta a mano si tienes una estimación más reciente (p. ej. Damodaran).",
+    )
+    st.divider()
+
     mode = st.radio(
         "Fuente de datos",
         ["Universo cacheado (WACC riguroso vía comparables)", "Cualquier ticker (yfinance, WACC simplificado)"],
@@ -97,7 +144,7 @@ with st.sidebar:
         target = st.selectbox("Ticker", tickers)
         loader = load_av_universe if "Alpha Vantage" in group_name else load_yf_universe
         hist_data, snap_data = loader(tuple(tickers))
-        wacc_result = build_peer_wacc(target, hist_data, snap_data)
+        wacc_result = build_peer_wacc(target, hist_data, snap_data, risk_free_rate, market_risk_premium)
         wacc_value = wacc_result.wacc
         wacc_detail = wacc_result
     else:
@@ -142,7 +189,7 @@ with st.sidebar:
 
                 hist_data, snap_data = {target: hist}, {target: snap}
                 from engine.valuation import cost_of_debt, cost_of_equity, wacc as wacc_fn
-                re = cost_of_equity(RISK_FREE_RATE, beta, MARKET_RISK_PREMIUM)
+                re = cost_of_equity(risk_free_rate, beta, market_risk_premium)
                 rd = cost_of_debt(interest_expense_series.iloc[-1] or 0, snap.get("total_debt") or 1)
                 wacc_value = wacc_fn(snap.get("market_cap") or 0, snap.get("total_debt") or 0, re, rd,
                                       float(tax_rate_series.iloc[-1]))
