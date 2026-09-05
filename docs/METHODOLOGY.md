@@ -366,3 +366,97 @@ bajos siempre".
   mercado) muestra que el resultado sigue siendo sensible a la ventana
   de histórico elegida, incluso en una empresa estable — otro recordatorio
   de que el número es función de supuestos explícitos, no una verdad fija.
+
+## 8. Proveedor de datos alternativo: `engine/yfinance_provider.py`
+
+Alpha Vantage limita a 25 peticiones/día en el free tier — insuficiente
+para iterar con soltura. `yfinance` no tiene ese límite (a cambio de
+solo ~4 años de histórico anual, frente a los 15-20 de Alpha Vantage).
+`yfinance_provider.py` normaliza a **exactamente el mismo esquema** de
+columnas/claves que `data_provider.py` (`historical_financials` /
+`market_snapshot`), así que es intercambiable en `projections.py`,
+`wacc_builder.py` y `validation.py` sin tocar esos módulos — mismo
+principio de una sola metodología con proveedores de datos
+intercambiables que ya usa `wacc_builder.py` con `valuation.py`.
+
+Diferencias de convención manejadas explícitamente: yfinance reporta
+CapEx como salida de caja (negativo) — se toma valor absoluto para
+igualar la convención de `data_provider.py`. Validado con datos reales
+(KO, PG, JNJ): mismo precio y beta que Alpha Vantage para KO
+($88.07 / 0.342 en ambos), confirmando que ambas fuentes parten de los
+mismos datos de mercado subyacentes.
+
+## 9. Contraprueba de empresas maduras completada: WACC bajo y la inestabilidad de Gordon Growth
+
+Con `yfinance_provider.py` se completó la contraprueba pendiente de la
+sección 7 (KO + Procter & Gamble + Johnson & Johnson, WACC vía
+comparables real entre las tres, no simplificado):
+
+| Ticker | WACC | Implícito | Mercado | Consenso | Desv. mercado | Desv. consenso |
+|---|---|---|---|---|---|---|
+| KO | 4.95% | $90.55 | $88.07 | $94.70 | **+2.8%** | -4.4% |
+| PG | 4.80% | $271.16 | $146.44 | $160.61 | **+85.2%** | +68.8% |
+| JNJ | 5.08% | $418.26 | $275.23 | $275.64 | **+52.0%** | +51.7% |
+
+KO reproduce el mercado casi exacto. **PG y JNJ salen SOBREvaloradas por
+el motor — la dirección opuesta al patrón de Big Tech.** Se investigó
+antes de documentar (mismo estándar que con MSFT):
+
+### Mecanismo identificado: margen WACC-g estrecho, no un problema de márgenes
+
+Para PG, el margen EBIT no tiene ninguna anomalía (24.4% -> 24.3%,
+prácticamente plano) y el UFCF proyectado es estable (~$17-18bn/año). El
+problema está en el valor terminal: **Gordon Growth da $793.6bn frente a
+$399.9bn del múltiplo de salida — casi el doble** — y Gordon pesa 80% en
+el blend. Causa: WACC = 4.80% (beta muy bajo, 0.377, consumo defensivo)
+con tasa de crecimiento terminal fija en 2.5% deja un margen WACC-g de
+solo 2.3%. La fórmula de Gordon Growth divide por ese margen — cuanto
+más estrecho, más se amplifica el resultado. Es una **inestabilidad
+matemática conocida del modelo de Gordon Growth**, no un fallo de nuestra
+implementación ni de los datos: cualquier DCF académico advierte de la
+alta sensibilidad de la perpetuidad cuando WACC y g están próximos.
+
+JNJ combina este mismo efecto (spread 2.58%) con un segundo problema
+independiente: **el margen EBIT del último ejercicio (35.6%) es un
+outlier frente a los 3 años previos (~19-25%)** — casi con certeza un
+ítem no recurrente (ganancia por desinversión, reversión de litigio;
+JNJ escindió Kenvue en 2023, consistente con movimientos contables
+grandes y puntuales en esos años). Nuestra metodología usa el último año
+real como ancla del fade (`start`), así que hereda ese outlier
+directamente en el supuesto de proyección — no un bug, pero sí una
+vulnerabilidad real y ahora evidenciada de "usar el último año como
+estado actual" cuando ese año tiene ruido no operativo.
+
+**Por qué KO no muestra el mismo problema con un spread igual de
+estrecho (2.45%):** KO cotiza a un múltiplo EV/EBITDA de mercado mucho
+más rico (24.06x) que PG (14.8x) o JNJ (19.8x). Gordon Growth se infla de
+forma parecida en los tres casos por el spread estrecho, pero en KO esa
+cifra inflada resulta que coincide, más o menos, con lo que ya implica su
+múltiplo de mercado alto — en PG/JNJ, con múltiplos más bajos, la
+distancia entre ambos métodos queda expuesta y domina el blended al 80%.
+
+### Corrección aplicada: aviso, no un ajuste silencioso
+
+Se añadió `MIN_PRUDENT_WACC_GROWTH_SPREAD = 0.03` en `engine/valuation.py`:
+`gordon_growth_terminal_value()` emite un `warnings.warn` (no bloquea el
+cálculo, no cambia el resultado) cuando WACC-g queda por debajo de ese
+umbral, señalando la inestabilidad y sugiriendo revisar
+`terminal_growth_rate` o `gordon_weight`. Es una regla de pulgar de la
+industria (documentada como tal, no una ley exacta), y **deliberadamente
+no se ha bajado `gordon_weight` por defecto ni ajustado la tasa terminal
+para "arreglar" el caso PG/JNJ** — sería la misma sobreajuste que el
+proyecto ha evitado en cada hallazgo anterior. El usuario que vea el aviso
+decide con criterio, igual que un analista humano ajustaría el peso del
+múltiplo de salida al ver una perpetuidad que dobla al múltiplo de
+mercado.
+
+**Conclusión honesta de la contraprueba completa:** el motor por defecto
+no es uniformemente "conservador" ni uniformemente "fiable en empresas
+maduras" — es fiable cuando el spread WACC-g es saludable y el histórico
+reciente no tiene ítems no recurrentes (KO), e inestable cuando cualquiera
+de esas dos condiciones falla (PG, JNJ), independientemente de si la
+compañía es "madura" o "de crecimiento". Ambos mecanismos (CapEx >> D&A
+en Big Tech; spread WACC-g estrecho + outliers de un año en staples de
+bajo beta) están ahora identificados, verificados con desgloses completos
+y explicados con precisión — el objetivo de un motor riguroso no es "dar
+siempre el número correcto" sino "saber exactamente por qué da lo que da".

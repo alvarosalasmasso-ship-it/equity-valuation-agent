@@ -9,6 +9,7 @@ Principio de diseño: este módulo no llama a ningún LLM ni contiene
 lógica de IA. Recibe únicamente números y devuelve únicamente números.
 """
 
+import warnings
 from dataclasses import dataclass, replace
 from typing import Optional, Sequence
 
@@ -141,12 +142,37 @@ def pv_of_cash_flows(cash_flows: Sequence[float], discount_rate: float,
 # Valor terminal  (hoja de segmento, bloque "Terminal Value")
 # ---------------------------------------------------------------------------
 
+# Margen WACC-g por debajo del cual el valor terminal de Gordon Growth se
+# vuelve muy sensible a pequeños cambios de cualquiera de los dos inputs
+# (regla de pulgar de la industria, no una ley matemática exacta). Frecuente
+# en compañías de beta bajo (WACC bajo, p.ej. consumo defensivo) combinado
+# con una tasa de crecimiento terminal fija ligada a crecimiento macro
+# genérico (~2-3%) — ver docs/METHODOLOGY.md sección 7 (caso PG/JNJ real).
+MIN_PRUDENT_WACC_GROWTH_SPREAD = 0.03
+
+
 def gordon_growth_terminal_value(final_year_fcf: float, wacc_: float,
                                   terminal_growth_rate: float) -> float:
-    """TV = FCFF_n * (1+g) / (WACC - g)"""
+    """TV = FCFF_n * (1+g) / (WACC - g)
+
+    Emite un warning (no bloquea el cálculo) si WACC-g queda por debajo de
+    MIN_PRUDENT_WACC_GROWTH_SPREAD: en ese régimen el resultado es muy
+    inestable y probablemente sobrevalora frente al múltiplo de salida —
+    considera bajar `terminal_growth_rate` o reducir `gordon_weight` en
+    favor del múltiplo de salida.
+    """
     if wacc_ <= terminal_growth_rate:
         raise ValueError("WACC debe ser mayor que la tasa de crecimiento terminal (g)")
-    return final_year_fcf * (1 + terminal_growth_rate) / (wacc_ - terminal_growth_rate)
+    spread = wacc_ - terminal_growth_rate
+    if spread < MIN_PRUDENT_WACC_GROWTH_SPREAD:
+        warnings.warn(
+            f"WACC-g = {spread:.2%} está por debajo del margen prudente habitual "
+            f"({MIN_PRUDENT_WACC_GROWTH_SPREAD:.0%}). El valor terminal de Gordon "
+            "Growth es muy sensible en este rango y tiende a sobrevalorar frente "
+            "al múltiplo de salida. Revisa terminal_growth_rate o gordon_weight.",
+            stacklevel=2,
+        )
+    return final_year_fcf * (1 + terminal_growth_rate) / spread
 
 
 def exit_multiple_terminal_value(terminal_year_ebitda: float, ev_ebitda_multiple: float) -> float:

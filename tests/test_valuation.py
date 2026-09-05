@@ -188,6 +188,24 @@ def test_gordon_growth_requires_wacc_above_terminal_growth():
         run_dcf(inputs)
 
 
+def test_gordon_growth_warns_on_thin_wacc_growth_spread():
+    """WACC-g = 2% < MIN_PRUDENT_WACC_GROWTH_SPREAD (3%) -- caso real
+    encontrado con PG/JNJ (beta bajo -> WACC bajo, g fijo en 2.5%)."""
+    from engine.valuation import gordon_growth_terminal_value
+
+    with pytest.warns(UserWarning, match="margen prudente"):
+        gordon_growth_terminal_value(final_year_fcf=100, wacc_=0.045, terminal_growth_rate=0.025)
+
+
+def test_gordon_growth_does_not_warn_on_healthy_spread():
+    from engine.valuation import gordon_growth_terminal_value
+    import warnings as warnings_module
+
+    with warnings_module.catch_warnings():
+        warnings_module.simplefilter("error")
+        gordon_growth_terminal_value(final_year_fcf=100, wacc_=0.09, terminal_growth_rate=0.025)
+
+
 # --- Matriz de sensibilidad WACC x g -----------------------------------------
 
 def _amzn_blended_inputs() -> DCFInputs:

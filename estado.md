@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-05 (sesión 6)
+**Última actualización:** 2026-09-05 (sesión 7)
 
 ---
 
@@ -278,39 +278,91 @@ igualar el rigor con el que se trató a Big Tech.
 - Estructura de carpetas: `engine/` (`valuation.py`, `data_provider.py`),
   `ai/prompts/`, `app/`, `tests/`, `docs/`, `data/cache/` (gitignored).
 
+### Detalle sesión 7 — `engine/yfinance_provider.py` y contraprueba de empresas maduras completada
+
+El usuario pidió seguir desarrollando sin usar Alpha Vantage (cuota
+agotada). Se construyó **`engine/yfinance_provider.py`**: mismo esquema
+exacto de columnas/claves que `data_provider.py` (intercambiable en
+`projections.py`, `wacc_builder.py`, `validation.py` sin tocarlos).
+yfinance no tiene límite de peticiones/día (a cambio de solo ~4 años de
+histórico anual, no 15-20). Validado con datos reales: mismo precio y
+beta que Alpha Vantage para KO. 7 tests con un doble de prueba (sin red).
+
+Esto permitió **terminar la contraprueba de empresas maduras** que había
+quedado a medias (KO + Procter & Gamble + Johnson & Johnson, WACC vía
+comparables real entre las tres):
+
+| Ticker | WACC | Implícito | Mercado | Consenso | Desv. mercado |
+|---|---|---|---|---|---|
+| KO | 4.95% | $90.55 | $88.07 | $94.70 | **+2.8%** |
+| PG | 4.80% | $271.16 | $146.44 | $160.61 | **+85.2%** |
+| JNJ | 5.08% | $418.26 | $275.23 | $275.64 | **+52.0%** |
+
+**Resultado sorprendente y más matizado que la hipótesis de la sesión
+anterior:** KO confirma que el motor puede ser muy preciso, pero PG y
+JNJ salen SOBREvaloradas — lo contrario que Big Tech. Investigado a
+fondo (desglose completo, no asumido): **no es un problema de márgenes**
+(PG tiene márgenes planos, sin anomalía) sino del **valor terminal por
+Gordon Growth, matemáticamente inestable cuando el margen WACC-g es
+estrecho** (PG: WACC=4.80%, g=2.5% → spread=2.3% → Gordon da $793.6bn
+frente a solo $399.9bn del múltiplo de salida, casi el doble, y Gordon
+pesa 80% del blend). Es una inestabilidad conocida de cualquier modelo
+de Gordon Growth académico, no un fallo de esta implementación. JNJ
+además tiene un ítem no recurrente real en su último ejercicio (margen
+EBIT 35.6% vs. ~19-25% los 3 años previos — probablemente relacionado
+con la escisión de Kenvue) que nuestra metodología (año más reciente
+como ancla del fade) hereda directamente.
+
+**Corrección aplicada:** `MIN_PRUDENT_WACC_GROWTH_SPREAD = 0.03` en
+`valuation.py` — `gordon_growth_terminal_value()` ahora emite un aviso
+(`warnings.warn`, no bloquea ni cambia el cálculo) cuando el margen
+WACC-g es demasiado estrecho, señalando la inestabilidad. Deliberadamente
+no se bajó el peso de Gordon por defecto ni se tocó la tasa terminal para
+"arreglar" PG/JNJ — mismo principio de no sobreajustar a un caso conocido
+que se ha mantenido en toda la sesión anterior. Diagnóstico completo en
+`docs/METHODOLOGY.md` secciones 8 y 9.
+
+**Conclusión honesta y ya más precisa que la de ayer:** el motor no es
+"fiable en maduras, poco fiable en crecimiento" sin matices — es fiable
+cuando (a) el spread WACC-g es saludable y (b) el histórico reciente no
+tiene ítems no recurrentes, e inestable si cualquiera de las dos falla,
+sea cual sea el perfil de la compañía. Dos mecanismos de desviación ya
+identificados y verificados con desgloses completos: CapEx>>D&A (Big
+Tech) y spread WACC-g estrecho + outliers de un año (staples de bajo
+beta). 69 tests, todos en verde.
+
 ## 5. Próximo paso inmediato
 
-El motor está validado en cuatro capas independientes (matemática exacta
+El motor está validado en cinco capas independientes (matemática exacta
 contra Excel, datos exactos contra Excel, comportamiento sistemático en
-5 compañías de hiper-crecimiento, y ahora una contraprueba en un negocio
-maduro que confirma la hipótesis). Opciones para la próxima sesión, de
-más a menos prioritaria:
+5 compañías de hiper-crecimiento, contraprueba completa en 3 empresas
+maduras, y dos mecanismos de desviación distintos ya identificados y
+explicados con precisión). yfinance funciona como fuente alternativa sin
+límite de cuota. Opciones para la próxima sesión, de más a menos
+prioritaria:
 
-1. **Terminar la contraprueba de empresas maduras** en cuanto se
-   resetee la cuota de Alpha Vantage (25/día, agotada hoy): descargar
-   Procter & Gamble y Johnson & Johnson, correr `value_ticker`/
-   `validate_universe` sobre las 3 (KO+PG+JNJ) con WACC vía comparables
-   real (no el simplificado de hoy), y confirmar que la desviación media
-   se mantiene baja (~5-20%) con más de un dato. Es la pieza que falta
-   para poder decir con solidez estadística, no solo con un caso, que el
-   motor es fiable en negocios maduros.
-2. **Fase 5 (capa generativa):** el Investment Memo ya tiene contenido
-   real y no trivial que redactar — no solo "el precio objetivo es X",
-   sino "el modelo conservador da X; en negocios maduros esto suele
-   estar a menos de un 20% del consenso, pero en hiper-crecimiento con
-   CapEx pesado (como este caso) la desviación es mucho mayor porque
-   asume reversión a la media en vez de dar por hecho que la inversión
-   actual ya es productiva". El prompt debe recibir el desglose de
-   `DCFResult` + `ValuationCheck`, nunca datos crudos — el LLM sigue sin
-   calcular nada.
-3. Exponer una tesis "alcista" vs. "conservadora" explícita (dos
-   `ProjectionAssumptions` predefinidos) antes o junto con la Fase 5.
-4. yfinance como fuente alternativa de precio/beta (no bloquea nada,
-   `market_snapshot` ya cubre lo mismo vía Alpha Vantage) — bajo interés
-   ahora mismo.
+1. **Fase 5 (capa generativa):** el Investment Memo tiene ahora contenido
+   real y con matices para redactar — no un mensaje único ("conservador
+   vs. mercado"), sino condicionado al mecanismo detectado: CapEx>>D&A
+   en crecimiento, spread WACC-g estrecho o outliers de un año en
+   maduras, o ninguno de los dos (caso KO, alta confianza). El prompt
+   debe recibir el desglose de `DCFResult` + `ValuationCheck` + qué aviso
+   (`warnings`) saltó, nunca datos crudos — el LLM sigue sin calcular
+   nada. Requiere una API key de Anthropic (no configurada todavía en
+   `.env`) para probarlo en vivo; la construcción del prompt y el
+   formateo del input SÍ se pueden testear sin key (mockeando la llamada).
+2. Exponer una tesis "alcista" vs. "conservadora" explícita (dos
+   `ProjectionAssumptions` predefinidos) — más urgente ahora que se ve
+   que ni "conservador" ni "agresivo" describen bien el comportamiento
+   real del motor; mejor exponer el mecanismo (spread WACC-g, fade de
+   márgenes) directamente que una etiqueta binaria.
+3. Opcional, bajo interés: usar `yfinance_provider.py` como fuente
+   primaria en vez de Alpha Vantage para no depender de ninguna cuota
+   diaria — a cambio de menos años de histórico (4 vs. 15-20), lo que
+   podría degradar el CAGR de ingresos con `lookback_years` altos.
 
 **Ya no aplica el veto anterior a Streamlit/LLM** ("no construir la
-interfaz antes de validar") — la Fase 7 ya está medida y su resultado ya
-está explicado. Sigue aplicando el principio de fondo: cualquier UI debe
-mostrar el número junto a su explicación (supuestos, desviación vs.
-consenso), nunca el número solo.
+interfaz antes de validar") — la Fase 7 y su contraprueba ya están
+medidas y explicadas. Sigue aplicando el principio de fondo: cualquier UI
+debe mostrar el número junto a su explicación (supuestos, mecanismo de
+desviación detectado), nunca el número solo.
