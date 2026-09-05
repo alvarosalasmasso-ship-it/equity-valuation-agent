@@ -1,10 +1,16 @@
-pandas
-numpy
-yfinance
-anthropic
-streamlit
-pytest
-openpyxl
-requests
-python-dotenv
-matplotlib
+# Versiones fijadas sobre un venv que se sabe funcional (2026-09-06,
+# auditoría sesión 15, hallazgo M1). Antes no había ningún pin -- una
+# instalación fresca dentro de unos meses podía traer versiones
+# incompatibles sin ningún aviso. Solo se fijan las dependencias
+# directas (las que se importan en el código); las transitivas las
+# resuelve pip a partir de estas.
+pandas==3.0.5
+numpy==2.5.2
+yfinance==1.7.0
+anthropic==1.4.0
+streamlit==1.63.0
+pytest==9.1.1
+openpyxl==3.1.5
+requests==2.34.2
+python-dotenv==1.2.3
+matplotlib==3.11.1

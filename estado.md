@@ -805,6 +805,21 @@ fix de C1.
 Servidor Streamlit reiniciado y verificado arrancando limpio (puerto
 8514, `/_stcore/health` → `ok`, sin tracebacks en el log).
 
+### Detalle — M1 corregido: versiones fijadas en `requirements.txt`
+
+Las 10 dependencias directas quedaron fijadas a la versión exacta ya
+instalada y verificada en el venv del proyecto (`pandas==3.0.5`,
+`numpy==2.5.2`, `yfinance==1.7.0`, `anthropic==1.4.0`,
+`streamlit==1.63.0`, `pytest==9.1.1`, `openpyxl==3.1.5`,
+`requests==2.34.2`, `python-dotenv==1.2.3`, `matplotlib==3.11.1`) —
+deliberadamente solo las directas, no un `pip freeze` completo con
+transitivas (más legible; pip resuelve el resto a partir de estas).
+
+**Verificado:** `pip install -r requirements.txt --dry-run` sobre el
+venv existente resuelve sin ningún conflicto. Suite completa
+re-ejecutada tras el cambio: 118 tests, todos en verde — el pin no
+cambia ningún comportamiento, solo fija lo que ya estaba en uso.
+
 ## 5. Próximo paso inmediato
 
 Seguir corrigiendo uno por uno, en el orden de `docs/AUDIT.md`:
@@ -812,9 +827,14 @@ Seguir corrigiendo uno por uno, en el orden de `docs/AUDIT.md`:
 1. ~~C1 — Stub period.~~ ✅ Corregido sesión 15.
 2. ~~I3 — Excepciones no controladas.~~ ✅ Corregido sesión 15 (continuación).
 3. ~~I1 — Risk-free rate en vivo.~~ ✅ Corregido sesión 15 (continuación).
-4. **M1 — Fijar versiones** en `requirements.txt`.
+4. ~~M1 — Fijar versiones en `requirements.txt`.~~ ✅ Corregido sesión 15 (continuación).
 5. Resto según interés — I2 y M5 son limitaciones estructurales, no
-   arreglos rápidos.
+   arreglos rápidos. Quedan pendientes: M2 (`gordon_weight=0.8` sin
+   justificación propia), M3 (`DCFInputs` sin validar `wacc>0`/
+   `gordon_weight∈[0,1]`), M4 (Gordon Growth se calcula y avisa aunque
+   su peso sea 0), M5 (sin verificación de divisa de reporte), I2
+   (Treasury Stock Method construido pero no usado — estructural), I4
+   (universo de comparables pequeño — estructural).
 
 **Principio de fondo que sigue aplicando:** cualquier UI debe mostrar el
 número junto a su explicación, nunca el número solo. No revertir un

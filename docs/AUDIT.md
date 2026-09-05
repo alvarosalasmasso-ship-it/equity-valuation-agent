@@ -28,9 +28,9 @@ y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
 **1 hallazgo crítico (✅ corregido), 4 importantes (2 ✅ corregidos), 5
-moderados, 3 informativos.** Se está corrigiendo uno por uno, en el
-orden de prioridad de la sección final — este documento se actualiza a
-medida que cada uno se cierra.
+moderados (1 ✅ corregido), 3 informativos.** Se está corrigiendo uno
+por uno, en el orden de prioridad de la sección final — este documento
+se actualiza a medida que cada uno se cierra.
 
 ---
 
@@ -247,7 +247,7 @@ verificado con el impacto cuantitativo real ya medido (AAPL empeoró de
 
 ## Moderado
 
-### M1. `requirements.txt` sin versiones fijadas
+### M1. `requirements.txt` sin versiones fijadas — ✅ CORREGIDO (sesión 15)
 
 Ninguna dependencia tiene versión pinneada (`pandas` en vez de
 `pandas==3.0.5`). Verificado: las versiones realmente instaladas en el
@@ -257,6 +257,21 @@ traer versiones con cambios incompatibles (p. ej., un pandas 4.x)
 sin ningún aviso. Para un proyecto que se presenta como riguroso, esto
 es una brecha de reproducibilidad real, fácil de cerrar (`pip freeze > requirements.txt`
 sobre el venv actual, curado a mano).
+
+**Cómo se corrigió:** las 10 dependencias directas de `requirements.txt`
+quedaron fijadas a la versión exacta ya instalada y verificada en el
+venv del proyecto (`pandas==3.0.5`, `numpy==2.5.2`, `yfinance==1.7.0`,
+`anthropic==1.4.0`, `streamlit==1.63.0`, `pytest==9.1.1`,
+`openpyxl==3.1.5`, `requests==2.34.2`, `python-dotenv==1.2.3`,
+`matplotlib==3.11.1`). Deliberadamente solo las directas, no un
+`pip freeze` completo con transitivas — más legible y suficiente, ya
+que pip resuelve el resto a partir de estas.
+
+**Verificado:** `pip install -r requirements.txt --dry-run` sobre el
+venv existente resuelve sin ningún conflicto ("Requirement already
+satisfied" en las 10 líneas y en todas sus transitivas). Suite completa
+re-ejecutada tras el cambio: 118 tests, todos en verde — el pin no
+cambia ningún comportamiento, solo fija lo que ya estaba en uso.
 
 ### M2. `gordon_weight` por defecto (0.8) es una constante heredada, no justificada para el caso general
 
@@ -371,7 +386,7 @@ aviso en la interfaz.
 3. ~~**I1 (risk-free rate en vivo)**~~ — ✅ corregido en esta sesión
    (risk-free rate vía `^TNX`/yfinance con fallback explícito; ERP
    convertida en slider ajustable, sin fuente en vivo fiable disponible).
-4. **M1 (pin de versiones)** — trivial, buena higiene antes de
-   compartir el repo públicamente.
+4. ~~**M1 (pin de versiones)**~~ — ✅ corregido en esta sesión (10
+   dependencias directas fijadas a la versión ya verificada en el venv).
 5. Resto, según interés — I2 y M5 son limitaciones más estructurales
    (dependen de datos que no tenemos fácilmente) que bugs a corregir.
