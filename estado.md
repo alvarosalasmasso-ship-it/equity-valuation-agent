@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-05 (sesión 2)
+**Última actualización:** 2026-09-05 (sesión 3)
 
 ---
 
@@ -58,10 +58,10 @@ IA (que solo redacta, nunca calcula).
 | Fase | Estado | Notas |
 |---|---|---|
 | 0 — Alcance | ✅ Hecho | Idea #1 elegida (agente de valoración), sentiment como extensión Fase 2 |
-| 1 — Motor de datos (Alpha Vantage + yfinance) | 🟡 En marcha | Ver detalle abajo. Falta: yfinance, y descargar histórico de los otros 4 tickers piloto |
+| 1 — Motor de datos (Alpha Vantage + yfinance) | 🟡 En marcha | Falta: yfinance, y descargar histórico de los otros 4 tickers piloto |
 | 2 — Motor de valoración (`engine/valuation.py`) | ✅ Hecho | Ver detalle abajo |
-| 3 — Motor de ratios y comps (`ratios.py`, `comps.py`) | ⬜ No empezado | Necesario para: (a) ratios de rentabilidad/apalancamiento, (b) tabla de comparables, (c) múltiplo EV/EBITDA para el modo blended del valor terminal |
-| 4 — Tests unitarios | ✅ Hecho (Fase 1 y 2) | `tests/test_valuation.py` (11) + `tests/test_data_provider.py` (6), 17 tests, todos en verde |
+| 3 — Motor de proyección, ratios y comps | ✅ Hecho | `engine/projections.py`, `engine/ratios.py`, `engine/comps.py` — ver detalle abajo. Falta la matriz de sensibilidad 2D (WACC×g) |
+| 4 — Tests unitarios | ✅ Hecho (Fases 1-3) | 42 tests, todos en verde (`./.venv/Scripts/python.exe -m pytest tests/ -v`) |
 | 5 — Capa generativa (Investment Memo) | ⬜ No empezado | |
 | 6 — Interfaz Streamlit | ⬜ No empezado | |
 | 7 — Validación vs consenso de analistas | ⬜ No empezado | |
@@ -126,6 +126,66 @@ en Fase 3/6, no bloquea nada.
   `COMPANY_OVERVIEW`, así que no bloquea nada, es una mejora de fiabilidad
   futura, no un requisito.
 
+### Detalle Fase 3 — `engine/projections.py`, `engine/ratios.py`, `engine/comps.py`
+
+**Motor de proyección** (`projections.py`): deriva supuestos de
+crecimiento/márgenes de los históricos de `historical_financials`
+(CAGR de ingresos con fade lineal hacia la tasa terminal; márgenes de
+EBIT/D&A/CapEx/ΔNWC como media de los últimos N años, planos). API
+diseñada para ser sobreescrita explícitamente
+(`ProjectionAssumptions`), no una caja negra.
+
+**⚠️ Hallazgo importante de esta sesión — probado con datos reales de
+AMZN de punta a punta** (`historical_financials` -> `default_assumptions_from_history`
+-> `project_financials` -> `run_dcf`): el precio implícito resultante
+(~$50-76) queda muy por debajo del precio de mercado (~$258) y del
+consenso de analistas (~$328). Diagnóstico completo en
+`docs/METHODOLOGY.md` sección 5. Resumen:
+
+- El motor de valoración y el proveedor de datos ya están validados
+  exactos contra el Excel — el gap NO viene de un bug en esas piezas.
+- Viene de que el motor de proyección por defecto **mantiene el margen
+  EBIT y el % de CapEx planos al promedio histórico**, sin fade, mientras
+  que Amazon está en plena expansión de margen (6%→14% en 3 años) y en
+  un pico de CapEx (inversión en IA). Un promedio histórico simple no
+  captura ninguna de las dos cosas, y las mantiene "congeladas" así
+  durante los 5 años de proyección.
+- **No se ha ajustado el supuesto por defecto hasta que el número
+  cuadrase con el mercado** — sería sobreajustar a un caso conocido,
+  justo lo que este proyecto quiere evitar demostrar que NO hace. En su
+  lugar queda documentado como limitación conocida y como el argumento
+  concreto de por qué hace falta la Fase 7 (validación contra consenso)
+  y por qué la futura interfaz debe mostrar los supuestos usados y
+  avisar de desviaciones grandes frente al consenso, en vez de devolver
+  solo un número.
+- Al corregir esto de paso encontré y arreglé un bug real: el código
+  reutilizaba la misma ventana de años tanto para el CAGR de ingresos
+  (necesita N+1 puntos) como para la media de márgenes (debe usar
+  exactamente N puntos) — colaba un año de más, más antiguo, en la media
+  de márgenes. Ahora están separadas, con test de regresión
+  (`test_default_assumptions_margin_window_excludes_extra_older_year`).
+- **Mejora identificada, no implementada:** fade de márgenes/CapEx/D&A
+  hacia un valor de "estado estable" en el año terminal, igual que ya se
+  hace con el crecimiento de ingresos. Requiere decidir un valor
+  terminal objetivo razonado (no solo mecánico) — buen punto de partida
+  para la próxima sesión si se quiere seguir puliendo el motor de
+  proyección antes de pasar a Streamlit/LLM.
+
+**Comps** (`comps.py`): `build_comps_table()` agrega snapshots de varios
+tickers en una tabla indexada por símbolo; `peer_average_multiple()` da
+la media/mediana de un múltiplo entre peers (excluyendo opcionalmente el
+ticker objetivo) — listo para alimentar el múltiplo de salida del valor
+terminal con un múltiplo de *mercado*, no el de la propia empresa.
+
+**Ratios** (`ratios.py`): ROE por Dupont, ROIC vs. WACC (creación de
+valor), Debt/EBITDA, cobertura de intereses, current ratio — la tabla de
+"Ratios y comparables" del blueprint, sección 2.
+
+`historical_financials` se amplió con los campos que estas piezas
+necesitan (ebitda, interest_expense, total_assets, total_equity,
+total_debt, cash, current_assets, current_liabilities) y `market_snapshot`
+con ev_to_revenue, pe_ratio, price_to_sales, price_to_book.
+
 ## 4. Estado técnico del entorno
 
 - Python 3.12.10 disponible vía `python` (⚠️ no `python3`) en el sistema.
@@ -146,24 +206,29 @@ en Fase 3/6, no bloquea nada.
 
 ## 5. Próximo paso inmediato
 
-**Seguir Fase 1 / arrancar Fase 3.** Dos caminos razonables, a decidir
-en la próxima sesión:
+El pipeline ya funciona de punta a punta (datos -> proyección ->
+valoración) para un ticker que no es Amazon, mecánicamente correcto pero
+con supuestos de proyección que hay que revisar caso por caso (ver
+hallazgo de la sección 3). Opciones razonables para la próxima sesión,
+de más a menos prioritaria:
 
-1. Completar Fase 1: descargar histórico de los otros 4 tickers piloto
-   (MSFT, GOOGL, META, AAPL) — con cuidado de la cuota diaria — y
-   confirmar que `historical_financials` funciona igual de bien con ellos
-   (distintos formatos de balance, p.ej. bancos o empresas con deuda
-   compleja podrían romper supuestos del cálculo de NWC).
-2. Empezar Fase 3 (`engine/comps.py`): tabla de comparables (múltiplos
-   EV/EBITDA, EV/Sales, P/E) entre los 5 tickers piloto — esto es lo que
-   falta para poder activar el modo "blended terminal value" del motor
-   con datos reales en vez del caso Amazon del Excel.
+1. **Mejorar el motor de proyección:** fade de márgenes/CapEx hacia un
+   estado estable (no solo el crecimiento de ingresos) — es lo que más
+   acercaría el precio implícito de AMZN a un rango creíble sin hacer
+   trampa ajustando a mano.
+2. **Fase 7 adelantada (validación):** correr el pipeline completo sobre
+   los 5 tickers piloto y comparar contra consenso de analistas
+   (`AnalystTargetPrice`, ya disponible en `market_snapshot`) para medir
+   la desviación media del motor por defecto — da una cifra real y
+   honesta para el CV en vez de esperar a tener la app terminada.
+3. Completar Fase 1: descargar histórico de los otros 4 tickers piloto
+   (MSFT, GOOGL, META, AAPL) — con cuidado de la cuota diaria (quedan
+   ~15-20 peticiones hoy) — y confirmar que `historical_financials`
+   funciona igual de bien con ellos.
+4. Matriz de sensibilidad 2D (WACC × g) en `engine/valuation.py` —
+   pendiente desde la Fase 2, sencilla de añadir (grid de `run_dcf`).
 
-Nota: todavía no existe una capa de **proyección** (llevar los
-históricos de Alpha Vantage a los 5-10 años futuros que pide
-`DCFInputs`). El Excel lo resuelve con el "Operating Model" (supuestos
-de % crecimiento / % sobre ventas por segmento) — no está mapeado en
-`docs/METHODOLOGY.md` todavía porque decidimos priorizar primero validar
-el motor de valoración y el motor de datos por separado. Es el siguiente
-bloque que falta para cerrar el pipeline de punta a punta con un ticker
-que no sea Amazon.
+**No recomendado todavía:** Streamlit ni la capa generativa (Fases 5-6).
+El blueprint es explícito en esto y el hallazgo de hoy lo confirma —
+construir la interfaz antes de que las proyecciones sean fiables
+enseñaría números poco defendibles con una capa bonita encima.

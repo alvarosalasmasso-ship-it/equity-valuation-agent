@@ -167,6 +167,7 @@ def historical_financials(client: AlphaVantageClient, symbol: str,
     for i, year in enumerate(years):
         inc = income[year]
         cf = cash_flow[year]
+        bs = balance[year]
 
         revenue = _to_float(inc.get("totalRevenue"))
         ebit = _to_float(inc.get("ebit")) or _to_float(inc.get("operatingIncome"))
@@ -187,11 +188,19 @@ def historical_financials(client: AlphaVantageClient, symbol: str,
             "fiscal_year": int(year),
             "revenue": revenue,
             "ebit": ebit,
+            "ebitda": _to_float(inc.get("ebitda")),
             "tax_rate": tax_rate,
             "d_and_a": d_and_a,
             "capex": capex,
             "change_in_nwc": change_in_nwc,
             "net_income": _to_float(inc.get("netIncome")),
+            "interest_expense": _to_float(inc.get("interestExpense")),
+            "total_assets": _to_float(bs.get("totalAssets")),
+            "total_equity": _to_float(bs.get("totalShareholderEquity")),
+            "total_debt": _to_float(bs.get("shortLongTermDebtTotal")),
+            "cash": _to_float(bs.get("cashAndShortTermInvestments")),
+            "current_assets": _to_float(bs.get("totalCurrentAssets")),
+            "current_liabilities": _to_float(bs.get("totalCurrentLiabilities")),
         })
 
     df = pd.DataFrame(rows).sort_values("fiscal_year").reset_index(drop=True)
@@ -221,6 +230,10 @@ def market_snapshot(client: AlphaVantageClient, symbol: str, use_cache: bool = T
         "price": (market_cap / shares_outstanding) if (market_cap and shares_outstanding) else None,
         "beta": _to_float(overview.get("Beta")),
         "ev_to_ebitda": _to_float(overview.get("EVToEBITDA")),
+        "ev_to_revenue": _to_float(overview.get("EVToRevenue")),
+        "pe_ratio": _to_float(overview.get("PERatio")),
+        "price_to_sales": _to_float(overview.get("PriceToSalesRatioTTM")),
+        "price_to_book": _to_float(overview.get("PriceToBookRatio")),
         "analyst_target_price": _to_float(overview.get("AnalystTargetPrice")),
         "cash": _to_float(latest_bs.get("cashAndShortTermInvestments")),
         "total_debt": _to_float(latest_bs.get("shortLongTermDebtTotal")),

@@ -143,11 +143,86 @@ inventadas. Esto cumple la Fase 4 del blueprint: "validar el motor contra
 un caso conocido a mano" — aquí el caso conocido es el propio modelo
 profesional de referencia.
 
-## 5. Pendiente de mapear (fases futuras)
+## 5. Motor de proyección (`engine/projections.py`) — Fase 3
 
-- `Operating Model`: lógica de proyección de Revenue/EBIT/D&A/CapEx/NWC a
-  partir de supuestos de % crecimiento y % sobre ventas (relevante para
-  `engine/ratios.py` y para decidir qué supuestos pedirá el agente al
-  generar sus propias proyecciones a partir de datos de Alpha Vantage).
-- `Comps`: estructura de la tabla de comparables (múltiplos EV/EBITDA,
-  EV/Sales, P/E) -> `engine/comps.py`.
+El Excel resuelve la proyección con el "Operating Model": supuestos de
+% crecimiento / % sobre ventas fijados a mano por el analista, por
+segmento. Para un ticker arbitrario no hay un analista fijándolos a
+mano, así que `default_assumptions_from_history()` los deriva del propio
+histórico de forma sistemática:
+
+- **Crecimiento de ingresos:** CAGR de los últimos `lookback_years` años,
+  con fade lineal hacia la tasa de crecimiento terminal a lo largo del
+  horizonte de proyección (evita extrapolar el crecimiento actual a
+  perpetuidad).
+- **Márgenes** (EBIT, D&A, CapEx, ΔNWC como % de ventas) y **tipo
+  impositivo:** media de exactamente los últimos `lookback_years` años,
+  mantenidos constantes durante toda la proyección (sin fade).
+
+Estas dos ventanas (CAGR vs. márgenes) están separadas a propósito en el
+código: el CAGR necesita `lookback_years + 1` puntos (los extremos del
+periodo), pero la media de márgenes debe usar exactamente
+`lookback_years` puntos — mezclarlas cuela un año adicional, más
+antiguo, en la media de márgenes (bug real encontrado y corregido
+durante el desarrollo, ver `tests/test_projections.py::test_default_assumptions_margin_window_excludes_extra_older_year`).
+
+### Limitación conocida, encontrada en pruebas con datos reales (AMZN)
+
+Al correr el pipeline completo (`historical_financials` -> `default_assumptions_from_history`
+-> `project_financials` -> `run_dcf`) con datos reales de Amazon, el
+precio implícito resultante (~$50-76, según ventana) está muy por debajo
+del precio de mercado (~$258) y del consenso de analistas (~$328).
+
+Diagnóstico: **no es un bug del motor de valoración** (ya validado
+exacto contra el Excel) ni del proveedor de datos (ya validado exacto
+contra el Excel). Es una limitación real de la metodología de proyección
+por defecto, específica de este tipo de compañía:
+
+1. **Mantener el margen EBIT plano al promedio histórico infravalora
+   compañías en expansión de margen.** Amazon pasó de ~6% a ~14% de
+   margen EBIT en 3 años (escalado de AWS/publicidad). Un promedio de 3-5
+   años queda muy por debajo del margen actual, y se mantiene así los 5
+   años de proyección (sin fade, a diferencia del crecimiento de
+   ingresos).
+2. **CapEx elevado (ciclo de inversión en IA) mantenido plano castiga el
+   FCF de todo el horizonte.** Sin un supuesto de "el capex se normaliza
+   tras el pico de inversión", el modelo asume el pico actual de CapEx
+   como la nueva normalidad durante 5 años seguidos.
+3. Como consecuencia de (1) y (2), el UFCF proyectado es conservador, lo
+   que golpea especialmente al valor terminal por Gordon Growth (que se
+   pondera 80% en el blend por defecto) — en las pruebas, Gordon Growth
+   dio ~$768bn de TV frente a ~$2,163bn del múltiplo de salida, una
+   brecha de ~2.8x entre los dos métodos que en el modelo original del
+   Excel no aparece porque el analista modela cada segmento con sus
+   propios supuestos de largo plazo, no un promedio histórico global.
+
+**Esto no se ha "arreglado" ajustando los supuestos por defecto hasta
+que el número cuadre con el mercado** — eso sería sobreajustar el modelo
+a un caso conocido, exactamente lo que el principio de rigor de este
+proyecto quiere evitar. En su lugar: `ProjectionAssumptions` está
+diseñado para ser sobreescrito explícitamente por el usuario/analista
+caso por caso, y el hallazgo queda documentado aquí como justificación
+concreta de por qué la Fase 7 (validación contra consenso) es necesaria
+y de por qué la futura interfaz debe mostrar los supuestos usados y
+avisar cuando el resultado se desvía mucho del consenso, en vez de
+limitarse a mostrar un número.
+
+**Mejora identificada para una futura sesión (no implementada aún):**
+hacer fade también de márgenes/CapEx/D&A hacia un valor de "estado
+estable" en el año terminal (no solo del crecimiento de ingresos), como
+hacen los modelos profesionales. Requiere decidir un valor terminal
+objetivo razonado, no solo mecánico.
+
+## 6. Tabla de comparables y ratios — Fase 3
+
+- `engine/comps.py`: `build_comps_table()` agrega varios
+  `market_snapshot()` en una tabla indexada por ticker;
+  `peer_average_multiple()` calcula la media/mediana de un múltiplo entre
+  peers, excluyendo opcionalmente el ticker objetivo — pensado para
+  alimentar `exit_multiple_terminal_value()` con el múltiplo de mercado
+  de los comparables en vez del múltiplo de la propia empresa (que puede
+  estar ya sobre/infravalorado).
+- `engine/ratios.py`: ROE por Dupont, ROIC vs. WACC (creación de valor),
+  Debt/EBITDA, cobertura de intereses, current ratio — tabla de "Ratios y
+  comparables" del blueprint sección 2, implementada como funciones
+  puras sobre números sueltos (no DataFrames) para facilidad de testeo.
