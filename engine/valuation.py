@@ -258,6 +258,17 @@ class DCFInputs:
             raise ValueError("Todas las series de proyección deben tener la misma longitud")
         if self.diluted_shares <= 0:
             raise ValueError("diluted_shares debe ser positivo")
+        # Auditoría sesión 15, hallazgo M3: nunca ocurre viniendo del
+        # pipeline real (wacc siempre viene de wacc_builder.build_wacc(),
+        # gordon_weight de un slider acotado en la app), pero la clase en
+        # sí no lo garantizaba si se construye de forma directa -- un WACC
+        # <=0 o un peso fuera de [0,1] no es un escenario válido de DCF,
+        # es un error de programación que debe fallar aquí, no producir
+        # un precio implícito sin sentido más adelante.
+        if self.wacc <= 0:
+            raise ValueError("wacc debe ser positivo")
+        if not (0.0 <= self.gordon_weight <= 1.0):
+            raise ValueError("gordon_weight debe estar en [0, 1]")
 
 
 @dataclass

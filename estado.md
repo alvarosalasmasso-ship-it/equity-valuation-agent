@@ -820,6 +820,22 @@ venv existente resuelve sin ningún conflicto. Suite completa
 re-ejecutada tras el cambio: 118 tests, todos en verde — el pin no
 cambia ningún comportamiento, solo fija lo que ya estaba en uso.
 
+### Detalle — M3 corregido: `DCFInputs` valida `wacc>0` y `gordon_weight∈[0,1]`
+
+Dos comprobaciones nuevas en `DCFInputs.__post_init__()` (mismo estilo
+que las ya existentes de longitudes/`diluted_shares`): `wacc<=0` y
+`gordon_weight` fuera de `[0.0, 1.0]` lanzan `ValueError` explícito. Los
+límites 0.0 y 1.0 quedan incluidos a propósito — Gordon puro o múltiplo
+puro son escenarios válidos, no un error.
+
+**Verificado:** arreglo puramente defensivo — confirmado que ningún
+test ni ninguna ruta del pipeline real construye `DCFInputs` fuera de
+estos rangos (WACC siempre positivo por construcción, `gordon_weight`
+siempre viene de un slider acotado en la app), así que no cambia ningún
+resultado existente. 4 tests de regresión nuevos. **122 tests en total,
+todos en verde.** Servidor Streamlit reiniciado y verificado arrancando
+limpio.
+
 ## 5. Próximo paso inmediato
 
 Seguir corrigiendo uno por uno, en el orden de `docs/AUDIT.md`:
@@ -828,10 +844,10 @@ Seguir corrigiendo uno por uno, en el orden de `docs/AUDIT.md`:
 2. ~~I3 — Excepciones no controladas.~~ ✅ Corregido sesión 15 (continuación).
 3. ~~I1 — Risk-free rate en vivo.~~ ✅ Corregido sesión 15 (continuación).
 4. ~~M1 — Fijar versiones en `requirements.txt`.~~ ✅ Corregido sesión 15 (continuación).
-5. Resto según interés — I2 y M5 son limitaciones estructurales, no
+5. ~~M3 — Validación de `wacc`/`gordon_weight` en `DCFInputs`.~~ ✅ Corregido sesión 15 (continuación).
+6. Resto según interés — I2 y M5 son limitaciones estructurales, no
    arreglos rápidos. Quedan pendientes: M2 (`gordon_weight=0.8` sin
-   justificación propia), M3 (`DCFInputs` sin validar `wacc>0`/
-   `gordon_weight∈[0,1]`), M4 (Gordon Growth se calcula y avisa aunque
+   justificación propia), M4 (Gordon Growth se calcula y avisa aunque
    su peso sea 0), M5 (sin verificación de divisa de reporte), I2
    (Treasury Stock Method construido pero no usado — estructural), I4
    (universo de comparables pequeño — estructural).

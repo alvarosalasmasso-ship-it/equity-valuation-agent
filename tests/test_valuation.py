@@ -236,6 +236,43 @@ def test_dcf_inputs_rejects_mismatched_lengths():
         )
 
 
+def test_dcf_inputs_rejects_non_positive_wacc():
+    """Auditoría sesión 15, hallazgo M3: nunca ocurre viniendo del
+    pipeline real, pero DCFInputs no lo garantizaba si se construye de
+    forma directa -- un WACC<=0 no es un escenario válido de DCF."""
+    with pytest.raises(ValueError, match="wacc"):
+        DCFInputs(
+            ebit=[100], tax_rate=[0.2], d_and_a=[10], capex=[10], change_in_nwc=[0],
+            wacc=0.0, terminal_growth_rate=0.02, diluted_shares=1,
+        )
+
+
+def test_dcf_inputs_rejects_gordon_weight_above_one():
+    with pytest.raises(ValueError, match="gordon_weight"):
+        DCFInputs(
+            ebit=[100], tax_rate=[0.2], d_and_a=[10], capex=[10], change_in_nwc=[0],
+            wacc=0.08, terminal_growth_rate=0.02, diluted_shares=1, gordon_weight=1.5,
+        )
+
+
+def test_dcf_inputs_rejects_negative_gordon_weight():
+    with pytest.raises(ValueError, match="gordon_weight"):
+        DCFInputs(
+            ebit=[100], tax_rate=[0.2], d_and_a=[10], capex=[10], change_in_nwc=[0],
+            wacc=0.08, terminal_growth_rate=0.02, diluted_shares=1, gordon_weight=-0.1,
+        )
+
+
+def test_dcf_inputs_accepts_gordon_weight_boundaries():
+    """0.0 y 1.0 son válidos (Gordon puro o múltiplo puro), no deben
+    rechazarse por un error de comparación estricta vs. inclusiva."""
+    for boundary in (0.0, 1.0):
+        DCFInputs(
+            ebit=[100], tax_rate=[0.2], d_and_a=[10], capex=[10], change_in_nwc=[0],
+            wacc=0.08, terminal_growth_rate=0.02, diluted_shares=1, gordon_weight=boundary,
+        )
+
+
 def test_gordon_growth_requires_wacc_above_terminal_growth():
     inputs = DCFInputs(
         ebit=[100], tax_rate=[0.2], d_and_a=[10], capex=[10], change_in_nwc=[0],

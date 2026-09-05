@@ -28,7 +28,7 @@ y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
 **1 hallazgo crítico (✅ corregido), 4 importantes (2 ✅ corregidos), 5
-moderados (1 ✅ corregido), 3 informativos.** Se está corrigiendo uno
+moderados (2 ✅ corregidos), 3 informativos.** Se está corrigiendo uno
 por uno, en el orden de prioridad de la sección final — este documento
 se actualiza a medida que cada uno se cierra.
 
@@ -286,7 +286,7 @@ cada supuesto (ver secciones 5-16 de `docs/METHODOLOGY.md`). Al menos
 merece una nota explícita de que es una elección arbitraria heredada,
 no derivada.
 
-### M3. `DCFInputs` no valida `wacc > 0` ni `0 <= gordon_weight <= 1`
+### M3. `DCFInputs` no valida `wacc > 0` ni `0 <= gordon_weight <= 1` — ✅ CORREGIDO (sesión 15)
 
 `__post_init__` valida longitudes de listas y `diluted_shares > 0`, pero
 no protege contra un WACC negativo o cero, ni contra un `gordon_weight`
@@ -297,6 +297,22 @@ construcción, gordon_weight siempre viene de un slider acotado a
 [0,1]), pero la clase en sí no lo garantiza si se usa directamente
 (p. ej. en un test futuro, o si alguien integra `engine/` en otro
 proyecto sin pasar por la interfaz).
+
+**Cómo se corrigió:** dos comprobaciones nuevas en `DCFInputs.__post_init__()`:
+`wacc <= 0` y `not (0.0 <= gordon_weight <= 1.0)`, ambas con
+`ValueError` explícito — mismo estilo que las validaciones ya
+existentes de longitudes y `diluted_shares`. Los límites 0.0 y 1.0
+quedan incluidos a propósito (Gordon puro o múltiplo puro son
+escenarios válidos, no un error).
+
+**Verificado:** 4 tests de regresión nuevos (WACC no positivo,
+`gordon_weight` por encima de 1, por debajo de 0, y aceptación
+explícita de ambos límites 0.0/1.0). Confirmado que ningún test ni
+ninguna ruta del pipeline real (`scenarios.py`, `validation.py`,
+`app/streamlit_app.py`) construye `DCFInputs` con valores fuera de
+estos rangos — el cambio es puramente defensivo, no modifica ningún
+resultado existente. 122 tests en total, todos en verde. Servidor
+Streamlit reiniciado y verificado arrancando limpio tras el cambio.
 
 ### M4. `gordon_growth_terminal_value()` se calcula siempre, incluso con `gordon_weight=0`
 
@@ -370,7 +386,7 @@ aviso en la interfaz.
 - **El múltiplo de salida se corrigió** de "propio de la empresa" a
   "mediana de comparables" (sesión 14), con el efecto mixto reportado
   con honestidad en vez de maquillado.
-- **118 tests, cero dependen de red** — toda la suite corre offline con
+- **122 tests, cero dependen de red** — toda la suite corre offline con
   fixtures fieles al formato real de las APIs.
 - **Capa generativa desacoplada del cálculo por diseño**, no como
   parche — el LLM nunca ve datos crudos, solo un paquete ya cerrado.
@@ -388,5 +404,8 @@ aviso en la interfaz.
    convertida en slider ajustable, sin fuente en vivo fiable disponible).
 4. ~~**M1 (pin de versiones)**~~ — ✅ corregido en esta sesión (10
    dependencias directas fijadas a la versión ya verificada en el venv).
-5. Resto, según interés — I2 y M5 son limitaciones más estructurales
+5. ~~**M3 (validación de `wacc`/`gordon_weight` en `DCFInputs`)**~~ — ✅
+   corregido en esta sesión (arreglo mecánico y defensivo, no cambia
+   ningún resultado del pipeline real).
+6. Resto, según interés — I2 y M5 son limitaciones más estructurales
    (dependen de datos que no tenemos fácilmente) que bugs a corregir.
