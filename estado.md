@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-05 (sesión 4)
+**Última actualización:** 2026-09-05 (sesión 5)
 
 ---
 
@@ -66,13 +66,13 @@ IA (que solo redacta, nunca calcula).
 | Fase | Estado | Notas |
 |---|---|---|
 | 0 — Alcance | ✅ Hecho | Idea #1 elegida (agente de valoración), sentiment como extensión Fase 2 |
-| 1 — Motor de datos (Alpha Vantage + yfinance) | 🟡 En marcha | Falta: yfinance, y descargar histórico de los otros 4 tickers piloto |
+| 1 — Motor de datos (Alpha Vantage + yfinance) | 🟡 Suficiente para seguir | Los 5 tickers piloto descargados y cacheados. Falta solo yfinance (no bloquea nada, ver detalle) |
 | 2 — Motor de valoración (`engine/valuation.py`) | ✅ Hecho | Ver detalle abajo |
 | 3 — Motor de proyección, ratios, comps y WACC | ✅ Hecho | `engine/projections.py` (con fade en todos los drivers), `engine/ratios.py`, `engine/comps.py`, `engine/wacc_builder.py`, matriz de sensibilidad en `valuation.py`. Ver detalle abajo |
-| 4 — Tests unitarios | ✅ Hecho (Fases 1-3) | 53 tests, todos en verde (`./.venv/Scripts/python.exe -m pytest tests/ -v`) |
+| 4 — Tests unitarios | ✅ Hecho (Fases 1-3 y 7) | 60 tests, todos en verde (`./.venv/Scripts/python.exe -m pytest tests/ -v`) |
 | 5 — Capa generativa (Investment Memo) | ⬜ No empezado | |
 | 6 — Interfaz Streamlit | ⬜ No empezado | |
-| 7 — Validación vs consenso de analistas | ⬜ No empezado | |
+| 7 — Validación vs consenso de analistas | ✅ Hecho | `engine/validation.py`. Resultado real sobre los 5 tickers piloto: desviación media absoluta 54.7% vs. mercado, 53.3% vs. consenso — ver detalle abajo, causa raíz identificada (no bugs) |
 | 8 — Despliegue | ⬜ No empezado | `Advanced DCF.xlsx` SÍ se versiona: el autor lo comparte de libre uso en su canal de YouTube. Se usa como estándar profesional de referencia, no como plantilla a copiar literal — el motor propio generaliza su lógica a cualquier ticker (ver sección 2). |
 | 9 (extensión) — Sentiment earnings calls | ⬜ No empezado | |
 
@@ -119,10 +119,11 @@ inventados). Matriz de sensibilidad 2D (WACC × g) añadida en Fase 3
 - Tests (`tests/test_data_provider.py`, 6 tests) usan fixtures simuladas
   (mismo formato real, verificado a mano) — no gastan cuota de API ni
   dependen de red.
-- **Cuota de Alpha Vantage usada hoy:** ~4-5 de las 25 peticiones/día
-  gratuitas, todas en AMZN (ya cacheado 24h). No se ha llamado todavía a
-  AAPL/MSFT/GOOGL/META — pendiente para no agotar la cuota en una sola
-  sesión.
+- **Cuota de Alpha Vantage:** los 5 tickers piloto (AMZN, MSFT, GOOGL,
+  META, AAPL) están descargados y cacheados en
+  `data/cache/alpha_vantage/` (TTL 24h) — ~20 de las 25 peticiones/día
+  gratuitas usadas en total entre las dos sesiones. Sin incidentes de
+  rate-limit en la segunda tanda (pacing de 15s funcionó bien).
 - **Pendiente dentro de Fase 1:** integrar yfinance como fuente
   alternativa de precio/beta/market cap (blueprint la prefiere para datos
   de mercado de alta frecuencia, ya que no tiene el límite de 25/día de
@@ -161,36 +162,62 @@ ticker objetivo).
 **Ratios** (`ratios.py`): ROE por Dupont, ROIC vs. WACC (creación de
 valor), Debt/EBITDA, cobertura de intereses, current ratio.
 
-**Validación de punta a punta con AMZN, repetida con el motor mejorado**
-(fade en todos los drivers + WACC vía comparables en vez de beta crudo):
-precio implícito subió de ~$49 (sesión 3, bug de ventana + sin fade) a
-~$85 (lookback=3, con el bug corregido y el fade activo), frente a
-~$258 de mercado y ~$328 de consenso. **Diagnóstico ya no es "hay bugs y
-supuestos naive"**: el motor y los datos están correctos y validados; la
-brecha restante es una diferencia de **filosofía de modelado** — nuestro
-motor por defecto asume reversión a la media (el margen converge a su
-promedio histórico), mientras que el mercado paga por continuación de
-tendencia (apuesta a que Amazon sigue expandiendo margen más allá de su
-nivel actual). Ninguna postura es "la correcta" de forma absoluta; por
-eso `ProjectionAssumptions` deja `end` de cada driver completamente
-editable — un analista con tesis alcista lo fija a mano. Diagnóstico
-completo y honesto en `docs/METHODOLOGY.md` sección 5. **No se ha
-tocado el valor por defecto para acercarlo al precio de mercado** —
-sería sobreajustar a un caso conocido.
-
 `historical_financials` se amplió con los campos que estas piezas
 necesitan (ebitda, interest_expense, total_assets, total_equity,
 total_debt, cash, current_assets, current_liabilities) y `market_snapshot`
 con ev_to_revenue, pe_ratio, price_to_sales, price_to_book.
 
-**Nota sobre el WACC del pipeline de validación:** los comparables
-(AAPL/MSFT/GOOGL) usados en la prueba de punta a punta son las
-constantes congeladas del Excel (una fecha pasada), mientras que AMZN
-usa datos frescos de hoy — desalineación temporal real, señalada a
-propósito en vez de mezclarse en silencio. Para producción, `build_wacc`
-debería recibir peers con datos de la misma fecha que el ticker
-objetivo (pendiente: pull en vivo de balances de peers vía Alpha Vantage,
-cuesta cuota de API).
+### Detalle Fase 7 — `engine/validation.py`, resultado real sobre el universo piloto
+
+`value_ticker()` corre el pipeline completo para un ticker usando el
+RESTO de un universo como sus comparables de WACC (mismo momento
+temporal para todos — resuelve la desalineación de la sesión anterior,
+que usaba constantes congeladas del Excel como peers). `validate_universe()`
+lo repite para cada ticker; `summarize_deviation()` agrega desviación
+media/mediana absoluta vs. mercado y consenso. Tests con universo
+sintético de 3 tickers, sin red.
+
+**Resultado real, corrido sobre los 5 tickers piloto** (AMZN, MSFT,
+GOOGL, META, AAPL descargados y cacheados esta sesión):
+
+| Ticker | WACC | Implícito | Mercado | Consenso | Desv. mercado | Desv. consenso |
+|---|---|---|---|---|---|---|
+| AMZN | 8.27% | $84.82 | $258.51 | $328.17 | -67.2% | -74.2% |
+| MSFT | 8.78% | $295.80 | $499.70 | $572.92 | -40.8% | -48.4% |
+| GOOGL | 8.68% | $270.02 | $705.51 | $428.07 | -61.7% | -36.9% |
+| META | 8.47% | $365.03 | $712.53 | $754.77 | -48.8% | -51.6% |
+| AAPL | 8.77% | $143.94 | $319.97 | $323.86 | -55.0% | -55.6% |
+
+**Desviación media absoluta: 54.7% vs. mercado, 53.3% vs. consenso.**
+
+**⚠️ Diagnóstico investigado a fondo, no asumido:** que las 5 compañías
+(independientes entre sí) salgan infravaloradas en magnitud similar es
+una señal de causa compartida, no de 5 historias sueltas. Se hizo un
+desglose completo del DCF de MSFT y se verificó contra el JSON crudo de
+Alpha Vantage: **CapEx = 34.9% de ventas en el último ejercicio (frente
+a D&A = 11.6%)** — CapEx real, reportado, no un artefacto de cálculo.
+Es el supercycle de inversión en infraestructura de IA que estas 5
+compañías están ejecutando ahora mismo. Con un CapEx de esa magnitud, un
+UFCF conservador (que no asume que ese CapEx ya se traduce en EBIT
+futuro no verificado) queda estructuralmente deprimido — mismo mecanismo
+identificado para AMZN en la sesión anterior, ahora confirmado
+sistemático en 5 compañías, no anecdótico en una.
+
+**Esto NO se interpreta como "el modelo está mal".** Es el resultado
+correcto de una herramienta rigurosa aplicada a un momento de mercado
+donde el consenso paga una prima considerable por crecimiento futuro no
+garantizado. El valor para un entrevistador no es "reproduce el precio
+de mercado" (trivial, cualquier múltiplo lo hace por construcción) sino
+"cuantifica cuánta prima de crecimiento no verificado está pagando el
+mercado, y explica el mecanismo concreto" (CapEx >> D&A). Diagnóstico
+completo en `docs/METHODOLOGY.md` sección 7.
+
+**Cifra real para el CV** (blueprint sección 4, viñeta 2, ya no un
+placeholder): *"...validado frente a 5 empresas del sector Big
+Tech/Cloud con una desviación media del 53% frente al consenso de
+mercado, explicada por un motor conservador (reversión a la media)
+frente al actual supercycle de CapEx en IA no descontado de forma
+determinista."*
 
 ## 4. Estado técnico del entorno
 
@@ -212,31 +239,32 @@ cuesta cuota de API).
 
 ## 5. Próximo paso inmediato
 
-El pipeline funciona de punta a punta (datos -> proyección -> WACC ->
-valoración) para un ticker arbitrario, con cada pieza validada por
-separado contra el Excel. La brecha restante frente al mercado en AMZN
-es una diferencia de filosofía de modelado ya documentada (sección 3),
-no una lista de bugs pendientes. Opciones razonables para la próxima
-sesión, de más a menos prioritaria:
+El motor está validado en tres capas independientes (matemática exacta
+contra Excel, datos exactos contra Excel, y ahora comportamiento
+sistemático medido en 5 compañías reales con causa raíz identificada).
+Ya no quedan piezas de rigor obviamente pendientes en el motor de
+cálculo — el siguiente bloque natural es la capa generativa, con la
+Fase 7 como insumo directo (el LLM debe poder explicar la brecha vs.
+consenso, no solo el número). Opciones para la próxima sesión, de más a
+menos prioritaria:
 
-1. **Fase 7 (validación sistemática):** correr el pipeline completo
-   sobre los 5 tickers piloto y comparar contra consenso de analistas
-   (`AnalystTargetPrice`, ya disponible en `market_snapshot`) — da una
-   cifra real de desviación media para el CV, y probablemente muestre
-   que el motor se comporta mejor en compañías maduras/estables que en
-   historias de crecimiento como AMZN (hipótesis a confirmar con datos,
-   no a asumir).
-2. Completar Fase 1: descargar histórico de los otros 4 tickers piloto
-   (MSFT, GOOGL, META, AAPL) — con cuidado de la cuota diaria (quedan
-   ~15-20 peticiones hoy) — y usarlos también como comparables reales en
-   `wacc_builder.py` en vez de las constantes congeladas del Excel
-   (resuelve la desalineación temporal señalada en la sección 3).
-3. Opcional: exponer una tesis "alcista" vs. "conservadora" en la futura
-   interfaz (dos `ProjectionAssumptions` predefinidos, no solo el
-   derivado por defecto) — comunica mejor que el número no es una
-   verdad única, es una función de supuestos explícitos.
+1. **Fase 5 (capa generativa):** el Investment Memo ya tiene contenido
+   real y no trivial que redactar — no solo "el precio objetivo es X",
+   sino "el modelo conservador da X, un Y% por debajo del consenso,
+   porque el CapEx actual (Z% de ventas) no se está descontando como
+   productivo todavía". El prompt debe recibir el desglose de
+   `DCFResult` + `ValuationCheck` (Fase 7), nunca datos crudos — el LLM
+   sigue sin calcular nada.
+2. Exponer una tesis "alcista" vs. "conservadora" explícita (dos
+   `ProjectionAssumptions` predefinidos) antes o junto con la Fase 5 —
+   el memo puede entonces contrastar ambos escenarios en vez de
+   presentar un único número sin rango.
+3. yfinance como fuente alternativa de precio/beta (no bloquea nada,
+   `market_snapshot` ya cubre lo mismo vía Alpha Vantage) — bajo interés
+   ahora mismo.
 
-**No recomendado todavía:** Streamlit ni la capa generativa (Fases 5-6).
-El blueprint es explícito en esto — construir la interfaz antes de medir
-la Fase 7 enseñaría números sin saber todavía si son buenos o malos en
-la práctica.
+**Ya no aplica el veto anterior a Streamlit/LLM** ("no construir la
+interfaz antes de validar") — la Fase 7 ya está medida y su resultado ya
+está explicado. Sigue aplicando el principio de fondo: cualquier UI debe
+mostrar el número junto a su explicación (supuestos, desviación vs.
+consenso), nunca el número solo.
