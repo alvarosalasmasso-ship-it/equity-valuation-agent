@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-05 (sesión 9)
+**Última actualización:** 2026-09-05 (sesión 10)
 
 ---
 
@@ -404,28 +404,82 @@ y una lista de avisos vacía (correcto: el spread WACC-g de AMZN, 8.27%
 9 tests nuevos (84 en total, todos en verde) — ninguno llama a la API
 real.
 
+### Detalle sesión 10 — `app/streamlit_app.py` (Fase 6, interfaz)
+
+**Decisión de producto en la Fase 5, antes de esto:** en vez de dar de
+alta la API de pago de Anthropic todavía, el usuario pidió generar un
+memo real conmigo mismo (esta sesión de Claude Code), usando exactamente
+el prompt de `ai/prompts/investment_memo_system.md` sobre el paquete de
+datos de AMZN ya construido — sin coste. El memo salió con la estructura
+esperada (Executive Summary, Tesis, Rango de Escenarios, Riesgos,
+Conclusión), sin inventar cifras y explicando el mecanismo de la
+desviación en vez de ocultarla — validación cualitativa real del diseño
+del prompt antes de gastar nada en la API.
+
+Con eso resuelto, se construyó el esqueleto de Streamlit:
+
+- Dos modos de datos en la sidebar: **universo cacheado** (Big Tech vía
+  Alpha Vantage, Consumo defensivo vía yfinance — WACC riguroso vía
+  comparables reales del propio grupo, reutilizando
+  `engine.validation.build_peer_set` en vez de reimplementar la
+  construcción de peers) y **cualquier ticker** vía yfinance sin límite
+  de cuota (WACC simplificado con beta propio, etiquetado como tal).
+- Sliders para `n_years`, `terminal_growth_rate`, `lookback_years`,
+  `gordon_weight` — cualquiera puede reproducir los hallazgos de las
+  sesiones 6-9 cambiando un control, no leyendo código.
+- Gráfico de los 3 escenarios (bear/hold/bull) con el precio de mercado
+  y el consenso como líneas de referencia — un solo hue neutro para las
+  barras (son una magnitud ordenada, no categorías de identidad) más
+  etiquetas directas, siguiendo la guía de la skill `dataviz`.
+- Matriz de sensibilidad WACC×g con gradiente secuencial de un solo hue
+  (`cmap="Blues"`, magnitud → un hue, nunca arcoíris).
+- Sección de memo: si hay `ANTHROPIC_API_KEY`, botón que llama a
+  `generate_memo()`; si no (caso actual), muestra el prompt listo para
+  copiar y pegar en Claude.ai — el mismo flujo manual que se usó para el
+  memo de AMZN.
+
+**Validación sin navegador disponible en esta sesión:** no se pudo
+capturar la interfaz renderizada (sin Playwright/Chromium en el
+entorno). Se verificó en su lugar (a) que el servidor arranca sin
+errores y responde HTTP 200 en tres arranques distintos, y (b) que la
+ruta de cómputo completa — incluida la figura de matplotlib y la tabla
+`pandas.Styler` con gradiente, las dos piezas nuevas sin cobertura de
+tests previa — corre de punta a punta sin excepciones, tanto en modo
+universo cacheado (AMZN) como en modo ticker arbitrario (NVDA, datos
+frescos de yfinance). Pendiente: captura visual real en una sesión con
+navegador disponible.
+
+Al revisar el propio código se encontró y corrigió una duplicación: la
+construcción de la lista de comparables en la app repetía la lógica ya
+existente y testeada en `engine.validation.build_peer_set` — se
+refactorizó para reutilizarla en vez de mantener dos implementaciones
+del mismo cálculo.
+
+`matplotlib` y `streamlit` instalados en el venv y añadidos a
+`requirements.txt`.
+
 ## 5. Próximo paso inmediato
 
-El motor está validado en seis capas independientes y la capa generativa
-está lista salvo la llamada real (falta `ANTHROPIC_API_KEY`). yfinance
-funciona como fuente alternativa sin límite de cuota. Opciones para la
-próxima sesión, de más a menos prioritaria:
+El motor está validado en seis capas independientes, la capa generativa
+está lista (probada manualmente sin coste, lista para la API cuando se
+decida pagarla), y ahora hay una interfaz funcional sobre todo ello.
+Opciones para la próxima sesión, de más a menos prioritaria:
 
-1. **Conseguir una API key de Anthropic** y probar `generate_memo()` en
-   vivo con el caso AMZN ya preparado (o cualquier otro de los 8 tickers
-   cacheados) — es la única pieza de la Fase 5 que falta por ejecutar de
-   verdad, todo lo demás ya está construido y testeado.
-2. Esqueleto de Streamlit (Fase 6) usando datos ya cacheados (AMZN,
-   MSFT, GOOGL, META, AAPL, KO, PG, JNJ) — mostrando el rango de
-   escenarios + el mecanismo de desviación detectado + (si hay key) el
-   memo generado, no un número suelto. No requiere ninguna API nueva
-   para desarrollarse, solo para la parte del memo.
+1. **Validación visual de la interfaz** en una sesión con navegador
+   disponible (Playwright u otro) — la lógica ya está verificada de
+   punta a punta, pero nadie ha visto todavía cómo se ve realmente.
+2. Cuando se decida dar el paso a la API de pago: añadir
+   `ANTHROPIC_API_KEY` a `.env` y probar `generate_memo()` en vivo desde
+   la propia interfaz (el botón ya está condicionado a que exista la
+   key).
 3. Opcional, bajo interés: usar `yfinance_provider.py` como fuente
    primaria en vez de Alpha Vantage para no depender de ninguna cuota
-   diaria — a cambio de menos años de histórico (4 vs. 15-20).
+   diaria — a cambio de menos años de histórico (4-5 vs. 15-20).
+4. Fase 8 (despliegue): Streamlit Community Cloud + repo público en
+   GitHub — sin remoto configurado todavía, decisión pendiente del
+   usuario.
 
-**Ya no aplica el veto anterior a Streamlit/LLM** ("no construir la
-interfaz antes de validar") — la Fase 7 y su contraprueba ya están
-medidas y explicadas. Sigue aplicando el principio de fondo: cualquier UI
-debe mostrar el número junto a su explicación (supuestos, mecanismo de
-desviación detectado, rango de escenarios), nunca el número solo.
+**Principio de fondo que sigue aplicando:** cualquier UI debe mostrar el
+número junto a su explicación (supuestos, mecanismo de desviación
+detectado, rango de escenarios), nunca el número solo — ya implementado
+en `app/streamlit_app.py`.

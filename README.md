@@ -30,5 +30,17 @@ pip install -r requirements.txt
 pytest tests/ -v
 ```
 
+## Ejecutar la app
+
+```
+streamlit run app/streamlit_app.py
+```
+
+Funciona sin `ANTHROPIC_API_KEY` (muestra el prompt del Investment Memo
+para copiar y pegar manualmente en Claude.ai en vez de generarlo en
+vivo). Requiere `ALPHA_VANTAGE_API_KEY` en `.env` solo para el grupo de
+comparables "Big Tech / Cloud"; el grupo "Consumo defensivo" y cualquier
+ticker arbitrario usan `yfinance`, sin API key.
+
 **Disclaimer:** herramienta educativa / de portfolio, no constituye
 asesoramiento de inversión regulado.

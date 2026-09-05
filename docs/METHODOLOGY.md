@@ -527,3 +527,50 @@ API real. Solo falta una `ANTHROPIC_API_KEY` en `.env` para probar la
 llamada real — el resto del pipeline (empaquetado + prompt) está
 verificado de punta a punta con datos reales de AMZN (ver
 `tests/test_memo_generator.py` y el dry-run documentado en `estado.md`).
+
+**Decisión de producto (sesión de generación del memo):** en vez de
+configurar la API de pago para esta fase de desarrollo, se generó un
+memo real manualmente (el propio Claude, en la sesión de Claude Code,
+siguiendo exactamente `ai/prompts/investment_memo_system.md` sobre el
+paquete de datos de AMZN) — cero coste, y sirve como validación
+cualitativa de que el prompt produce la estructura y el rigor
+esperados antes de gastar nada en la API real. `app/streamlit_app.py`
+reproduce este mismo flujo: sin `ANTHROPIC_API_KEY` configurada, muestra
+el prompt listo para copiar y pegar en Claude.ai en vez de bloquear la
+funcionalidad.
+
+## 12. Interfaz — Fase 6 (`app/streamlit_app.py`)
+
+Capa de presentación pura: no calcula nada, orquesta llamadas a
+`engine/` y `ai/` ya validadas. Dos modos de datos:
+
+- **Universo cacheado** (`AMZN/MSFT/GOOGL/META/AAPL` vía Alpha Vantage,
+  `KO/PG/JNJ` vía yfinance) — WACC riguroso vía comparables reales del
+  propio grupo (`engine.validation.build_peer_set` + `engine.wacc_builder.build_wacc`,
+  sin reimplementar la construcción de peers).
+- **Cualquier ticker** vía yfinance (sin límite de cuota) — WACC
+  simplificado con el beta propio de la compañía (`cost_of_equity` +
+  `cost_of_debt` + `wacc` directos, sin comparables), etiquetado como tal
+  en la propia interfaz.
+
+Controles interactivos para `n_years`, `terminal_growth_rate`,
+`lookback_years` y `gordon_weight` — el usuario puede reproducir
+cualquiera de los hallazgos de las secciones 7-10 cambiando un slider,
+en vez de tener que releer el código.
+
+Secciones mostradas: métricas clave, gráfico de los 3 escenarios (bear/
+hold/bull) con el precio de mercado y el consenso como líneas de
+referencia, tabla de supuestos de proyección, avisos técnicos del
+modelo (`MIN_PRUDENT_WACC_GROWTH_SPREAD`), matriz de sensibilidad
+WACC×g con gradiente de color, y el memo (generado en vivo si hay
+`ANTHROPIC_API_KEY`, o el prompt listo para copiar si no la hay).
+
+**Validación:** sin entorno de navegador disponible en esta sesión para
+probar la interfaz renderizada directamente, se verificó (a) que el
+servidor Streamlit arranca sin errores y responde HTTP 200, y (b) que
+la ruta de cómputo completa que ejecuta la app con los valores por
+defecto de cada widget —incluida la figura de matplotlib y la tabla
+`pandas.Styler` con gradiente— corre de punta a punta sin excepciones,
+tanto para el modo de universo cacheado (AMZN) como para el modo de
+ticker arbitrario (NVDA, vía yfinance). Pendiente de una sesión futura
+con navegador: captura visual real de la interfaz renderizada.

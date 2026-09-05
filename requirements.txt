@@ -7,3 +7,4 @@ pytest
 openpyxl
 requests
 python-dotenv
+matplotlib
