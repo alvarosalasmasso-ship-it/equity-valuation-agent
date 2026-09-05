@@ -81,6 +81,15 @@ def test_historical_financials_normalizes_and_sorts_ascending():
     assert list(df["ebit"]) == [18.0, 20.0]
 
 
+def test_historical_financials_exposes_fiscal_year_end_month_and_day():
+    """Necesario para engine.valuation.compute_stub_fraction (auditoría
+    sesión 15, hallazgo C1) -- DATES usa 30 de junio (estilo MSFT)."""
+    df = historical_financials(make_fake_ticker())
+    row_2023 = df[df["fiscal_year"] == 2023].iloc[0]
+    assert row_2023["fiscal_year_end_month"] == 6
+    assert row_2023["fiscal_year_end_day"] == 30
+
+
 def test_historical_financials_takes_absolute_value_of_capex():
     """yfinance reporta CapEx como salida de caja (negativo) -- el
     esquema de data_provider.py usa CapEx positivo, hay que homogeneizar."""

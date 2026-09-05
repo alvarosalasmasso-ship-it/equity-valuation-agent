@@ -48,9 +48,12 @@ para Amazon pero que puede ser razonable para otra compañía).
 
 import statistics
 from dataclasses import dataclass
-from typing import Sequence
+from datetime import date
+from typing import Optional, Sequence
 
 import pandas as pd
+
+from engine.valuation import compute_stub_fraction
 
 
 def cagr(first_value: float, last_value: float, n_periods: int) -> float:
@@ -214,4 +217,35 @@ def default_assumptions_from_history(history: pd.DataFrame, n_years: int = 5,
         capex_pct_revenue=capex_pct,
         nwc_change_pct_revenue=nwc_fade,
         tax_rate=float(tax_rate),
+    )
+
+
+def stub_fraction_from_history(history: pd.DataFrame, valuation_date: Optional[date] = None) -> float:
+    """Calcula el stub period real (`engine.valuation.compute_stub_fraction`)
+    a partir del cierre de ejercicio fiscal del último año disponible en
+    `history` (columnas `fiscal_year_end_month`/`fiscal_year_end_day`,
+    expuestas por `engine.data_provider`/`engine.yfinance_provider`).
+
+    Auditoría (sesión 15, hallazgo C1): antes de esta función, todo el
+    pipeline construía `DCFInputs` con el `stub_fraction` por defecto
+    (1.0), asumiendo implícitamente que la valoración se hace siempre el
+    1 de enero del primer año proyectado. Esta función cierra ese hueco
+    a partir del histórico ya cargado, sin pedir un dato nuevo al
+    usuario.
+
+    Si `history` no trae esas columnas (p.ej. un histórico sintético en
+    tests, o construido a mano) devuelve 1.0 — mismo comportamiento que
+    antes de la auditoría, para no romper nada que no pase por
+    `historical_financials()`.
+    """
+    if "fiscal_year_end_month" not in history.columns or "fiscal_year_end_day" not in history.columns:
+        return 1.0
+    clean = history.dropna(subset=["fiscal_year_end_month", "fiscal_year_end_day"])
+    if clean.empty:
+        return 1.0
+    last_row = clean.iloc[-1]
+    return compute_stub_fraction(
+        fiscal_year_end_month=int(last_row["fiscal_year_end_month"]),
+        fiscal_year_end_day=int(last_row["fiscal_year_end_day"]),
+        valuation_date=valuation_date or date.today(),
     )

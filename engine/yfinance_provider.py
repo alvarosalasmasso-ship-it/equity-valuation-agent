@@ -98,6 +98,8 @@ def historical_financials(ticker) -> pd.DataFrame:
 
         rows.append({
             "fiscal_year": date.year,
+            "fiscal_year_end_month": int(date.month),
+            "fiscal_year_end_day": int(date.day),
             "revenue": revenue,
             "ebit": ebit,
             "ebitda": _clean(inc.get("EBITDA")),

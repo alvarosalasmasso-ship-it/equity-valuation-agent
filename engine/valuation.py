@@ -11,6 +11,7 @@ lógica de IA. Recibe únicamente números y devuelve únicamente números.
 
 import warnings
 from dataclasses import dataclass, replace
+from datetime import date
 from typing import Optional, Sequence
 
 
@@ -91,6 +92,45 @@ def unlevered_fcf(ebit: float, tax_rate: float, d_and_a: float, capex: float,
 # ---------------------------------------------------------------------------
 # Descuento — convención stub + mid-year  (Consolidated!F35:K36)
 # ---------------------------------------------------------------------------
+
+def _safe_date(year: int, month: int, day: int) -> date:
+    """Construye date(year, month, day), cayendo al día 28 si el día no
+    existe en ese mes/año (29 de febrero en año no bisiesto)."""
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return date(year, month, 28)
+
+
+def compute_stub_fraction(fiscal_year_end_month: int, fiscal_year_end_day: int,
+                           valuation_date: date) -> float:
+    """Fracción del primer ejercicio fiscal proyectado que queda entre
+    `valuation_date` y el próximo cierre de ejercicio (mes/día) —
+    exactamente lo que `Consolidated!F35` calcula en el Excel de
+    referencia con `YEARFRAC` (ahí, convención 30/360; aquí, días de
+    calendario reales — ambas dan una fracción de año equivalente en la
+    práctica, y esta no requiere reimplementar 30/360).
+
+    Auditoría (sesión 15, hallazgo C1): este cálculo nunca se hacía en
+    el pipeline real — todo `DCFInputs` se construía con el
+    `stub_fraction` por defecto (1.0), asumiendo implícitamente que la
+    fecha de valoración es siempre el 1 de enero del primer año
+    proyectado. Esta función cierra ese hueco.
+
+    Si `valuation_date` cae exactamente en el cierre de ejercicio, se
+    interpreta como "ese ejercicio ya cerró" y se devuelve la fracción
+    del ejercicio SIGUIENTE (1.0) — nunca 0.0, que violaría la
+    restricción de `discount_periods()`.
+    """
+    candidate = _safe_date(valuation_date.year, fiscal_year_end_month, fiscal_year_end_day)
+    if candidate <= valuation_date:
+        candidate = _safe_date(valuation_date.year + 1, fiscal_year_end_month, fiscal_year_end_day)
+    previous = _safe_date(candidate.year - 1, fiscal_year_end_month, fiscal_year_end_day)
+
+    days_remaining = (candidate - valuation_date).days
+    days_in_period = (candidate - previous).days
+    return days_remaining / days_in_period
+
 
 def discount_periods(n_years: int, stub_fraction: float = 1.0,
                       mid_year_convention: bool = True) -> list[float]:

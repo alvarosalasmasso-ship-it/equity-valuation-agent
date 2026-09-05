@@ -8,6 +8,7 @@ Ejecutar con:  ./.venv/Scripts/streamlit.exe run app/streamlit_app.py
 """
 
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -119,6 +120,13 @@ with st.sidebar:
     terminal_growth_rate = st.slider("Tasa de crecimiento terminal (g)", 0.0, 0.05, 0.025, 0.0025, format="%.4f")
     lookback_years = st.slider("Años de histórico (lookback)", 2, 10, 3)
     gordon_weight = st.slider("Peso Gordon Growth en el valor terminal", 0.0, 1.0, 0.8, 0.1)
+    valuation_date = st.date_input(
+        "Fecha de valoración",
+        value=date.today(),
+        help="Determina el stub period del primer año proyectado (auditoría sesión 15, "
+             "hallazgo C1) — antes se asumía siempre el 1 de enero, infravalorando el "
+             "resultado cuanto más avanzado estuviera el año real.",
+    )
 
 if not target:
     st.stop()
@@ -137,6 +145,12 @@ if len(snap_data) > 1:
 else:
     terminal_multiple = snap.get("ev_to_ebitda")
 
+# --- Stub period real (auditoría sesión 15, hallazgo C1) ----------------------
+
+from engine.projections import stub_fraction_from_history
+
+stub_fraction = stub_fraction_from_history(hist, valuation_date=valuation_date)
+
 # --- Métricas clave ---------------------------------------------------------
 
 col1, col2, col3, col4 = st.columns(4)
@@ -145,6 +159,12 @@ col2.metric("Consenso analistas", f"${snap['analyst_target_price']:.2f}" if snap
 col3.metric("WACC", f"{wacc_value*100:.2f}%")
 col4.metric("Sector", snap.get("sector") or "n/d")
 
+st.caption(
+    f"Stub period del primer año proyectado: **{stub_fraction:.3f}** "
+    f"(fracción del ejercicio fiscal que queda desde {valuation_date.isoformat()} hasta su cierre). "
+    "Antes de la auditoría de la sesión 15 este valor era siempre 1.0 (se asumía valorar el 1 de enero)."
+)
+
 # --- Escenarios --------------------------------------------------------------
 
 st.subheader("Rango de escenarios")
@@ -152,7 +172,7 @@ scenario_results, warnings_text = run_scenarios_capturing_warnings(
     hist, wacc=wacc_value, cash=snap.get("cash") or 0, total_debt=snap.get("total_debt") or 0,
     diluted_shares=snap["shares_outstanding"], n_years=n_years, terminal_growth_rate=terminal_growth_rate,
     lookback_years=lookback_years, terminal_ev_ebitda_multiple=terminal_multiple,
-    gordon_weight=gordon_weight,
+    gordon_weight=gordon_weight, valuation_date=valuation_date,
 )
 
 scenario_names = list(scenario_results.keys())
@@ -257,7 +277,8 @@ projection = project_financials(hist["revenue"].iloc[-1], assumptions)
 base_inputs = DCFInputs(
     ebit=projection.ebit, tax_rate=projection.tax_rate, d_and_a=projection.d_and_a,
     capex=projection.capex, change_in_nwc=projection.change_in_nwc, wacc=wacc_value,
-    terminal_growth_rate=terminal_growth_rate, cash=snap.get("cash") or 0, total_debt=snap.get("total_debt") or 0,
+    terminal_growth_rate=terminal_growth_rate, stub_fraction=stub_fraction,
+    cash=snap.get("cash") or 0, total_debt=snap.get("total_debt") or 0,
     diluted_shares=snap["shares_outstanding"], terminal_ev_ebitda_multiple=terminal_multiple,
     gordon_weight=gordon_weight,
 )

@@ -709,18 +709,40 @@ con evidencia concreta (grep del código real, no solo inspección):
   Streamlit). Degradación silenciosa de la ventana de histórico si hay
   menos años de los pedidos.
 
-**No se ha corregido nada todavía** — la auditoría es el entregable de
-esta sesión; los arreglos quedan priorizados (C1 > I3 > I1 > M1 > resto)
-para la próxima.
+El usuario pidió corregir los hallazgos uno por uno, empezando por el
+crítico. **C1 (stub period) ya está corregido y validado con datos
+reales en esta misma sesión** — ver detalle abajo.
+
+### Detalle — C1 corregido: stub period real, no siempre 1.0
+
+- `engine.valuation.compute_stub_fraction()` — fracción real por días
+  de calendario entre la fecha de valoración y el próximo cierre fiscal
+  (con fallback para 29 de febrero y para valorar justo en el día de
+  cierre, nunca devuelve 0.0).
+- `historical_financials()` en ambos proveedores ahora expone
+  `fiscal_year_end_month`/`fiscal_year_end_day` (antes solo el año).
+- `engine.projections.stub_fraction_from_history()` une ambas piezas;
+  degrada a 1.0 si el histórico no trae esas columnas (no rompe tests
+  existentes con fixtures sintéticas).
+- `run_scenarios()`/`value_ticker()` aceptan `valuation_date` (por
+  defecto hoy) y calculan el stub solos. La app añade un `date_input` y
+  muestra el stub calculado junto a las métricas.
+
+**Validado con datos reales, no solo con tests:** AMZN (cierre 31-dic),
+valorado el 5-sept-2026 → stub=0.3205 → precio implícito **$104.41 →
+$108.78 (+4.19%)**. Confirma la dirección exacta que predijo la
+auditoría: el bug infravaloraba sistemáticamente. Verificado también con
+MSFT (cierre 30-jun) y con el caso límite de "hoy" ya pasado el último
+cierre reportado (salta correctamente al ejercicio siguiente).
+
+12 tests de regresión nuevos. 109 tests en total, todos en verde.
+Servidor Streamlit re-verificado arrancando limpio tras el cambio.
 
 ## 5. Próximo paso inmediato
 
-Ejecutar la auditoría de la sesión 15, en el orden de prioridad que ya
-recomienda `docs/AUDIT.md`:
+Seguir corrigiendo uno por uno, en el orden de `docs/AUDIT.md`:
 
-1. **C1 — Stub period.** Mecanismo ya existe y está probado; falta
-   calcular la fracción real desde la fecha de hoy e inyectarla en
-   `DCFInputs` desde `run_scenarios()`/`value_ticker()`/la app.
+1. ~~C1 — Stub period.~~ ✅ Corregido esta sesión.
 2. **I3 — Excepciones no controladas.** Envolver la construcción del
    WACC simplificado en modo "cualquier ticker" en `try/except`, igual
    que ya se hace con los ratios.
@@ -733,7 +755,7 @@ recomienda `docs/AUDIT.md`:
 **Principio de fondo que sigue aplicando:** cualquier UI debe mostrar el
 número junto a su explicación, nunca el número solo. No revertir un
 cambio metodológicamente correcto solo porque el resultado agregado no
-mejora. Y ahora también: **auditar la orquestación, no solo las
-fórmulas** — el motor de cálculo puede estar validado exacto y aun así
-el pipeline real dejar sin usar piezas ya construidas y probadas (stub
-period, TSM), tal y como reveló esta sesión.
+mejora. Auditar la orquestación, no solo las fórmulas. Y ahora también:
+**cada arreglo de la auditoría se valida con datos reales y una cifra de
+impacto concreta antes de darlo por cerrado** — no basta con que los
+tests sintéticos pasen.

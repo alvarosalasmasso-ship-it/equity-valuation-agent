@@ -7,6 +7,8 @@ para poder afirmar el resultado exacto; y con uno con tendencia de margen
 para confirmar el mecanismo de fade "reciente -> media histórica".
 """
 
+from datetime import date
+
 import pandas as pd
 import pytest
 
@@ -18,6 +20,7 @@ from engine.projections import (
     default_assumptions_from_history,
     linear_fade,
     project_financials,
+    stub_fraction_from_history,
 )
 
 
@@ -231,3 +234,33 @@ def test_projection_pipeline_feeds_directly_into_dcf_inputs():
     )
     result = run_dcf(inputs)
     assert result.implied_share_price > 0
+
+
+# --- stub_fraction_from_history (auditoría sesión 15, hallazgo C1) ---------
+
+def test_stub_fraction_from_history_returns_1_when_no_fiscal_date_columns():
+    """Histórico sintético (como el resto de este archivo) no trae
+    fiscal_year_end_month/day -- debe degradar a 1.0, el comportamiento
+    de antes de la auditoría, no lanzar una excepción."""
+    history = _synthetic_flat_history()
+    assert "fiscal_year_end_month" not in history.columns
+    stub = stub_fraction_from_history(history, valuation_date=date(2024, 7, 1))
+    assert stub == pytest.approx(1.0)
+
+
+def test_stub_fraction_from_history_uses_last_year_fiscal_date():
+    history = _synthetic_flat_history()
+    history["fiscal_year_end_month"] = 12
+    history["fiscal_year_end_day"] = 31
+    stub = stub_fraction_from_history(history, valuation_date=date(2023, 7, 1))
+    assert stub == pytest.approx(183 / 365)  # mismo caso que test_compute_stub_fraction_at_midyear
+
+
+def test_stub_fraction_from_history_defaults_to_today_when_no_valuation_date():
+    """Sin valuation_date explícito, usa date.today() -- solo se
+    comprueba que no lanza y devuelve un valor en rango válido."""
+    history = _synthetic_flat_history()
+    history["fiscal_year_end_month"] = 12
+    history["fiscal_year_end_day"] = 31
+    stub = stub_fraction_from_history(history)
+    assert 0 < stub <= 1

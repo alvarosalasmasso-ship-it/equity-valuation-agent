@@ -199,8 +199,17 @@ def historical_financials(client: AlphaVantageClient, symbol: str,
         curr_nwc = nwc_by_year[year]
         change_in_nwc = (curr_nwc - prev_nwc) if (curr_nwc is not None and prev_nwc is not None) else None
 
+        # "YYYY-MM-DD" -> mes/día de cierre de ejercicio, para poder calcular
+        # el stub period real (engine.valuation.compute_stub_fraction).
+        fiscal_date_ending = inc.get("fiscalDateEnding", "")
+        date_parts = fiscal_date_ending.split("-") if fiscal_date_ending else []
+        fiscal_year_end_month = int(date_parts[1]) if len(date_parts) == 3 else None
+        fiscal_year_end_day = int(date_parts[2]) if len(date_parts) == 3 else None
+
         rows.append({
             "fiscal_year": int(year),
+            "fiscal_year_end_month": fiscal_year_end_month,
+            "fiscal_year_end_day": fiscal_year_end_day,
             "revenue": revenue,
             "ebit": ebit,
             "ebitda": _to_float(inc.get("ebitda")),

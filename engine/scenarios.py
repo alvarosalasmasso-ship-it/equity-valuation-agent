@@ -16,6 +16,7 @@ de `FadeAssumption(start, end)` ya derivado del histórico real.
 """
 
 from dataclasses import dataclass, replace
+from datetime import date
 from typing import Optional
 
 import pandas as pd
@@ -25,6 +26,7 @@ from engine.projections import (
     ProjectionAssumptions,
     default_assumptions_from_history,
     project_financials,
+    stub_fraction_from_history,
 )
 from engine.valuation import DCFInputs, DCFResult, run_dcf
 
@@ -135,17 +137,23 @@ def default_scenarios(base: ProjectionAssumptions) -> list[Scenario]:
 def run_scenarios(history: pd.DataFrame, wacc: float, cash: float, total_debt: float,
                    diluted_shares: float, n_years: int = 5, terminal_growth_rate: float = 0.025,
                    lookback_years: int = 3, terminal_ev_ebitda_multiple: Optional[float] = None,
-                   gordon_weight: float = 1.0) -> dict[str, DCFResult]:
+                   gordon_weight: float = 1.0, valuation_date: Optional[date] = None) -> dict[str, DCFResult]:
     """Corre run_dcf bajo los 3 escenarios por defecto sobre el mismo
     histórico. Devuelve {nombre_escenario: DCFResult}.
 
     terminal_growth_rate se pasa solo a DCFInputs (valor terminal) — el
     crecimiento de ingresos del horizonte explícito ya no depende de él,
-    ver default_assumptions_from_history()."""
+    ver default_assumptions_from_history().
+
+    stub_fraction (auditoría sesión 15, hallazgo C1) se calcula a partir
+    del cierre de ejercicio fiscal real del último año de `history` y de
+    `valuation_date` (por defecto, hoy) — no se asume ya "1 de enero del
+    primer año proyectado" de forma implícita."""
     base = default_assumptions_from_history(
         history, n_years=n_years, lookback_years=lookback_years,
     )
     last_revenue = history["revenue"].iloc[-1]
+    stub_fraction = stub_fraction_from_history(history, valuation_date=valuation_date)
 
     results = {}
     for scenario in default_scenarios(base):
@@ -153,7 +161,7 @@ def run_scenarios(history: pd.DataFrame, wacc: float, cash: float, total_debt: f
         inputs = DCFInputs(
             ebit=projection.ebit, tax_rate=projection.tax_rate, d_and_a=projection.d_and_a,
             capex=projection.capex, change_in_nwc=projection.change_in_nwc,
-            wacc=wacc, terminal_growth_rate=terminal_growth_rate,
+            wacc=wacc, terminal_growth_rate=terminal_growth_rate, stub_fraction=stub_fraction,
             cash=cash, total_debt=total_debt, diluted_shares=diluted_shares,
             terminal_ev_ebitda_multiple=terminal_ev_ebitda_multiple, gordon_weight=gordon_weight,
         )

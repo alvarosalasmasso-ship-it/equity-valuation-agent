@@ -924,3 +924,56 @@ mejor segmentado — anotado como mejora futura, no resuelto aquí.
 valor imposible de coincidir por casualidad (999x) para probar sin
 ambigüedad que se usa el de los peers. 97 tests en total, todos en
 verde.
+
+## 17. Stub period real, no siempre 1.0 (auditoría sesión 15, hallazgo C1)
+
+`discount_periods()`/`pv_of_cash_flows()` soportan un `stub_fraction`
+desde la Fase 2, validado exacto contra el Excel (`Consolidated!F35`).
+Pero la auditoría técnica completa de la sesión 15 encontró que **ningún
+módulo de orquestación lo calculaba nunca** — todo `DCFInputs` se
+construía con el valor por defecto (`1.0`), asumiendo implícitamente que
+la fecha de valoración es siempre el 1 de enero del primer año
+proyectado. Cada valoración real quedaba así infravalorada de forma
+sistemática, en una cantidad que crece cuanto más avanzado esté el año
+en que se ejecuta la herramienta.
+
+**Corregido de punta a punta:**
+
+- `engine.valuation.compute_stub_fraction(fiscal_year_end_month, fiscal_year_end_day, valuation_date)`
+  — fracción real por días de calendario (convención actual/actual)
+  entre la fecha de valoración y el próximo cierre de ejercicio fiscal.
+  Si `valuation_date` cae justo en un cierre, salta al ejercicio
+  siguiente (nunca devuelve 0.0, que violaría la restricción de
+  `discount_periods()`). Fallback a día 28 si el cierre fiscal es un 29
+  de febrero en un año no bisiesto.
+- `historical_financials()` en `engine/data_provider.py` y
+  `engine/yfinance_provider.py` ahora exponen `fiscal_year_end_month`/
+  `fiscal_year_end_day` (parseados de `fiscalDateEnding` / la fecha de
+  columna de yfinance) — antes solo se guardaba el año.
+- `engine.projections.stub_fraction_from_history(history, valuation_date)`
+  une ambas piezas: toma el cierre fiscal del último año disponible y
+  calcula el stub. Degrada a `1.0` si el histórico no trae esas
+  columnas (fixtures sintéticas de tests) — no rompe nada existente.
+- `engine.scenarios.run_scenarios()` y `engine.validation.value_ticker()`
+  aceptan `valuation_date` (por defecto, hoy) y calculan el stub
+  automáticamente. `app/streamlit_app.py` añade un `date_input` en la
+  sidebar (por defecto hoy) y muestra el stub calculado junto a las
+  métricas clave — el número siempre va con su explicación.
+
+**Verificado con datos reales, no solo con tests sintéticos:** AMZN
+(cierre fiscal 31-dic), valorado el 5-sept-2026 → stub=0.3205 (117 días
+reales hasta el cierre de 365) → precio implícito **$104.41 → $108.78
+(+4.19%)** frente al comportamiento anterior. Confirma exactamente la
+dirección que predecía la auditoría: el bug infravaloraba de forma
+sistemática. Verificado también con MSFT (cierre fiscal 30-jun, para
+confirmar que funciona con ejercicios no naturales) y con el caso límite
+de que "hoy" ya haya pasado el último cierre fiscal reportado (salta
+correctamente al ejercicio siguiente).
+
+12 tests de regresión nuevos, cubriendo: el cálculo puro
+(`compute_stub_fraction`, incluido el caso límite de 29 de febrero y el
+de valorar justo en el día de cierre), la extracción desde un DataFrame
+histórico (`stub_fraction_from_history`, incluida la degradación a 1.0
+sin las columnas nuevas), y el wiring end-to-end en `run_scenarios`/
+`value_ticker` (el precio cambia de verdad al pasar un histórico con
+fechas fiscales reales). 109 tests en total, todos en verde.

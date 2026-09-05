@@ -2,6 +2,8 @@
 margen EBIT tiene una tendencia clara (0.05, 0.05, 0.10, 0.20), para
 poder afirmar a mano el resultado exacto de cada escenario."""
 
+from datetime import date
+
 import pandas as pd
 import pytest
 
@@ -106,3 +108,28 @@ def test_hold_scenario_equals_conservative_when_history_is_flat():
     bullish = results["Alcista (continúa la tendencia reciente)"].implied_share_price
     assert conservative == pytest.approx(hold)
     assert hold == pytest.approx(bullish)  # sin tendencia, "seguir mejorando" tampoco cambia nada
+
+
+def test_run_scenarios_applies_real_stub_when_history_has_fiscal_dates():
+    """Regresión (auditoría sesión 15, hallazgo C1): si el histórico trae
+    fiscal_year_end_month/day, run_scenarios debe usar un stub real
+    (distinto de 1.0) en vez del valor por defecto -- comparado con la
+    misma valoración sin esas columnas (stub=1.0), el precio debe ser
+    distinto porque el primer flujo se descuenta con un periodo distinto."""
+    history_with_dates = HISTORY.copy()
+    history_with_dates["fiscal_year_end_month"] = 12
+    history_with_dates["fiscal_year_end_day"] = 31
+
+    kwargs = dict(wacc=0.09, cash=100, total_debt=50, diluted_shares=100)
+    results_no_stub = run_scenarios(HISTORY, **kwargs)
+    results_with_stub = run_scenarios(
+        history_with_dates, valuation_date=date(2023, 7, 1), **kwargs
+    )
+
+    name = "Conservador (reversión a la media)"
+    assert results_with_stub[name].implied_share_price != pytest.approx(
+        results_no_stub[name].implied_share_price
+    )
+    # a mitad de año el stub es ~0.5 -> menos de un año completo de descuento
+    # en el primer flujo -> el primer periodo de descuento es menor
+    assert results_with_stub[name].discount_periods[0] < results_no_stub[name].discount_periods[0]

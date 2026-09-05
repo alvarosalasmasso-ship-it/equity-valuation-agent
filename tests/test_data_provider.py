@@ -101,6 +101,17 @@ def test_historical_financials_normalizes_and_sorts_ascending():
     assert list(df["ebit"]) == [15.0, 20.0]
 
 
+def test_historical_financials_exposes_fiscal_year_end_month_and_day():
+    """Necesario para engine.valuation.compute_stub_fraction (auditoría
+    sesión 15, hallazgo C1) -- parseado de 'fiscalDateEnding' (p.ej.
+    '2022-12-31')."""
+    client = make_fake_client()
+    df = historical_financials(client, "TEST")
+    row_2022 = df[df["fiscal_year"] == 2022].iloc[0]
+    assert row_2022["fiscal_year_end_month"] == 12
+    assert row_2022["fiscal_year_end_day"] == 31
+
+
 def test_historical_financials_computes_tax_rate_from_pretax_income():
     client = make_fake_client()
     df = historical_financials(client, "TEST")

@@ -14,12 +14,13 @@ de fechas distintas (ver docs/METHODOLOGY.md sección 5).
 """
 
 from dataclasses import asdict, dataclass
+from datetime import date
 from typing import Optional
 
 import pandas as pd
 
 from engine.comps import build_comps_table, peer_average_multiple
-from engine.projections import default_assumptions_from_history, project_financials
+from engine.projections import default_assumptions_from_history, project_financials, stub_fraction_from_history
 from engine.valuation import DCFInputs, run_dcf
 from engine.wacc_builder import PeerInput, build_wacc
 
@@ -57,7 +58,7 @@ def value_ticker(target: str, universe_hist: dict[str, pd.DataFrame],
                   universe_snap: dict[str, dict], risk_free_rate: float,
                   market_risk_premium: float, n_years: int = 5,
                   terminal_growth_rate: float = 0.025, lookback_years: int = 3,
-                  gordon_weight: float = 0.8) -> ValuationCheck:
+                  gordon_weight: float = 0.8, valuation_date: Optional[date] = None) -> ValuationCheck:
     """Corre el pipeline completo para un ticker del universo y lo
     compara contra su propio precio de mercado y consenso de analistas.
 
@@ -65,6 +66,11 @@ def value_ticker(target: str, universe_hist: dict[str, pd.DataFrame],
     los comparables del universo (excluyendo `target`), nunca el propio
     múltiplo de la empresa objetivo — igual que el WACC, para no usar
     una referencia que puede estar ya sobre/infra valorada.
+
+    stub_fraction (auditoría sesión 15, hallazgo C1) se calcula a partir
+    del cierre de ejercicio fiscal real del último año de `hist` y de
+    `valuation_date` (por defecto, hoy) — no se asume ya "1 de enero del
+    primer año proyectado" de forma implícita.
 
     Requiere al menos 2 tickers en el universo (target + >=1 peer).
     """
@@ -100,10 +106,12 @@ def value_ticker(target: str, universe_hist: dict[str, pd.DataFrame],
     comps_table = build_comps_table(list(universe_snap.values()))
     peer_ev_ebitda = peer_average_multiple(comps_table, "ev_to_ebitda", exclude_symbol=target, method="median")
 
+    stub_fraction = stub_fraction_from_history(hist, valuation_date=valuation_date)
+
     inputs = DCFInputs(
         ebit=projection.ebit, tax_rate=projection.tax_rate, d_and_a=projection.d_and_a,
         capex=projection.capex, change_in_nwc=projection.change_in_nwc,
-        wacc=wacc_result.wacc, terminal_growth_rate=terminal_growth_rate,
+        wacc=wacc_result.wacc, terminal_growth_rate=terminal_growth_rate, stub_fraction=stub_fraction,
         cash=snap["cash"], total_debt=snap["total_debt"], diluted_shares=snap["shares_outstanding"],
         terminal_ev_ebitda_multiple=peer_ev_ebitda, gordon_weight=gordon_weight,
     )

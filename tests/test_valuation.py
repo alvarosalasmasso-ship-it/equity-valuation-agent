@@ -7,11 +7,14 @@ valores calculados por ese Excel (openpyxl, data_only=True), no
 inventados. Ver docs/METHODOLOGY.md para el mapeo celda -> función.
 """
 
+from datetime import date
+
 import pytest
 
 from engine.valuation import (
     DCFInputs,
     OptionTranche,
+    compute_stub_fraction,
     cost_of_debt,
     cost_of_equity,
     diluted_shares_outstanding,
@@ -127,6 +130,60 @@ def test_discount_periods_rejects_invalid_stub():
         discount_periods(3, stub_fraction=0)
     with pytest.raises(ValueError):
         discount_periods(3, stub_fraction=1.5)
+
+
+# --- compute_stub_fraction (auditoría sesión 15, hallazgo C1) ---------------
+
+def test_compute_stub_fraction_at_start_of_fiscal_year_gives_full_year():
+    """Si la fecha de valoración es exactamente el cierre del ejercicio
+    ANTERIOR (el instante en que arranca el nuevo año fiscal), el stub
+    del año que empieza debe ser 1.0 completo -- nunca 0.0, que violaría
+    la restricción de discount_periods()."""
+    stub = compute_stub_fraction(
+        fiscal_year_end_month=12, fiscal_year_end_day=31,
+        valuation_date=date(2022, 12, 31),
+    )
+    assert stub == pytest.approx(1.0)
+
+
+def test_compute_stub_fraction_at_midyear():
+    """Valorando el 1 de julio de 2023 con cierre fiscal 31 de diciembre:
+    quedan 183 días de un ejercicio de 365 (2023 no es bisiesto)."""
+    stub = compute_stub_fraction(
+        fiscal_year_end_month=12, fiscal_year_end_day=31,
+        valuation_date=date(2023, 7, 1),
+    )
+    assert stub == pytest.approx(183 / 365)
+
+
+def test_compute_stub_fraction_non_december_fiscal_year_end():
+    """Cierre fiscal en junio (como MSFT): valorando el 31 de marzo de
+    2025, quedan 91 días hasta el 30 de junio de 2025, de un ejercicio
+    de 365 días (30-jun-2024 a 30-jun-2025, ninguno bisiesto en medio)."""
+    stub = compute_stub_fraction(
+        fiscal_year_end_month=6, fiscal_year_end_day=30,
+        valuation_date=date(2025, 3, 31),
+    )
+    assert stub == pytest.approx(91 / 365)
+
+
+def test_compute_stub_fraction_handles_february_29_fallback():
+    """Cierre fiscal el 29 de febrero (bisiesto) valorado en un año NO
+    bisiesto -- no debe lanzar ValueError, cae al día 28."""
+    stub = compute_stub_fraction(
+        fiscal_year_end_month=2, fiscal_year_end_day=29,
+        valuation_date=date(2025, 1, 1),
+    )
+    assert 0 < stub <= 1
+
+
+def test_compute_stub_fraction_result_feeds_directly_into_discount_periods():
+    """Integración: el resultado siempre debe ser válido para
+    discount_periods() (0, 1], nunca fuera de rango."""
+    for valuation_date in [date(2024, 1, 1), date(2024, 6, 15), date(2024, 12, 31)]:
+        stub = compute_stub_fraction(12, 31, valuation_date)
+        periods = discount_periods(5, stub_fraction=stub)  # no debe lanzar
+        assert len(periods) == 5
 
 
 # --- Pipeline completo --------------------------------------------------------

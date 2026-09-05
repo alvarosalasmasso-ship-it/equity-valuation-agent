@@ -2,6 +2,8 @@
 (no llama a la API real: build_peer_set/value_ticker/validate_universe
 reciben los históricos y snapshots ya construidos)."""
 
+from datetime import date
+
 import pandas as pd
 import pytest
 
@@ -54,6 +56,21 @@ def test_value_ticker_computes_deviation_vs_market_and_consensus():
     assert check.implied_price > 0
     assert check.deviation_vs_market == pytest.approx(check.implied_price / 55.0 - 1)
     assert check.deviation_vs_consensus == pytest.approx(check.implied_price / 60.0 - 1)
+
+
+def test_value_ticker_applies_real_stub_when_history_has_fiscal_dates():
+    """Regresión (auditoría sesión 15, hallazgo C1): con
+    fiscal_year_end_month/day en el histórico, value_ticker debe usar un
+    stub real (distinto del 1.0 por defecto)."""
+    hist_with_dates = {
+        t: h.assign(fiscal_year_end_month=12, fiscal_year_end_day=31)
+        for t, h in UNIVERSE_HIST.items()
+    }
+    check_no_stub = value_ticker("AAA", UNIVERSE_HIST, UNIVERSE_SNAP, 0.04, 0.05)
+    check_with_stub = value_ticker(
+        "AAA", hist_with_dates, UNIVERSE_SNAP, 0.04, 0.05, valuation_date=date(2023, 7, 1),
+    )
+    assert check_with_stub.implied_price != pytest.approx(check_no_stub.implied_price)
 
 
 def test_value_ticker_reports_peer_multiple_not_own_multiple():
