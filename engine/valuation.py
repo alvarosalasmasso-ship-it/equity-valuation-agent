@@ -9,7 +9,7 @@ Principio de diseño: este módulo no llama a ningún LLM ni contiene
 lógica de IA. Recibe únicamente números y devuelve únicamente números.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Sequence
 
 
@@ -243,4 +243,45 @@ def run_dcf(inputs: DCFInputs) -> DCFResult:
         enterprise_value=enterprise_value,
         equity_value=equity_value,
         implied_share_price=implied_share_price,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Matriz de sensibilidad WACC x g (Consolidated!N51:S57 del Excel)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SensitivityMatrix:
+    wacc_values: list[float]
+    growth_values: list[float]
+    implied_share_price: list[list[float]]  # [fila=wacc][columna=g]
+
+
+def sensitivity_matrix(inputs: DCFInputs, wacc_values: Sequence[float],
+                        growth_values: Sequence[float]) -> SensitivityMatrix:
+    """Corre run_dcf para cada combinación de WACC (filas) x tasa de
+    crecimiento terminal g (columnas), variando únicamente esos dos
+    parámetros y manteniendo el resto de `inputs` fijo. Réplica de la
+    Data Table de sensibilidad del Excel.
+
+    Nota: cada combinación con wacc <= g propagará el ValueError de
+    gordon_growth_terminal_value (falla explícita, no un hueco silencioso
+    en la matriz) — elige rangos donde wacc > g para todas las celdas,
+    como hace el Excel de referencia.
+    """
+    if not wacc_values or not growth_values:
+        raise ValueError("wacc_values y growth_values no pueden estar vacíos")
+
+    rows = []
+    for w in wacc_values:
+        row = []
+        for g in growth_values:
+            varied_inputs = replace(inputs, wacc=w, terminal_growth_rate=g)
+            row.append(run_dcf(varied_inputs).implied_share_price)
+        rows.append(row)
+
+    return SensitivityMatrix(
+        wacc_values=list(wacc_values),
+        growth_values=list(growth_values),
+        implied_share_price=rows,
     )

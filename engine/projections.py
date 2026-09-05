@@ -5,19 +5,29 @@ El Excel de referencia resuelve esto con el "Operating Model": supuestos
 de % crecimiento / % sobre ventas fijados a mano por el analista, por
 segmento de negocio. Para un ticker arbitrario no tenemos un analista
 fijando esos supuestos a mano, así que este módulo los deriva del propio
-histórico de forma sistemática y documentada:
+histórico de forma sistemática y documentada, con un único mecanismo
+aplicado a TODOS los drivers (crecimiento, márgenes, CapEx, ΔNWC):
 
-- Crecimiento de ingresos: CAGR de los últimos N años, con "fade" lineal
-  hacia la tasa de crecimiento terminal a lo largo del horizonte de
-  proyección (evita extrapolar un crecimiento alto de forma irreal a
-  perpetuidad — práctica estándar en DCF, ver Damodaran).
-- Márgenes (EBIT, D&A, CapEx, ΔNWC como % de ventas) y tipo impositivo:
-  media de los últimos N años, mantenidos constantes.
+    fade lineal desde un valor "año 1" (estado actual) hasta un valor
+    "año N" (estado estable de largo plazo), a lo largo del horizonte
+    de proyección.
 
-Estos son supuestos por defecto razonables y transparentes, no una
-predicción "óptima" — el objetivo es tener un punto de partida auditable
-que el usuario pueda sobreescribir explícitamente (pasando su propio
-ProjectionAssumptions) en vez de aceptar una caja negra.
+Esto es "reversión a la media" estándar en DCF (Damodaran: toda empresa
+converge a supuestos de industria/largo plazo con el tiempo, no
+mantiene sus métricas actuales a perpetuidad). Por defecto:
+
+- Año 1 = valor real del último ejercicio fiscal reportado (el mejor
+  estimador disponible del "estado actual" de la compañía).
+- Año N = media de los últimos `lookback_years` años (estimador del
+  "estado normalizado" de largo plazo).
+- El crecimiento de ingresos es la excepción: año 1 = CAGR reciente
+  (no el crecimiento del último año suelto, más ruidoso), año N = tasa
+  de crecimiento terminal proporcionada por el usuario (ligada al PIB
+  nominal de largo plazo, no derivada del histórico).
+
+Sigue siendo un punto de partida transparente y sobreescribible, no una
+predicción "óptima" — cualquier campo de ProjectionAssumptions se puede
+fijar a mano en vez de aceptar el valor derivado del histórico.
 """
 
 import statistics
@@ -65,15 +75,26 @@ def linear_fade(start: float, end: float, n_years: int) -> list[float]:
 
 
 @dataclass
+class FadeAssumption:
+    """Un driver que evoluciona linealmente desde `start` (año 1) hasta
+    `end` (año N) a lo largo del horizonte de proyección. `start == end`
+    equivale a mantener el driver constante (caso particular del fade)."""
+    start: float
+    end: float
+
+    def path(self, n_years: int) -> list[float]:
+        return linear_fade(self.start, self.end, n_years)
+
+
+@dataclass
 class ProjectionAssumptions:
     n_years: int
-    initial_revenue_growth: float
-    terminal_revenue_growth: float
-    ebit_margin: float
-    da_pct_revenue: float
-    capex_pct_revenue: float
-    nwc_change_pct_revenue: float
-    tax_rate: float
+    revenue_growth: FadeAssumption
+    ebit_margin: FadeAssumption
+    da_pct_revenue: FadeAssumption
+    capex_pct_revenue: FadeAssumption
+    nwc_change_pct_revenue: FadeAssumption
+    tax_rate: float  # se mantiene plano: fade de tipo impositivo no es práctica estándar
 
 
 @dataclass
@@ -88,27 +109,39 @@ class ProjectionResult:
 
 def project_financials(last_actual_revenue: float,
                         assumptions: ProjectionAssumptions) -> ProjectionResult:
-    """Proyecta revenue con la tasa de crecimiento en fade lineal, y el
-    resto de líneas como % constante de ese revenue proyectado."""
-    growth_rates = linear_fade(
-        assumptions.initial_revenue_growth,
-        assumptions.terminal_revenue_growth,
-        assumptions.n_years,
-    )
+    """Proyecta revenue aplicando el fade de crecimiento, y cada línea
+    (EBIT, D&A, CapEx, ΔNWC) como su propio % de revenue en fade."""
+    n = assumptions.n_years
+    growth_rates = assumptions.revenue_growth.path(n)
     revenue = []
     prev = last_actual_revenue
     for g in growth_rates:
         prev = prev * (1 + g)
         revenue.append(prev)
 
+    ebit_margins = assumptions.ebit_margin.path(n)
+    da_pcts = assumptions.da_pct_revenue.path(n)
+    capex_pcts = assumptions.capex_pct_revenue.path(n)
+    nwc_pcts = assumptions.nwc_change_pct_revenue.path(n)
+
     return ProjectionResult(
         revenue=revenue,
-        ebit=[r * assumptions.ebit_margin for r in revenue],
-        tax_rate=[assumptions.tax_rate] * assumptions.n_years,
-        d_and_a=[r * assumptions.da_pct_revenue for r in revenue],
-        capex=[r * assumptions.capex_pct_revenue for r in revenue],
-        change_in_nwc=[r * assumptions.nwc_change_pct_revenue for r in revenue],
+        ebit=[r * m for r, m in zip(revenue, ebit_margins)],
+        tax_rate=[assumptions.tax_rate] * n,
+        d_and_a=[r * p for r, p in zip(revenue, da_pcts)],
+        capex=[r * p for r, p in zip(revenue, capex_pcts)],
+        change_in_nwc=[r * p for r, p in zip(revenue, nwc_pcts)],
     )
+
+
+def _margin_fade_from_recent_to_average(window: pd.DataFrame, column: str) -> FadeAssumption:
+    """Año 1 = margen real del último año de la ventana; año N = media
+    de la ventana completa. Si ambos coinciden (histórico plano), el
+    fade colapsa a un valor constante."""
+    most_recent = window.iloc[-1]
+    recent_value = most_recent[column] / most_recent["revenue"]
+    average_value = average_margin(window[column].tolist(), window["revenue"].tolist())
+    return FadeAssumption(start=float(recent_value), end=float(average_value))
 
 
 def default_assumptions_from_history(history: pd.DataFrame, n_years: int = 5,
@@ -120,10 +153,9 @@ def default_assumptions_from_history(history: pd.DataFrame, n_years: int = 5,
     Dos ventanas distintas y deliberadamente NO intercambiables:
     - CAGR de ingresos: necesita `lookback_years + 1` puntos para medir
       `lookback_years` periodos de crecimiento (los extremos del CAGR).
-    - Márgenes (EBIT, D&A, CapEx, ΔNWC) y tipo impositivo: media de
-      exactamente los últimos `lookback_years` años (no N+1) — mezclar
-      ambas ventanas colaría un año adicional, más antiguo, en la media
-      de márgenes, sesgándola en empresas con tendencia de margen fuerte.
+    - Márgenes (EBIT, D&A, CapEx, ΔNWC) y tipo impositivo: usan
+      exactamente los últimos `lookback_years` puntos — mezclar ambas
+      ventanas colaría un año adicional, más antiguo, sesgando la media.
 
     Requiere al menos 2 años de revenue no nulo para el CAGR, y al menos
     1 año con datos para cada margen.
@@ -136,13 +168,16 @@ def default_assumptions_from_history(history: pd.DataFrame, n_years: int = 5,
     initial_growth = cagr(revenue_series[0], revenue_series[-1], len(revenue_series) - 1)
 
     margin_window = history.tail(lookback_years)
-    ebit_margin = average_margin(margin_window["ebit"].tolist(), margin_window["revenue"].tolist())
-    da_pct = average_margin(margin_window["d_and_a"].tolist(), margin_window["revenue"].tolist())
-    capex_pct = average_margin(margin_window["capex"].tolist(), margin_window["revenue"].tolist())
+    if margin_window.empty or pd.isna(margin_window.iloc[-1].get("revenue")):
+        raise ValueError("No hay datos suficientes en la ventana de márgenes")
+
+    ebit_margin = _margin_fade_from_recent_to_average(margin_window, "ebit")
+    da_pct = _margin_fade_from_recent_to_average(margin_window, "d_and_a")
+    capex_pct = _margin_fade_from_recent_to_average(margin_window, "capex")
 
     nwc_window = margin_window.dropna(subset=["change_in_nwc", "revenue"])
-    nwc_pct = (average_margin(nwc_window["change_in_nwc"].tolist(), nwc_window["revenue"].tolist())
-               if len(nwc_window) > 0 else 0.0)
+    nwc_fade = (_margin_fade_from_recent_to_average(nwc_window, "change_in_nwc")
+                if len(nwc_window) > 0 else FadeAssumption(0.0, 0.0))
 
     tax_rate = margin_window["tax_rate"].dropna().mean()
     if pd.isna(tax_rate):
@@ -150,11 +185,10 @@ def default_assumptions_from_history(history: pd.DataFrame, n_years: int = 5,
 
     return ProjectionAssumptions(
         n_years=n_years,
-        initial_revenue_growth=initial_growth,
-        terminal_revenue_growth=terminal_growth_rate,
+        revenue_growth=FadeAssumption(start=initial_growth, end=terminal_growth_rate),
         ebit_margin=ebit_margin,
         da_pct_revenue=da_pct,
         capex_pct_revenue=capex_pct,
-        nwc_change_pct_revenue=nwc_pct,
+        nwc_change_pct_revenue=nwc_fade,
         tax_rate=float(tax_rate),
     )

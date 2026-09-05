@@ -18,6 +18,7 @@ from engine.valuation import (
     discount_periods,
     relever_beta,
     run_dcf,
+    sensitivity_matrix,
     treasury_stock_method,
     unlever_beta,
     unlevered_fcf,
@@ -185,3 +186,54 @@ def test_gordon_growth_requires_wacc_above_terminal_growth():
     )
     with pytest.raises(ValueError):
         run_dcf(inputs)
+
+
+# --- Matriz de sensibilidad WACC x g -----------------------------------------
+
+def _amzn_blended_inputs() -> DCFInputs:
+    return DCFInputs(
+        ebit=EBIT, tax_rate=TAX_RATE, d_and_a=D_AND_A, capex=CAPEX,
+        change_in_nwc=CHANGE_IN_NWC, wacc=TARGET_WACC,
+        terminal_growth_rate=TARGET_TGR, stub_fraction=TARGET_STUB,
+        cash=89092, total_debt=54889, diluted_shares=TARGET_DILUTED_SHARES,
+        terminal_ev_ebitda_multiple=TARGET_EXIT_MULTIPLE, gordon_weight=0.8,
+    )
+
+
+def test_sensitivity_matrix_center_cell_matches_single_run_dcf():
+    inputs = _amzn_blended_inputs()
+    matrix = sensitivity_matrix(inputs, wacc_values=[TARGET_WACC], growth_values=[TARGET_TGR])
+    assert matrix.implied_share_price[0][0] == pytest.approx(TARGET_IMPLIED_PRICE, rel=1e-9)
+
+
+def test_sensitivity_matrix_shape_matches_inputs():
+    inputs = _amzn_blended_inputs()
+    wacc_values = [0.07, 0.08, 0.09]
+    growth_values = [0.015, 0.025, 0.035]
+    matrix = sensitivity_matrix(inputs, wacc_values, growth_values)
+    assert len(matrix.implied_share_price) == 3
+    assert all(len(row) == 3 for row in matrix.implied_share_price)
+    assert matrix.wacc_values == wacc_values
+    assert matrix.growth_values == growth_values
+
+
+def test_sensitivity_matrix_price_decreases_with_wacc_for_fixed_growth():
+    inputs = _amzn_blended_inputs()
+    matrix = sensitivity_matrix(inputs, wacc_values=[0.07, 0.08, 0.09], growth_values=[0.025])
+    prices = [row[0] for row in matrix.implied_share_price]
+    assert prices[0] > prices[1] > prices[2]
+
+
+def test_sensitivity_matrix_price_increases_with_growth_for_fixed_wacc():
+    inputs = _amzn_blended_inputs()
+    matrix = sensitivity_matrix(inputs, wacc_values=[0.09], growth_values=[0.015, 0.025, 0.035])
+    prices = matrix.implied_share_price[0]
+    assert prices[0] < prices[1] < prices[2]
+
+
+def test_sensitivity_matrix_rejects_empty_axes():
+    inputs = _amzn_blended_inputs()
+    with pytest.raises(ValueError):
+        sensitivity_matrix(inputs, wacc_values=[], growth_values=[0.025])
+    with pytest.raises(ValueError):
+        sensitivity_matrix(inputs, wacc_values=[0.08], growth_values=[])

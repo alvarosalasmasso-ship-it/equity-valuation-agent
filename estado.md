@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-05 (sesión 3)
+**Última actualización:** 2026-09-05 (sesión 4)
 
 ---
 
@@ -40,7 +40,15 @@ IA (que solo redacta, nunca calcula).
   con modo opcional de blend Gordon + múltiplo de salida EV/EBITDA
   (requiere comparables, pendiente de Fase 3).
 - **WACC:** CAPM con beta reconstruida desde comparables (unlever/relever),
-  no un beta de mercado tomado directamente. Replicado exacto.
+  no un beta de mercado tomado directamente. Replicado exacto, y ahora
+  orquestado de punta a punta para cualquier ticker en `wacc_builder.py`.
+- **Proyección de márgenes/CapEx: reversión a la media, no continuación
+  de tendencia.** Cada driver (margen EBIT, D&A, CapEx, ΔNWC) hace fade
+  lineal desde el dato real del último año hasta el promedio histórico
+  de varios años. Es una postura de modelado deliberada (conservadora,
+  no extrapola el momentum actual a perpetuidad) y explícitamente
+  sobreescribible — ver sección 3 para la justificación completa y sus
+  implicaciones al validar contra el mercado.
 - **Acciones diluidas:** Treasury Stock Method completo (tramos de
   opciones in-the-money + convertibles), no solo shares outstanding.
 - **Universo piloto elegido: Big Tech / Cloud — AMZN, MSFT, GOOGL, META,
@@ -60,8 +68,8 @@ IA (que solo redacta, nunca calcula).
 | 0 — Alcance | ✅ Hecho | Idea #1 elegida (agente de valoración), sentiment como extensión Fase 2 |
 | 1 — Motor de datos (Alpha Vantage + yfinance) | 🟡 En marcha | Falta: yfinance, y descargar histórico de los otros 4 tickers piloto |
 | 2 — Motor de valoración (`engine/valuation.py`) | ✅ Hecho | Ver detalle abajo |
-| 3 — Motor de proyección, ratios y comps | ✅ Hecho | `engine/projections.py`, `engine/ratios.py`, `engine/comps.py` — ver detalle abajo. Falta la matriz de sensibilidad 2D (WACC×g) |
-| 4 — Tests unitarios | ✅ Hecho (Fases 1-3) | 42 tests, todos en verde (`./.venv/Scripts/python.exe -m pytest tests/ -v`) |
+| 3 — Motor de proyección, ratios, comps y WACC | ✅ Hecho | `engine/projections.py` (con fade en todos los drivers), `engine/ratios.py`, `engine/comps.py`, `engine/wacc_builder.py`, matriz de sensibilidad en `valuation.py`. Ver detalle abajo |
+| 4 — Tests unitarios | ✅ Hecho (Fases 1-3) | 53 tests, todos en verde (`./.venv/Scripts/python.exe -m pytest tests/ -v`) |
 | 5 — Capa generativa (Investment Memo) | ⬜ No empezado | |
 | 6 — Interfaz Streamlit | ⬜ No empezado | |
 | 7 — Validación vs consenso de analistas | ⬜ No empezado | |
@@ -80,13 +88,9 @@ Funciones implementadas y testeadas (mapeo completo en `docs/METHODOLOGY.md`):
 - `gordon_growth_terminal_value`, `exit_multiple_terminal_value`, `blended_terminal_value`
 - `run_dcf(DCFInputs) -> DCFResult` — pipeline completo end-to-end
 
-Todos los tests pasan (`python -m pytest tests/ -v` → 11 passed) contra
-valores reales extraídos del Excel (no inventados).
-
-**No implementado todavía dentro del motor:** matriz de sensibilidad 2D
-(WACC × g) — el Excel la genera con Data Tables; en Python será una
-función que corre `run_dcf` en un grid de combinaciones. Fácil de añadir
-en Fase 3/6, no bloquea nada.
+Todos los tests pasan contra valores reales extraídos del Excel (no
+inventados). Matriz de sensibilidad 2D (WACC × g) añadida en Fase 3
+(`sensitivity_matrix`).
 
 ### Detalle Fase 1 — `engine/data_provider.py`
 
@@ -126,65 +130,67 @@ en Fase 3/6, no bloquea nada.
   `COMPANY_OVERVIEW`, así que no bloquea nada, es una mejora de fiabilidad
   futura, no un requisito.
 
-### Detalle Fase 3 — `engine/projections.py`, `engine/ratios.py`, `engine/comps.py`
+### Detalle Fase 3 — `engine/projections.py`, `engine/ratios.py`, `engine/comps.py`, `engine/wacc_builder.py`, `sensitivity_matrix`
 
-**Motor de proyección** (`projections.py`): deriva supuestos de
-crecimiento/márgenes de los históricos de `historical_financials`
-(CAGR de ingresos con fade lineal hacia la tasa terminal; márgenes de
-EBIT/D&A/CapEx/ΔNWC como media de los últimos N años, planos). API
-diseñada para ser sobreescrita explícitamente
-(`ProjectionAssumptions`), no una caja negra.
+**Motor de proyección** (`projections.py`, reescrito esta sesión):
+mecanismo único de **fade lineal** (`FadeAssumption(start, end)`)
+aplicado a TODOS los drivers (crecimiento de ingresos, margen EBIT, D&A,
+CapEx, ΔNWC), no solo al crecimiento como en la versión anterior. Por
+defecto: año 1 = dato real del último ejercicio fiscal, año N = promedio
+histórico de `lookback_years` años (crecimiento de ingresos es la
+excepción: año 1 = CAGR reciente, año N = tasa terminal dada por el
+usuario). Sigue siendo 100% sobreescribible.
 
-**⚠️ Hallazgo importante de esta sesión — probado con datos reales de
-AMZN de punta a punta** (`historical_financials` -> `default_assumptions_from_history`
--> `project_financials` -> `run_dcf`): el precio implícito resultante
-(~$50-76) queda muy por debajo del precio de mercado (~$258) y del
-consenso de analistas (~$328). Diagnóstico completo en
-`docs/METHODOLOGY.md` sección 5. Resumen:
+**WACC vía comparables** (`wacc_builder.py`, nuevo): orquesta
+`unlever_beta` -> media de industria -> `relever_beta` -> `cost_of_equity`
+-> `cost_of_debt` -> `wacc` para un ticker y un set de peers arbitrarios,
+reutilizando (no duplicando) las funciones ya validadas de
+`valuation.py`. Validado exacto contra el mismo caso AMZN/Excel que
+`test_valuation.py`.
 
-- El motor de valoración y el proveedor de datos ya están validados
-  exactos contra el Excel — el gap NO viene de un bug en esas piezas.
-- Viene de que el motor de proyección por defecto **mantiene el margen
-  EBIT y el % de CapEx planos al promedio histórico**, sin fade, mientras
-  que Amazon está en plena expansión de margen (6%→14% en 3 años) y en
-  un pico de CapEx (inversión en IA). Un promedio histórico simple no
-  captura ninguna de las dos cosas, y las mantiene "congeladas" así
-  durante los 5 años de proyección.
-- **No se ha ajustado el supuesto por defecto hasta que el número
-  cuadrase con el mercado** — sería sobreajustar a un caso conocido,
-  justo lo que este proyecto quiere evitar demostrar que NO hace. En su
-  lugar queda documentado como limitación conocida y como el argumento
-  concreto de por qué hace falta la Fase 7 (validación contra consenso)
-  y por qué la futura interfaz debe mostrar los supuestos usados y
-  avisar de desviaciones grandes frente al consenso, en vez de devolver
-  solo un número.
-- Al corregir esto de paso encontré y arreglé un bug real: el código
-  reutilizaba la misma ventana de años tanto para el CAGR de ingresos
-  (necesita N+1 puntos) como para la media de márgenes (debe usar
-  exactamente N puntos) — colaba un año de más, más antiguo, en la media
-  de márgenes. Ahora están separadas, con test de regresión
-  (`test_default_assumptions_margin_window_excludes_extra_older_year`).
-- **Mejora identificada, no implementada:** fade de márgenes/CapEx/D&A
-  hacia un valor de "estado estable" en el año terminal, igual que ya se
-  hace con el crecimiento de ingresos. Requiere decidir un valor
-  terminal objetivo razonado (no solo mecánico) — buen punto de partida
-  para la próxima sesión si se quiere seguir puliendo el motor de
-  proyección antes de pasar a Streamlit/LLM.
+**Matriz de sensibilidad** (`sensitivity_matrix` en `valuation.py`,
+nuevo): réplica de la Data Table WACC×g del Excel. Corre `run_dcf` en un
+grid vía `dataclasses.replace`, sin duplicar matemática. Pendiente
+desde la Fase 2, cerrado esta sesión.
 
 **Comps** (`comps.py`): `build_comps_table()` agrega snapshots de varios
 tickers en una tabla indexada por símbolo; `peer_average_multiple()` da
 la media/mediana de un múltiplo entre peers (excluyendo opcionalmente el
-ticker objetivo) — listo para alimentar el múltiplo de salida del valor
-terminal con un múltiplo de *mercado*, no el de la propia empresa.
+ticker objetivo).
 
 **Ratios** (`ratios.py`): ROE por Dupont, ROIC vs. WACC (creación de
-valor), Debt/EBITDA, cobertura de intereses, current ratio — la tabla de
-"Ratios y comparables" del blueprint, sección 2.
+valor), Debt/EBITDA, cobertura de intereses, current ratio.
+
+**Validación de punta a punta con AMZN, repetida con el motor mejorado**
+(fade en todos los drivers + WACC vía comparables en vez de beta crudo):
+precio implícito subió de ~$49 (sesión 3, bug de ventana + sin fade) a
+~$85 (lookback=3, con el bug corregido y el fade activo), frente a
+~$258 de mercado y ~$328 de consenso. **Diagnóstico ya no es "hay bugs y
+supuestos naive"**: el motor y los datos están correctos y validados; la
+brecha restante es una diferencia de **filosofía de modelado** — nuestro
+motor por defecto asume reversión a la media (el margen converge a su
+promedio histórico), mientras que el mercado paga por continuación de
+tendencia (apuesta a que Amazon sigue expandiendo margen más allá de su
+nivel actual). Ninguna postura es "la correcta" de forma absoluta; por
+eso `ProjectionAssumptions` deja `end` de cada driver completamente
+editable — un analista con tesis alcista lo fija a mano. Diagnóstico
+completo y honesto en `docs/METHODOLOGY.md` sección 5. **No se ha
+tocado el valor por defecto para acercarlo al precio de mercado** —
+sería sobreajustar a un caso conocido.
 
 `historical_financials` se amplió con los campos que estas piezas
 necesitan (ebitda, interest_expense, total_assets, total_equity,
 total_debt, cash, current_assets, current_liabilities) y `market_snapshot`
 con ev_to_revenue, pe_ratio, price_to_sales, price_to_book.
+
+**Nota sobre el WACC del pipeline de validación:** los comparables
+(AAPL/MSFT/GOOGL) usados en la prueba de punta a punta son las
+constantes congeladas del Excel (una fecha pasada), mientras que AMZN
+usa datos frescos de hoy — desalineación temporal real, señalada a
+propósito en vez de mezclarse en silencio. Para producción, `build_wacc`
+debería recibir peers con datos de la misma fecha que el ticker
+objetivo (pendiente: pull en vivo de balances de peers vía Alpha Vantage,
+cuesta cuota de API).
 
 ## 4. Estado técnico del entorno
 
@@ -206,29 +212,31 @@ con ev_to_revenue, pe_ratio, price_to_sales, price_to_book.
 
 ## 5. Próximo paso inmediato
 
-El pipeline ya funciona de punta a punta (datos -> proyección ->
-valoración) para un ticker que no es Amazon, mecánicamente correcto pero
-con supuestos de proyección que hay que revisar caso por caso (ver
-hallazgo de la sección 3). Opciones razonables para la próxima sesión,
-de más a menos prioritaria:
+El pipeline funciona de punta a punta (datos -> proyección -> WACC ->
+valoración) para un ticker arbitrario, con cada pieza validada por
+separado contra el Excel. La brecha restante frente al mercado en AMZN
+es una diferencia de filosofía de modelado ya documentada (sección 3),
+no una lista de bugs pendientes. Opciones razonables para la próxima
+sesión, de más a menos prioritaria:
 
-1. **Mejorar el motor de proyección:** fade de márgenes/CapEx hacia un
-   estado estable (no solo el crecimiento de ingresos) — es lo que más
-   acercaría el precio implícito de AMZN a un rango creíble sin hacer
-   trampa ajustando a mano.
-2. **Fase 7 adelantada (validación):** correr el pipeline completo sobre
-   los 5 tickers piloto y comparar contra consenso de analistas
-   (`AnalystTargetPrice`, ya disponible en `market_snapshot`) para medir
-   la desviación media del motor por defecto — da una cifra real y
-   honesta para el CV en vez de esperar a tener la app terminada.
-3. Completar Fase 1: descargar histórico de los otros 4 tickers piloto
+1. **Fase 7 (validación sistemática):** correr el pipeline completo
+   sobre los 5 tickers piloto y comparar contra consenso de analistas
+   (`AnalystTargetPrice`, ya disponible en `market_snapshot`) — da una
+   cifra real de desviación media para el CV, y probablemente muestre
+   que el motor se comporta mejor en compañías maduras/estables que en
+   historias de crecimiento como AMZN (hipótesis a confirmar con datos,
+   no a asumir).
+2. Completar Fase 1: descargar histórico de los otros 4 tickers piloto
    (MSFT, GOOGL, META, AAPL) — con cuidado de la cuota diaria (quedan
-   ~15-20 peticiones hoy) — y confirmar que `historical_financials`
-   funciona igual de bien con ellos.
-4. Matriz de sensibilidad 2D (WACC × g) en `engine/valuation.py` —
-   pendiente desde la Fase 2, sencilla de añadir (grid de `run_dcf`).
+   ~15-20 peticiones hoy) — y usarlos también como comparables reales en
+   `wacc_builder.py` en vez de las constantes congeladas del Excel
+   (resuelve la desalineación temporal señalada en la sección 3).
+3. Opcional: exponer una tesis "alcista" vs. "conservadora" en la futura
+   interfaz (dos `ProjectionAssumptions` predefinidos, no solo el
+   derivado por defecto) — comunica mejor que el número no es una
+   verdad única, es una función de supuestos explícitos.
 
 **No recomendado todavía:** Streamlit ni la capa generativa (Fases 5-6).
-El blueprint es explícito en esto y el hallazgo de hoy lo confirma —
-construir la interfaz antes de que las proyecciones sean fiables
-enseñaría números poco defendibles con una capa bonita encima.
+El blueprint es explícito en esto — construir la interfaz antes de medir
+la Fase 7 enseñaría números sin saber todavía si son buenos o malos en
+la práctica.

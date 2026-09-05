@@ -149,69 +149,94 @@ El Excel resuelve la proyección con el "Operating Model": supuestos de
 % crecimiento / % sobre ventas fijados a mano por el analista, por
 segmento. Para un ticker arbitrario no hay un analista fijándolos a
 mano, así que `default_assumptions_from_history()` los deriva del propio
-histórico de forma sistemática:
+histórico con un único mecanismo aplicado a TODOS los drivers
+(crecimiento, margen EBIT, D&A, CapEx, ΔNWC): un **fade lineal** desde
+un valor de "año 1" hasta un valor de "año N", a lo largo del horizonte
+de proyección (`FadeAssumption`, con `start == end` como caso particular
+de driver plano).
 
-- **Crecimiento de ingresos:** CAGR de los últimos `lookback_years` años,
-  con fade lineal hacia la tasa de crecimiento terminal a lo largo del
-  horizonte de proyección (evita extrapolar el crecimiento actual a
-  perpetuidad).
-- **Márgenes** (EBIT, D&A, CapEx, ΔNWC como % de ventas) y **tipo
-  impositivo:** media de exactamente los últimos `lookback_years` años,
-  mantenidos constantes durante toda la proyección (sin fade).
+Por defecto:
+- **Año 1** = valor real del **último ejercicio fiscal reportado** (mejor
+  estimador disponible del estado actual de la compañía). Excepción: el
+  crecimiento de ingresos usa el CAGR de los últimos `lookback_years`
+  años en vez del crecimiento de un único año suelto, más ruidoso.
+- **Año N** = media de los últimos `lookback_years` años (estimador del
+  estado "normalizado" de largo plazo) para márgenes/CapEx/ΔNWC; la tasa
+  de crecimiento terminal proporcionada por el usuario (ligada a
+  crecimiento nominal de largo plazo, no derivada del histórico) para
+  ingresos.
+- El tipo impositivo se mantiene plano (fade de tipo impositivo no es
+  práctica estándar; converger al tipo estatutario sería el refinamiento
+  natural, no implementado).
 
-Estas dos ventanas (CAGR vs. márgenes) están separadas a propósito en el
-código: el CAGR necesita `lookback_years + 1` puntos (los extremos del
-periodo), pero la media de márgenes debe usar exactamente
-`lookback_years` puntos — mezclarlas cuela un año adicional, más
-antiguo, en la media de márgenes (bug real encontrado y corregido
-durante el desarrollo, ver `tests/test_projections.py::test_default_assumptions_margin_window_excludes_extra_older_year`).
+Esto es **reversión a la media** estándar en DCF (Damodaran: toda
+empresa converge con el tiempo a métricas de industria/largo plazo, no
+mantiene su estado actual a perpetuidad) — y es una decisión de
+modelado deliberada, no la única opción válida (ver más abajo).
 
-### Limitación conocida, encontrada en pruebas con datos reales (AMZN)
+Dos ventanas de datos separadas a propósito en el código: el CAGR de
+ingresos necesita `lookback_years + 1` puntos (los extremos del
+periodo), pero la ventana de márgenes usa exactamente `lookback_years`
+puntos — mezclarlas colaría un año adicional, más antiguo, en la media
+(bug real encontrado y corregido durante el desarrollo, ver
+`tests/test_projections.py::test_default_assumptions_margin_window_excludes_extra_older_year`).
 
-Al correr el pipeline completo (`historical_financials` -> `default_assumptions_from_history`
--> `project_financials` -> `run_dcf`) con datos reales de Amazon, el
-precio implícito resultante (~$50-76, según ventana) está muy por debajo
-del precio de mercado (~$258) y del consenso de analistas (~$328).
+### Validación de punta a punta con datos reales (AMZN) y su interpretación correcta
 
-Diagnóstico: **no es un bug del motor de valoración** (ya validado
-exacto contra el Excel) ni del proveedor de datos (ya validado exacto
-contra el Excel). Es una limitación real de la metodología de proyección
-por defecto, específica de este tipo de compañía:
+Al correr el pipeline completo (`historical_financials` ->
+`default_assumptions_from_history` -> `project_financials` -> `build_wacc`
+-> `run_dcf`) con datos reales de Amazon, el precio implícito (~$55-85,
+según ventana de lookback) queda por debajo del precio de mercado
+(~$258) y del consenso de analistas (~$328).
 
-1. **Mantener el margen EBIT plano al promedio histórico infravalora
-   compañías en expansión de margen.** Amazon pasó de ~6% a ~14% de
-   margen EBIT en 3 años (escalado de AWS/publicidad). Un promedio de 3-5
-   años queda muy por debajo del margen actual, y se mantiene así los 5
-   años de proyección (sin fade, a diferencia del crecimiento de
-   ingresos).
-2. **CapEx elevado (ciclo de inversión en IA) mantenido plano castiga el
-   FCF de todo el horizonte.** Sin un supuesto de "el capex se normaliza
-   tras el pico de inversión", el modelo asume el pico actual de CapEx
-   como la nueva normalidad durante 5 años seguidos.
-3. Como consecuencia de (1) y (2), el UFCF proyectado es conservador, lo
-   que golpea especialmente al valor terminal por Gordon Growth (que se
-   pondera 80% en el blend por defecto) — en las pruebas, Gordon Growth
-   dio ~$768bn de TV frente a ~$2,163bn del múltiplo de salida, una
-   brecha de ~2.8x entre los dos métodos que en el modelo original del
-   Excel no aparece porque el analista modela cada segmento con sus
-   propios supuestos de largo plazo, no un promedio histórico global.
+Esto **NO es un bug** — el motor de valoración, el proveedor de datos y
+ahora también el fade de márgenes y la reconstrucción de WACC vía
+comparables están validados exactos (ver `tests/`). Es la consecuencia
+esperada de una elección de modelado explícita y defendible:
 
-**Esto no se ha "arreglado" ajustando los supuestos por defecto hasta
-que el número cuadre con el mercado** — eso sería sobreajustar el modelo
-a un caso conocido, exactamente lo que el principio de rigor de este
-proyecto quiere evitar. En su lugar: `ProjectionAssumptions` está
-diseñado para ser sobreescrito explícitamente por el usuario/analista
-caso por caso, y el hallazgo queda documentado aquí como justificación
-concreta de por qué la Fase 7 (validación contra consenso) es necesaria
-y de por qué la futura interfaz debe mostrar los supuestos usados y
-avisar cuando el resultado se desvía mucho del consenso, en vez de
-limitarse a mostrar un número.
+**Nuestro motor asume reversión a la media** (el margen EBIT actual de
+Amazon, ~14%, converge hacia su propio promedio histórico de varios años,
+~8-10%, no se extrapola ni se supera). **El mercado/consenso de analistas
+está pagando por continuación de tendencia** (apuesta a que el margen
+sigue expandiéndose más allá del nivel actual, impulsado por AWS y
+publicidad). Ambas son posturas legítimas de un analista; no hay una
+"correcta" universal — por eso `ProjectionAssumptions` expone
+`ebit_margin`, `capex_pct_revenue`, etc. como `FadeAssumption(start, end)`
+explícitos y sobreescribibles: un analista con tesis alcista puede fijar
+`end` por encima de `start` (margen que sigue mejorando) en vez de
+aceptar el valor por defecto conservador.
 
-**Mejora identificada para una futura sesión (no implementada aún):**
-hacer fade también de márgenes/CapEx/D&A hacia un valor de "estado
-estable" en el año terminal (no solo del crecimiento de ingresos), como
-hacen los modelos profesionales. Requiere decidir un valor terminal
-objetivo razonado, no solo mecánico.
+**Deliberadamente no se ha ajustado el valor por defecto para que
+"cuadre" con el precio de mercado** — sería sobreajustar el modelo a un
+caso conocido, justo lo que el principio de rigor de este proyecto
+quiere poder demostrar que no hace. El motor por defecto es
+intencionadamente conservador (sesgo hacia reversión a la media, no
+hacia extrapolar el hype), y la brecha resultante frente al consenso en
+compañías con una historia de crecimiento fuerte es información legítima
+del propio análisis, no un fallo a esconder — exactamente el tipo de
+matiz que la Fase 7 (validación sistemática contra consenso, sobre los 5
+tickers piloto) debe cuantificar y que la futura interfaz debe mostrar
+junto al número, no en vez de él.
+
+### Matriz de sensibilidad (`sensitivity_matrix` en `engine/valuation.py`)
+
+Réplica de la Data Table del Excel (`Consolidated!N51:S57`): corre
+`run_dcf` para cada combinación de WACC (filas) × tasa de crecimiento
+terminal g (columnas), variando solo esos dos parámetros. Es una
+función pura sobre `DCFInputs` (usa `dataclasses.replace`, no duplica la
+matemática del DCF) — mismo principio de una sola fuente de verdad que
+`wacc_builder.py` (ver sección 6).
+
+### Reconstrucción de WACC vía comparables (`engine/wacc_builder.py`)
+
+Orquesta `unlever_beta` -> media de industria -> `relever_beta` ->
+`cost_of_equity` -> `cost_of_debt` -> `wacc`, exactamente como la hoja
+`WACC` del Excel, pero para un ticker y un set de comparables
+arbitrarios (no solo AMZN/AAPL/MSFT/GOOGL). Reutiliza las funciones de
+`engine/valuation.py` tal cual — no reimplementa la matemática, así que
+un cambio en la fórmula de CAPM/WACC solo se hace en un sitio.
+Validado exacto contra el mismo caso AMZN/Excel que `test_valuation.py`
+(`tests/test_wacc_builder.py`).
 
 ## 6. Tabla de comparables y ratios — Fase 3
 
