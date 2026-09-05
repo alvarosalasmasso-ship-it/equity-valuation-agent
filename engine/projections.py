@@ -19,15 +19,31 @@ mantiene sus métricas actuales a perpetuidad). Por defecto:
 - Año 1 = valor real del último ejercicio fiscal reportado (el mejor
   estimador disponible del "estado actual" de la compañía).
 - Año N = media de los últimos `lookback_years` años (estimador del
-  "estado normalizado" de largo plazo).
-- El crecimiento de ingresos es la excepción: año 1 = CAGR reciente
-  (no el crecimiento del último año suelto, más ruidoso), año N = tasa
-  de crecimiento terminal proporcionada por el usuario (ligada al PIB
-  nominal de largo plazo, no derivada del histórico).
+  "estado normalizado" de largo plazo) para márgenes/CapEx/D&A/ΔNWC.
+
+**Crecimiento de ingresos: plano durante todo el horizonte explícito,
+NO fade hacia la tasa terminal.** Verificado contra el propio Excel de
+referencia (docs/METHODOLOGY.md sección 14): el analista profesional
+mantiene el crecimiento de Amazon prácticamente constante (~10-11%)
+durante los 6 años de previsión explícita, y solo lo hace converger a la
+tasa de crecimiento de largo plazo (g) de golpe, dentro de la fórmula de
+Gordon Growth del valor terminal — nunca dentro de los años explícitos.
+Por eso `default_assumptions_from_history()` fija
+`revenue_growth = FadeAssumption(cagr_reciente, cagr_reciente)` (plano,
+al CAGR de los últimos `lookback_years` años) y `terminal_growth_rate`
+se usa EXCLUSIVAMENTE en `gordon_growth_terminal_value()` — nunca para
+construir la serie de ingresos proyectados. Antes de este cambio, el
+motor diluía el crecimiento linealmente hasta la tasa terminal dentro de
+la propia ventana explícita, una forma de curva distinta a la que usa el
+modelo de referencia (no solo más conservadora en el nivel, sino con una
+forma de decaimiento distinta).
 
 Sigue siendo un punto de partida transparente y sobreescribible, no una
 predicción "óptima" — cualquier campo de ProjectionAssumptions se puede
-fijar a mano en vez de aceptar el valor derivado del histórico.
+fijar a mano en vez de aceptar el valor derivado del histórico (por
+ejemplo, para modelar una desaceleración explícita del crecimiento
+dentro del propio horizonte, algo que el analista del Excel no necesitó
+para Amazon pero que puede ser razonable para otra compañía).
 """
 
 import statistics
@@ -145,7 +161,6 @@ def _margin_fade_from_recent_to_average(window: pd.DataFrame, column: str) -> Fa
 
 
 def default_assumptions_from_history(history: pd.DataFrame, n_years: int = 5,
-                                      terminal_growth_rate: float = 0.025,
                                       lookback_years: int = 5) -> ProjectionAssumptions:
     """Deriva supuestos de proyección a partir de los últimos
     `lookback_years` años de `engine.data_provider.historical_financials`.
@@ -159,6 +174,14 @@ def default_assumptions_from_history(history: pd.DataFrame, n_years: int = 5,
 
     Requiere al menos 2 años de revenue no nulo para el CAGR, y al menos
     1 año con datos para cada margen.
+
+    No recibe `terminal_growth_rate`: el crecimiento de ingresos se
+    proyecta PLANO al CAGR reciente durante todo el horizonte explícito
+    (como hace el analista del Excel de referencia), y la tasa de
+    crecimiento terminal se aplica únicamente dentro de
+    `engine.valuation.gordon_growth_terminal_value()` al construir el
+    valor terminal — nunca aquí. Pásala directamente a `DCFInputs`/
+    `run_dcf` cuando calcules la valoración completa.
     """
     revenue_window = history.dropna(subset=["revenue"]).tail(lookback_years + 1)
     if len(revenue_window) < 2:
@@ -185,7 +208,7 @@ def default_assumptions_from_history(history: pd.DataFrame, n_years: int = 5,
 
     return ProjectionAssumptions(
         n_years=n_years,
-        revenue_growth=FadeAssumption(start=initial_growth, end=terminal_growth_rate),
+        revenue_growth=FadeAssumption(start=initial_growth, end=initial_growth),  # plano, ver docstring
         ebit_margin=ebit_margin,
         da_pct_revenue=da_pct,
         capex_pct_revenue=capex_pct,

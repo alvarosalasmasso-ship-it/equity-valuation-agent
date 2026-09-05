@@ -179,7 +179,7 @@ else:
 from engine.projections import default_assumptions_from_history
 
 assumptions = default_assumptions_from_history(
-    hist, n_years=n_years, terminal_growth_rate=terminal_growth_rate, lookback_years=lookback_years,
+    hist, n_years=n_years, lookback_years=lookback_years,
 )
 st.subheader("Supuestos de proyección (escenario conservador)")
 assumptions_df = pd.DataFrame([

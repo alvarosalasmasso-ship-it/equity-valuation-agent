@@ -137,10 +137,13 @@ def run_scenarios(history: pd.DataFrame, wacc: float, cash: float, total_debt: f
                    lookback_years: int = 3, terminal_ev_ebitda_multiple: Optional[float] = None,
                    gordon_weight: float = 1.0) -> dict[str, DCFResult]:
     """Corre run_dcf bajo los 3 escenarios por defecto sobre el mismo
-    histórico. Devuelve {nombre_escenario: DCFResult}."""
+    histórico. Devuelve {nombre_escenario: DCFResult}.
+
+    terminal_growth_rate se pasa solo a DCFInputs (valor terminal) — el
+    crecimiento de ingresos del horizonte explícito ya no depende de él,
+    ver default_assumptions_from_history()."""
     base = default_assumptions_from_history(
-        history, n_years=n_years, terminal_growth_rate=terminal_growth_rate,
-        lookback_years=lookback_years,
+        history, n_years=n_years, lookback_years=lookback_years,
     )
     last_revenue = history["revenue"].iloc[-1]
 

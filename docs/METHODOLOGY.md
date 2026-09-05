@@ -265,6 +265,16 @@ frente a precio de mercado y consenso de analistas.
 
 ### Resultado real, universo piloto (AMZN, MSFT, GOOGL, META, AAPL)
 
+> **Nota (sesión posterior):** la tabla de abajo usa los números
+> originales de esta sesión, con el motor de proyección de la época
+> (fade lineal de crecimiento hacia la tasa terminal DENTRO del
+> horizonte explícito). La sección 14 corrige esa forma de fade tras
+> comparar contra el propio Excel de referencia, y dio como resultado
+> una mejora real (desviación media 42.8%/41.3% en vez de 54.8%/53.4%).
+> Se deja esta tabla histórica para que el diagnóstico de más abajo
+> (causa raíz: CapEx>>D&A) siga siendo trazable; la tabla vigente está
+> en la sección 14.
+
 | Ticker | WACC | Precio implícito | Mercado | Consenso analistas | Desv. vs mercado | Desv. vs consenso |
 |---|---|---|---|---|---|---|
 | AMZN | 8.27% | $84.82 | $258.51 | $328.17 | -67.2% | -74.2% |
@@ -388,6 +398,13 @@ mismos datos de mercado subyacentes.
 
 ## 9. Contraprueba de empresas maduras completada: WACC bajo y la inestabilidad de Gordon Growth
 
+> **Nota (sesión posterior):** tabla histórica, con el fade de
+> crecimiento de la época (ver nota de la sección 7). Números vigentes
+> en la sección 14 — el diagnóstico de fondo (inestabilidad de Gordon
+> Growth con spread WACC-g estrecho) sigue siendo válido y de hecho se
+> agrava ligeramente para PG/JNJ con el fade corregido, por una razón
+> explicada en la sección 14.
+
 Con `yfinance_provider.py` se completó la contraprueba pendiente de la
 sección 7 (KO + Procter & Gamble + Johnson & Johnson, WACC vía
 comparables real entre las tres, no simplificado):
@@ -481,10 +498,14 @@ histórico, todas derivadas de datos reales, ninguna inventada:
 ### Hallazgo no intuitivo, verificado con AMZN (datos ya cacheados, sin API nueva)
 
 ```
-Conservador (reversión a la media)          -> $84.82
-Mantener nivel actual                       -> $71.04   <- por debajo del conservador
-Alcista (continúa la tendencia reciente)    -> $107.09
+Conservador (reversión a la media)          -> $104.41
+Mantener nivel actual                       ->  $87.63   <- por debajo del conservador
+Alcista (continúa la tendencia reciente)    -> $131.81
 ```
+
+(Cifras actualizadas tras el fix de la sección 14 — crecimiento plano
+en vez de fade hacia g. El hallazgo cualitativo no cambia: "mantener
+nivel actual" sigue por debajo del conservador, mismo mecanismo.)
 
 "Mantener nivel actual" da un precio MENOR que "conservador", pese a
 partir de un margen más alto. Investigado (mismo estándar que siempre):
@@ -622,3 +643,124 @@ test dedicado).
 3 tests de regresión (2 en `test_data_provider.py`, 1 en
 `test_yfinance_provider.py`) verifican tanto el filtrado del cero
 espurio como que un cero legítimo (sin deuda) no se filtra.
+
+## 14. Comparación directa contra el Excel profesional: la forma del fade de crecimiento estaba mal
+
+El usuario pidió explícitamente volver a comparar la app contra "el
+modelo a seguir" — el propio Excel de Amazon — en vez de seguir
+añadiendo piezas nuevas. Hasta ahora solo se había validado que las
+FÓRMULAS coinciden exactamente (sección 1-4) y que el WACC vía
+comparables da un resultado casi idéntico (8.27%-8.33% según la
+sesión). Nunca se habían puesto lado a lado, año a año, los SUPUESTOS
+de proyección del analista frente a los que genera nuestro motor
+automático para la misma compañía.
+
+### Supuestos año a año: Excel (2024-2029, congelado ~nov-2024) vs. nuestra app (2027-2031, datos de 2026)
+
+| | Año 1 | Año 2 | Año 3 | Año 4 | Año 5 | Año 6 |
+|---|---|---|---|---|---|---|
+| Crecimiento ingresos — Excel | 10.6% | 11.0% | 11.2% | 10.4% | 10.1% | 10.6% |
+| Crecimiento ingresos — app (antes del fix) | 11.7% | 9.4% | 7.1% | 4.8% | 2.5% | — |
+| Margen EBIT — Excel | 9.8% | 11.0% | 12.5% | 13.6% | 14.3% | 15.0% |
+| Margen EBIT — app | 13.9% | 13.0% | 12.2% | 11.3% | 10.5% | — |
+| CapEx % ventas — Excel | 12.1% | 11.8% | 11.6% | 12.4% | 12.6% | 13.0% |
+| CapEx % ventas — app | 18.4% | 17.2% | 16.0% | 14.7% | 13.5% | — |
+
+WACC: Excel 8.33% vs. app 8.27% — prácticamente idéntico (confirma que
+`wacc_builder.py` funciona bien; la diferencia mínima es solo que
+usamos betas de comparables de hoy, no las congeladas del Excel).
+
+### Tres diferencias reales, cada una con su propio veredicto
+
+**1. Forma del fade de crecimiento — bug de diseño, corregido.** El
+analista mantiene el crecimiento **plano** durante los 6 años de
+previsión explícita (banda estrecha 10.1%-11.2%) y solo lo hace
+converger a la tasa terminal (2.5%) **de golpe, dentro de la fórmula de
+Gordon Growth** — nunca dentro del horizonte explícito. Nuestro motor,
+antes de esta sesión, diluía el crecimiento LINEALMENTE durante la
+propia ventana explícita, llegando ya al 2.5% en el año 5 — un año
+antes de que la perpetuidad ni siquiera empezara. No es "ser más
+conservador que el Excel", es replicar una forma de curva distinta a la
+del modelo de referencia. **Corregido** (ver más abajo).
+
+**2. Dirección del margen — postura de modelado, no se toca.** El Excel
+apuesta a que el margen sigue mejorando (9.8%→15.0%); nuestro motor por
+defecto asume reversión a la media (13.9%→10.5%). Ya documentado en
+profundidad en las secciones 5-7. Dato retrospectivo interesante: el
+margen EBIT *real* de Amazon en 2025 (13.9%) ya casi alcanzó la
+previsión que el analista tenía para *2029* (15.0%) — la tesis de
+"sigue mejorando" del Excel resultó más acertada que una reversión a la
+media habría predicho. Esto es evidencia real a favor de considerar un
+escenario "alcista" como punto de partida en compañías con esta
+dinámica, pero sigue sin ser motivo para cambiar el valor por defecto
+(seguiría siendo sobreajustar a un caso conocido) — para eso está
+`engine.scenarios.bullish_scenario()`, ya construido.
+
+**3. Nivel de CapEx — aquí la app está más actualizada que el Excel, no menos.**
+El Excel (construido ~nov-2024) asume CapEx estable ~12-13% porque el
+supercycle de inversión en IA todavía no se había desatado con esa
+magnitud. Los datos de 2026 de la app sí lo capturan (18.4% real). En
+este punto concreto, el Excel es el que está desactualizado.
+
+### La corrección aplicada (punto 1)
+
+`engine/projections.py::default_assumptions_from_history()`: el
+crecimiento de ingresos ya NO se construye como
+`FadeAssumption(cagr_reciente, terminal_growth_rate)` sino como
+`FadeAssumption(cagr_reciente, cagr_reciente)` — **plano** durante todo
+el horizonte explícito, igual que hace el analista del Excel. La
+función **ya no recibe el parámetro `terminal_growth_rate`** — ese
+concepto pertenece exclusivamente al cálculo del valor terminal
+(`engine.valuation.gordon_growth_terminal_value()`, sin cambios), nunca
+a la proyección de los años explícitos. Actualizados todos los sitios
+que llamaban a la función con ese parámetro (`engine/scenarios.py`,
+`engine/validation.py`, `app/streamlit_app.py`) para dejar de pasarlo
+ahí — siguen pasándolo, como siempre, directamente a `DCFInputs`/
+`run_dcf`.
+
+**Es importante notar qué tipo de cambio es este:** no es un ajuste de
+un parámetro para que el precio final se acerque al de mercado (eso es
+justo lo que este proyecto ha evitado en cada hallazgo). Es corregir la
+FORMA de una curva para que coincida con la que usa literalmente "el
+modelo a seguir" — el primer principio del blueprint ("usa tu propia
+plantilla DCF como fuente de verdad"). Que el resultado suba es una
+consecuencia observada, no el objetivo del cambio.
+
+### Impacto verificado (universo Big Tech, mismos parámetros que la sección 7)
+
+| Ticker | Implícito (antes) | Implícito (después) | Mercado | Desv. antes | Desv. después |
+|---|---|---|---|---|---|
+| AMZN | $84.82 | $104.41 | $258.51 | -67.2% | -59.6% |
+| MSFT | $295.80 | $397.36 | $499.70 | -40.8% | -20.5% |
+| GOOGL | $270.02 | $333.41 | $705.51 | -61.7% | -52.7% |
+| META | $365.03 | $534.56 | $712.53 | -48.8% | -25.0% |
+| AAPL | $142.74 | $140.60 | $319.97 | -55.4% | -56.1% |
+
+**Desviación media absoluta vs. mercado: 54.8% -> 42.8%. Vs. consenso:
+53.4% -> 41.3%.** MSFT y META prácticamente reducen su brecha a la
+mitad. AAPL apenas cambia (su CAGR histórico reciente ya era bajo y
+estable, así que plano vs. decayendo hacia 2.5% no difiere mucho para
+esa compañía en concreto) — consistente con que el efecto del fix es
+proporcional a cuánto crecimiento reciente tenía cada compañía por
+encima de la tasa terminal.
+
+**Efecto secundario, honesto y esperado, en el otro extremo (staples):**
+el mismo cambio empeora ligeramente la sobrevaloración de PG/JNJ (ya
+identificada en la sección 9 como inestabilidad de Gordon Growth por
+spread WACC-g estrecho): un crecimiento plano más alto en el último año
+explícito alimenta un UFCF terminal mayor, que la fórmula de Gordon —ya
+inestable en ese régimen— amplifica más todavía. KO, con spread también
+estrecho pero sin la misma sensibilidad (múltiplo de mercado más rico,
+ver sección 9), apenas se mueve. Esto no es una regresión que esconder:
+es la misma causa raíz (spread WACC-g estrecho) interactuando con dos
+cambios distintos de forma coherente y explicable — arreglar el
+crecimiento de las growth stories no podía, por construcción, arreglar
+también la inestabilidad de Gordon Growth en las staples; son dos
+mecanismos independientes, cada uno con su propio aviso/tratamiento.
+
+Nuevo test de regresión
+(`test_default_assumptions_revenue_growth_is_flat_not_faded_to_terminal_rate`)
+verifica que el crecimiento sale plano e idéntico en todos los años del
+horizonte, sobre un histórico sintético con CAGR sostenido del 21% —
+lejos de cualquier tasa terminal razonable, para que el test no pueda
+pasar por coincidencia. 88 tests en total, todos en verde.

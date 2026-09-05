@@ -124,7 +124,7 @@ def test_default_assumptions_flat_history_collapses_fade_to_constant():
     antes de introducir el mecanismo de fade."""
     history = _synthetic_flat_history()
     assumptions = default_assumptions_from_history(
-        history, n_years=5, terminal_growth_rate=0.025, lookback_years=3
+        history, n_years=5, lookback_years=3
     )
 
     assert assumptions.ebit_margin.start == pytest.approx(0.20)
@@ -134,8 +134,33 @@ def test_default_assumptions_flat_history_collapses_fade_to_constant():
     assert assumptions.nwc_change_pct_revenue.start == pytest.approx(0.02)
     assert assumptions.tax_rate == pytest.approx(0.25)
     assert assumptions.revenue_growth.start == pytest.approx(0.10, rel=1e-6)
-    assert assumptions.revenue_growth.end == pytest.approx(0.025)
     assert assumptions.n_years == 5
+
+
+def test_default_assumptions_revenue_growth_is_flat_not_faded_to_terminal_rate():
+    """Verificado contra el Excel de referencia (docs/METHODOLOGY.md
+    sección 14): el analista mantiene el crecimiento prácticamente plano
+    durante los 6 años de previsión explícita (~10-11%), y solo lo hace
+    converger a la tasa terminal en la fórmula de Gordon Growth -- nunca
+    dentro del horizonte explícito. Por eso revenue_growth debe salir
+    plano (start == end == CAGR reciente), sin depender de ninguna tasa
+    terminal (que ya ni siquiera es un parámetro de esta función)."""
+    revenue = [1000.0, 1210.0, 1464.1, 1771.56]  # CAGR ~21% sostenido
+    history = pd.DataFrame({
+        "fiscal_year": [2020, 2021, 2022, 2023],
+        "revenue": revenue,
+        "ebit": [r * 0.20 for r in revenue],
+        "d_and_a": [r * 0.05 for r in revenue],
+        "capex": [r * 0.08 for r in revenue],
+        "change_in_nwc": [None] + [r * 0.02 for r in revenue[1:]],
+        "tax_rate": [0.25] * 4,
+    })
+    assumptions = default_assumptions_from_history(history, lookback_years=3)
+    assert assumptions.revenue_growth.start == pytest.approx(assumptions.revenue_growth.end)
+    assert assumptions.revenue_growth.start == pytest.approx(0.21, rel=1e-3)
+    # el crecimiento proyectado en TODOS los años del horizonte es el mismo
+    path = assumptions.revenue_growth.path(5)
+    assert all(g == pytest.approx(path[0]) for g in path)
 
 
 def test_default_assumptions_fades_margin_from_recent_actual_to_historical_average():
@@ -196,7 +221,7 @@ def test_projection_pipeline_feeds_directly_into_dcf_inputs():
     from engine.valuation import DCFInputs, run_dcf
 
     history = _synthetic_flat_history()
-    assumptions = default_assumptions_from_history(history, n_years=5, terminal_growth_rate=0.025)
+    assumptions = default_assumptions_from_history(history, n_years=5)
     projection = project_financials(history["revenue"].iloc[-1], assumptions)
 
     inputs = DCFInputs(

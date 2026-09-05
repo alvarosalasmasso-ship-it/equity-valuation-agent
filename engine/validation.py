@@ -82,8 +82,7 @@ def value_ticker(target: str, universe_hist: dict[str, pd.DataFrame],
     )
 
     assumptions = default_assumptions_from_history(
-        hist, n_years=n_years, terminal_growth_rate=terminal_growth_rate,
-        lookback_years=lookback_years,
+        hist, n_years=n_years, lookback_years=lookback_years,
     )
     projection = project_financials(hist["revenue"].iloc[-1], assumptions)
 

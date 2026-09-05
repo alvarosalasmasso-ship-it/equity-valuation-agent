@@ -28,7 +28,7 @@ HISTORY = pd.DataFrame({
 
 
 def _base_assumptions():
-    return default_assumptions_from_history(HISTORY, n_years=5, terminal_growth_rate=0.025, lookback_years=3)
+    return default_assumptions_from_history(HISTORY, n_years=5, lookback_years=3)
 
 
 def test_conservative_scenario_is_the_unmodified_default():

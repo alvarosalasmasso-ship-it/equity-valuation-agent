@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-05 (sesión 11)
+**Última actualización:** 2026-09-05 (sesión 12)
 
 ---
 
@@ -513,29 +513,110 @@ validados con datos reales, pero el usuario final de la app/memo no los
 ve todavía. Candidato claro para la próxima sesión si se sigue en la
 línea de "cerrar huecos" antes de visuales.
 
+### Detalle sesión 12 — comparación directa contra el Excel profesional; fix real de metodología
+
+El usuario pidió explícitamente volver a comparar la app contra "el
+modelo a seguir" (el Excel de Amazon) en vez de seguir añadiendo piezas
+nuevas. Hasta ahora solo se había validado que las fórmulas coinciden
+exactamente y que el WACC da un resultado casi idéntico — nunca se
+habían puesto lado a lado, año a año, los supuestos de proyección del
+analista frente a los que genera nuestro motor automático.
+
+**Comparación año a año (AMZN):**
+
+| | Excel (analista, 2024-29) | App antes del fix |
+|---|---|---|
+| Crecimiento ingresos | plano ~10-11% los 6 años | decae de 11.7% a 2.5% en 5 años |
+| Margen EBIT | sube 9.8%→15.0% | baja 13.9%→10.5% |
+| CapEx % ventas | plano ~12-13% (dato de nov-2024, pre-supercycle IA) | baja de 18.4% (real 2026) a 13.5% |
+
+WACC: Excel 8.33% vs. app 8.27% — prácticamente idéntico, buena señal.
+
+**Tres diferencias, tres veredictos distintos:**
+1. **Forma del fade de crecimiento — era un bug de diseño, corregido
+   hoy.** El analista mantiene el crecimiento plano durante toda la
+   previsión explícita y solo cae a la tasa terminal de golpe, en la
+   fórmula de Gordon Growth. Nuestro motor decaía el crecimiento DENTRO
+   de la propia ventana explícita — una forma de curva distinta a la
+   del modelo de referencia, no solo "más conservadora".
+2. **Dirección del margen — postura de modelado, no se toca.** Ya
+   documentado (sesiones 6-9). Dato nuevo: el margen real de AMZN en
+   2025 (13.9%) ya casi alcanzó la previsión del Excel para *2029*
+   (15.0%) — la tesis del analista resultó más acertada que la
+   reversión a la media.
+3. **Nivel de CapEx — aquí la app va por delante del Excel, no por
+   detrás.** El Excel es de antes del supercycle de IA; nuestros datos
+   de 2026 sí lo capturan.
+
+**Corrección aplicada (punto 1):** `default_assumptions_from_history()`
+ya no recibe `terminal_growth_rate` ni lo usa para el crecimiento de
+ingresos — ahora proyecta el CAGR reciente PLANO durante todo el
+horizonte explícito, igual que el analista. `terminal_growth_rate`
+sigue existiendo, pero solo como argumento de `DCFInputs`/`run_dcf`
+para el cálculo del valor terminal (nunca para las series explícitas).
+Actualizados `engine/scenarios.py`, `engine/validation.py`,
+`app/streamlit_app.py` y todos los tests afectados.
+
+**No es un ajuste para acercar el precio al mercado — es alinear la
+forma de la curva con la que usa literalmente "el modelo a seguir".**
+Que el resultado suba es una consecuencia observada, no el objetivo.
+
+**Impacto real (universo Big Tech):**
+
+| Ticker | Antes | Después | Mercado |
+|---|---|---|---|
+| AMZN | $84.82 (-67.2%) | $104.41 (-59.6%) | $258.51 |
+| MSFT | $295.80 (-40.8%) | $397.36 (-20.5%) | $499.70 |
+| GOOGL | $270.02 (-61.7%) | $333.41 (-52.7%) | $705.51 |
+| META | $365.03 (-48.8%) | $534.56 (-25.0%) | $712.53 |
+| AAPL | $142.74 (-55.4%) | $140.60 (-56.1%) | $319.97 |
+
+**Desviación media: 54.8%→42.8% vs. mercado, 53.4%→41.3% vs. consenso.**
+MSFT y META prácticamente reducen su brecha a la mitad. AAPL casi no
+cambia (su crecimiento reciente ya era bajo, así que plano vs. decayendo
+apenas difiere para esa compañía) — el efecto es proporcional a cuánto
+crecimiento por encima de la tasa terminal tenía cada compañía, exactamente
+lo que cabría esperar.
+
+**Efecto secundario honesto, no escondido:** el mismo cambio empeora
+ligeramente a PG/JNJ (ya identificadas como inestables por spread
+WACC-g estrecho) — un crecimiento plano más alto alimenta un UFCF
+terminal mayor, que la fórmula de Gordon (ya inestable ahí) amplifica
+más. Es la misma causa raíz interactuando con dos cambios distintos, no
+una regresión nueva. Diagnóstico completo en `docs/METHODOLOGY.md`
+sección 14.
+
+Nuevo test de regresión con CAGR sintético del 21% (lejos de cualquier
+tasa terminal, para que no pueda pasar por coincidencia). 88 tests en
+total, todos en verde.
+
 ## 5. Próximo paso inmediato
 
-El motor está validado en siete capas independientes (incluyendo ahora
-una auditoría de bugs reales en inputs de bajo peso, no solo en el
-resultado agregado). Opciones para la próxima sesión, de más a menos
-prioritaria:
+El motor está validado en ocho capas independientes: fórmulas exactas
+contra Excel, datos exactos contra Excel, comportamiento sistemático en
+growth/maduras, dos mecanismos de desviación identificados, un bug real
+de datos corregido, y ahora la forma del fade de crecimiento alineada
+con el propio modelo de referencia. Opciones para la próxima sesión, de
+más a menos prioritaria:
 
 1. **Conectar `ratios.py` y `comps.py` al resto del pipeline** — hoy son
-   módulos correctos pero huérfanos; deberían aparecer en el memo (el
-   prompt ya podría incluir ROIC vs WACC, Debt/EBITDA) y opcionalmente en
-   la interfaz.
-2. **Auditoría de campos similares**: `interest_expense` no es
-   necesariamente el único campo de Alpha Vantage/yfinance con huecos de
-   calidad de datos — revisar si `ebit`, `d_and_a` o `capex` tienen el
-   mismo patrón (valor espurio de 0 en el año más reciente) en algún
-   ticker del universo, ahora que se sabe qué buscar.
-3. **Validación visual de la interfaz** en una sesión con navegador
-   disponible (Playwright u otro) — pospuesto explícitamente por el
-   usuario hasta que lo matemático/técnico esté impecable.
-4. Cuando se decida dar el paso a la API de pago: añadir
-   `ANTHROPIC_API_KEY` a `.env` y probar `generate_memo()` en vivo.
-5. Fase 8 (despliegue) — sin remoto configurado todavía, decisión
-   pendiente del usuario.
+   módulos correctos y ya validados con datos reales, pero huérfanos: no
+   aparecen ni en el memo ni en la interfaz.
+2. **Auditoría de campos similares** al bug de `interest_expense`:
+   revisar si `ebit`, `d_and_a` o `capex` tienen el mismo patrón (cero
+   espurio en el año más reciente) en algún ticker del universo.
+3. **Revisar si el margen/CapEx también deberían tener una forma de
+   fade distinta** tras el hallazgo de esta sesión — el Excel SÍ mueve
+   el margen dentro del horizonte explícito (no lo mantiene plano), así
+   que el fade lineal actual para márgenes puede que ya esté bien
+   alineado; merece una comprobación explícita, no asumirlo.
+4. **Validación visual de la interfaz** en una sesión con navegador
+   disponible — pospuesto explícitamente hasta que lo matemático/técnico
+   esté impecable.
+5. Cuando se decida dar el paso a la API de pago: añadir
+   `ANTHROPIC_API_KEY` y probar `generate_memo()` en vivo.
+6. Fase 8 (despliegue) — sin remoto configurado, decisión pendiente del
+   usuario.
 
 **Principio de fondo que sigue aplicando:** cualquier UI debe mostrar el
 número junto a su explicación (supuestos, mecanismo de desviación
