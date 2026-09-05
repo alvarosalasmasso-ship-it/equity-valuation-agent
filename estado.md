@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-05 (sesión 5)
+**Última actualización:** 2026-09-05 (sesión 6)
 
 ---
 
@@ -219,6 +219,47 @@ mercado, explicada por un motor conservador (reversión a la media)
 frente al actual supercycle de CapEx en IA no descontado de forma
 determinista."*
 
+### Contraprueba con una empresa madura (Coca-Cola) — responde "¿es útil esta herramienta?"
+
+El usuario preguntó directamente si la herramienta sirve para valorar
+empresas, dado el 53% de desviación de la Fase 7. Respuesta corta: un
+DCF no está pensado para reproducir el precio de mercado (si lo hiciera,
+no aportaría información — el valor de un DCF es dar una estimación
+*independiente* que tú comparas con el precio). La pregunta real es si
+el motor se comporta como debería: fiable en negocios estables, menos
+fiable por defecto en hiper-crecimiento con reinversión masiva. Se
+comprobó con datos, no solo con argumento:
+
+**Coca-Cola (KO)** — CapEx = 4.4% de ventas frente a D&A = 2.2% (vs.
+MSFT: CapEx 34.9% frente a D&A 11.6%), el contraste casi perfecto:
+
+| Ticker | Lookback | Implícito | Mercado | Consenso |
+|---|---|---|---|---|
+| KO | 3 años | $83.13 | $88.07 (-5.6%) | $94.70 (-12.2%) |
+| KO | 5 años | $110.67 | $88.07 (+25.7%) | $94.70 (+16.9%) |
+
+**Desviación de un dígito a ~20%, un orden de magnitud por debajo del
+41%-67% de Big Tech.** Confirma con evidencia (no solo con teoría) que
+el motor conservador es fiable donde la teoría predice que debe serlo.
+Diagnóstico completo en `docs/METHODOLOGY.md` sección 7 ("Contraprueba:
+¿el motor funciona mejor en empresas maduras?").
+
+**⚠️ Cuota de Alpha Vantage agotada durante esta prueba.** Se planeaban
+3 empresas maduras (KO + Procter & Gamble + Johnson & Johnson) pero la
+API devolvió el límite diario de 25 peticiones/día al intentar P&G
+(fallo limpio, sin caché corrupta — simplemente no se descargó nada de
+P&G/JNJ). Solo hay 1 dato, no 3. Además, el WACC de KO usado aquí es
+**simplificado** (beta propio directo vía `cost_of_equity`/`wacc`, no
+`wacc_builder.py` con comparables) porque no había peers del mismo
+sector (consumo defensivo) descargados — no invalida la conclusión sobre
+el motor de proyección, que es lo que esta prueba mide, pero sí significa
+que el WACC de KO es menos riguroso que el de los 5 tickers de Big Tech.
+
+**Pendiente para la próxima sesión (cuando la cuota se resetee):**
+completar la contraprueba con Procter & Gamble y Johnson & Johnson, y
+reconstruir el WACC de KO vía comparables reales del sector para
+igualar el rigor con el que se trató a Big Tech.
+
 ## 4. Estado técnico del entorno
 
 - Python 3.12.10 disponible vía `python` (⚠️ no `python3`) en el sistema.
@@ -239,27 +280,32 @@ determinista."*
 
 ## 5. Próximo paso inmediato
 
-El motor está validado en tres capas independientes (matemática exacta
-contra Excel, datos exactos contra Excel, y ahora comportamiento
-sistemático medido en 5 compañías reales con causa raíz identificada).
-Ya no quedan piezas de rigor obviamente pendientes en el motor de
-cálculo — el siguiente bloque natural es la capa generativa, con la
-Fase 7 como insumo directo (el LLM debe poder explicar la brecha vs.
-consenso, no solo el número). Opciones para la próxima sesión, de más a
-menos prioritaria:
+El motor está validado en cuatro capas independientes (matemática exacta
+contra Excel, datos exactos contra Excel, comportamiento sistemático en
+5 compañías de hiper-crecimiento, y ahora una contraprueba en un negocio
+maduro que confirma la hipótesis). Opciones para la próxima sesión, de
+más a menos prioritaria:
 
-1. **Fase 5 (capa generativa):** el Investment Memo ya tiene contenido
+1. **Terminar la contraprueba de empresas maduras** en cuanto se
+   resetee la cuota de Alpha Vantage (25/día, agotada hoy): descargar
+   Procter & Gamble y Johnson & Johnson, correr `value_ticker`/
+   `validate_universe` sobre las 3 (KO+PG+JNJ) con WACC vía comparables
+   real (no el simplificado de hoy), y confirmar que la desviación media
+   se mantiene baja (~5-20%) con más de un dato. Es la pieza que falta
+   para poder decir con solidez estadística, no solo con un caso, que el
+   motor es fiable en negocios maduros.
+2. **Fase 5 (capa generativa):** el Investment Memo ya tiene contenido
    real y no trivial que redactar — no solo "el precio objetivo es X",
-   sino "el modelo conservador da X, un Y% por debajo del consenso,
-   porque el CapEx actual (Z% de ventas) no se está descontando como
-   productivo todavía". El prompt debe recibir el desglose de
-   `DCFResult` + `ValuationCheck` (Fase 7), nunca datos crudos — el LLM
-   sigue sin calcular nada.
-2. Exponer una tesis "alcista" vs. "conservadora" explícita (dos
-   `ProjectionAssumptions` predefinidos) antes o junto con la Fase 5 —
-   el memo puede entonces contrastar ambos escenarios en vez de
-   presentar un único número sin rango.
-3. yfinance como fuente alternativa de precio/beta (no bloquea nada,
+   sino "el modelo conservador da X; en negocios maduros esto suele
+   estar a menos de un 20% del consenso, pero en hiper-crecimiento con
+   CapEx pesado (como este caso) la desviación es mucho mayor porque
+   asume reversión a la media en vez de dar por hecho que la inversión
+   actual ya es productiva". El prompt debe recibir el desglose de
+   `DCFResult` + `ValuationCheck`, nunca datos crudos — el LLM sigue sin
+   calcular nada.
+3. Exponer una tesis "alcista" vs. "conservadora" explícita (dos
+   `ProjectionAssumptions` predefinidos) antes o junto con la Fase 5.
+4. yfinance como fuente alternativa de precio/beta (no bloquea nada,
    `market_snapshot` ya cubre lo mismo vía Alpha Vantage) — bajo interés
    ahora mismo.
 

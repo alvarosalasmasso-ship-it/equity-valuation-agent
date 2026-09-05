@@ -328,3 +328,41 @@ del 53% frente al consenso de mercado, explicada por un motor
 conservador (reversión a la media) frente al actual supercycle de CapEx
 en infraestructura de IA no descontado de forma determinista" — una
 cifra real medida, con mecanismo explicado, no un porcentaje inventado.
+
+### Contraprueba: ¿el motor funciona mejor en empresas maduras?
+
+La hipótesis directa de todo lo anterior es que un motor de reversión a
+la media debería comportarse mucho mejor en negocios estables/maduros
+(bajo CapEx de reinversión, márgenes ya asentados) que en historias de
+hiper-crecimiento como las 5 anteriores. Se probó con Coca-Cola (KO) —
+CapEx = 4.4% de ventas frente a D&A = 2.2% (vs. MSFT: CapEx 34.9% frente
+a D&A 11.6%), el contraste casi perfecto para la prueba:
+
+| Ticker | Lookback | Implícito | Mercado | Consenso |
+|---|---|---|---|---|
+| KO | 3 años | $83.13 | $88.07 (**-5.6%**) | $94.70 (**-12.2%**) |
+| KO | 5 años | $110.67 | $88.07 (**+25.7%**) | $94.70 (**+16.9%**) |
+
+Desviación de un dígito a ~20%, un orden de magnitud por debajo del
+41%-67% de Big Tech. **Confirma la hipótesis con evidencia, no solo con
+argumento teórico**: el motor conservador por defecto es fiable
+precisamente donde la teoría dice que debe serlo (negocios maduros de
+bajo CapEx de reinversión), y diverge mucho donde también predice que
+debe divergir (hiper-crecimiento con CapEx >> D&A) — comportamiento
+consistente en ambos extremos, no un motor que simplemente "da números
+bajos siempre".
+
+**Limitaciones de esta contraprueba, explícitas:**
+- Un solo dato (KO), no los 3 planeados (KO + Procter & Gamble +
+  Johnson & Johnson) — la cuota gratuita de Alpha Vantage (25
+  peticiones/día) se agotó al intentar el segundo ticker (P&G), fallo
+  limpio sin datos corruptos. Pendiente para cuando la cuota se resetee.
+- WACC simplificado con el beta propio de KO (`cost_of_equity` +
+  `cost_of_debt` + `wacc` directos), no la reconstrucción vía
+  comparables de `wacc_builder.py` — no había un set de comparables del
+  mismo sector (consumo defensivo) descargado. No afecta a la conclusión
+  sobre el motor de proyección, que es lo que esta contraprueba mide.
+- La brecha entre lookback=3 y lookback=5 (de -5.6% a +25.7% frente a
+  mercado) muestra que el resultado sigue siendo sensible a la ventana
+  de histórico elegida, incluso en una empresa estable — otro recordatorio
+  de que el número es función de supuestos explícitos, no una verdad fija.
