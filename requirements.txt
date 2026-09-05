@@ -1,0 +1,9 @@
+pandas
+numpy
+yfinance
+anthropic
+streamlit
+pytest
+openpyxl
+requests
+python-dotenv

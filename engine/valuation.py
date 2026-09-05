@@ -1,0 +1,246 @@
+"""Motor de valoración DCF determinista.
+
+Traduce a Python exacto las fórmulas de "Advanced DCF.xlsx" (modelo de
+referencia elaborado por un ex-banquero de JP Morgan). No es un DCF
+genérico: cada función corresponde a una celda concreta del modelo.
+Ver docs/METHODOLOGY.md para la trazabilidad celda -> función.
+
+Principio de diseño: este módulo no llama a ningún LLM ni contiene
+lógica de IA. Recibe únicamente números y devuelve únicamente números.
+"""
+
+from dataclasses import dataclass
+from typing import Optional, Sequence
+
+
+# ---------------------------------------------------------------------------
+# WACC / CAPM  (hoja "WACC")
+# ---------------------------------------------------------------------------
+
+def unlever_beta(levered_beta: float, tax_rate: float, net_debt: float, market_cap: float) -> float:
+    """Beta desapalancada de un comparable. WACC!I28 = D28/(1+(1-G28)*(F28/E28))"""
+    return levered_beta / (1 + (1 - tax_rate) * (net_debt / market_cap))
+
+
+def relever_beta(unlevered_beta: float, tax_rate: float, net_debt: float, market_cap: float) -> float:
+    """Beta re-apalancada para la empresa objetivo. WACC!E33"""
+    return unlevered_beta * (1 + (1 - tax_rate) * (net_debt / market_cap))
+
+
+def cost_of_equity(risk_free_rate: float, beta: float, market_risk_premium: float) -> float:
+    """CAPM. WACC!F10 = Rf + beta * MRP"""
+    return risk_free_rate + beta * market_risk_premium
+
+
+def cost_of_debt(interest_expense: float, total_debt: float) -> float:
+    """WACC!F17 = gasto financiero anualizado / deuda total"""
+    return interest_expense / total_debt
+
+
+def wacc(market_cap: float, total_debt: float, cost_of_equity_: float,
+         cost_of_debt_: float, tax_rate: float) -> float:
+    """WACC!F22 = %E * Re + %D * Rd * (1 - t)"""
+    total = market_cap + total_debt
+    weight_equity = market_cap / total
+    weight_debt = total_debt / total
+    return weight_equity * cost_of_equity_ + weight_debt * cost_of_debt_ * (1 - tax_rate)
+
+
+# ---------------------------------------------------------------------------
+# Acciones diluidas — Treasury Stock Method (hoja "Shares")
+# ---------------------------------------------------------------------------
+
+@dataclass
+class OptionTranche:
+    shares_outstanding: float
+    exercise_price: float
+
+
+def treasury_stock_method(current_price: float, tranches: Sequence[OptionTranche]) -> tuple[float, float]:
+    """Réplica Shares!E8:E11.
+
+    Devuelve (opciones netas dilutivas, acciones recompradas con lo recaudado).
+    Solo las tramos "in the money" (exercise_price < current_price) diluyen.
+    """
+    dilutive = [t for t in tranches if t.exercise_price < current_price]
+    total_dilutive_shares = sum(t.shares_outstanding for t in dilutive)
+    proceeds = sum(t.shares_outstanding * t.exercise_price for t in dilutive)
+    shares_repurchased = proceeds / current_price if current_price else 0.0
+    net_dilutive_options = total_dilutive_shares - shares_repurchased
+    return net_dilutive_options, shares_repurchased
+
+
+def diluted_shares_outstanding(basic_shares: float, net_dilutive_options: float,
+                                other_dilutive_securities: float = 0.0) -> float:
+    """Shares!E14 = acciones básicas + opciones netas dilutivas + otros valores dilutivos"""
+    return basic_shares + net_dilutive_options + other_dilutive_securities
+
+
+# ---------------------------------------------------------------------------
+# Flujo de caja libre desapalancado (UFCF)  (hojas de segmento / Consolidated)
+# ---------------------------------------------------------------------------
+
+def unlevered_fcf(ebit: float, tax_rate: float, d_and_a: float, capex: float,
+                   change_in_nwc: float) -> float:
+    """UFCF = EBIT*(1-t) + D&A - CapEx - Delta NWC   (Consolidated!F32)"""
+    ebiat = ebit * (1 - tax_rate)
+    return ebiat + d_and_a - capex - change_in_nwc
+
+
+# ---------------------------------------------------------------------------
+# Descuento — convención stub + mid-year  (Consolidated!F35:K36)
+# ---------------------------------------------------------------------------
+
+def discount_periods(n_years: int, stub_fraction: float = 1.0,
+                      mid_year_convention: bool = True) -> list[float]:
+    """Periodos de descuento (en años) para cada flujo explícito.
+
+    stub_fraction: fracción del primer año fiscal que queda por transcurrir
+    desde la fecha de valoración (1.0 si se valora a inicio de año).
+
+    Con mid-year convention (estándar en banca de inversión, asume que el
+    caja se genera de forma uniforme a lo largo del año en vez de al cierre):
+      periodo_1 = stub / 2
+      periodo_2 = stub + 0.5
+      periodo_n = periodo_(n-1) + 1   para n > 2
+    """
+    if not (0 < stub_fraction <= 1):
+        raise ValueError("stub_fraction debe estar en (0, 1]")
+    if n_years < 1:
+        return []
+
+    periods = []
+    if mid_year_convention:
+        periods.append(stub_fraction / 2)
+        if n_years > 1:
+            periods.append(stub_fraction + 0.5)
+            for _ in range(n_years - 2):
+                periods.append(periods[-1] + 1)
+    else:
+        periods.append(stub_fraction)
+        for _ in range(n_years - 1):
+            periods.append(periods[-1] + 1)
+    return periods
+
+
+def pv_of_cash_flows(cash_flows: Sequence[float], discount_rate: float,
+                      periods: Sequence[float], stub_fraction: float = 1.0) -> list[float]:
+    """Valor presente de cada flujo. El primer flujo se prorratea por
+    stub_fraction porque del primer año fiscal solo quedan esos meses
+    por transcurrir; el resto son flujos anuales completos.
+    (Consolidated!F33 vs G33:K33)
+    """
+    pvs = []
+    for i, (cf, t) in enumerate(zip(cash_flows, periods)):
+        adj_cf = cf * stub_fraction if i == 0 else cf
+        pvs.append(adj_cf / (1 + discount_rate) ** t)
+    return pvs
+
+
+# ---------------------------------------------------------------------------
+# Valor terminal  (hoja de segmento, bloque "Terminal Value")
+# ---------------------------------------------------------------------------
+
+def gordon_growth_terminal_value(final_year_fcf: float, wacc_: float,
+                                  terminal_growth_rate: float) -> float:
+    """TV = FCFF_n * (1+g) / (WACC - g)"""
+    if wacc_ <= terminal_growth_rate:
+        raise ValueError("WACC debe ser mayor que la tasa de crecimiento terminal (g)")
+    return final_year_fcf * (1 + terminal_growth_rate) / (wacc_ - terminal_growth_rate)
+
+
+def exit_multiple_terminal_value(terminal_year_ebitda: float, ev_ebitda_multiple: float) -> float:
+    """TV = EBITDA terminal * múltiplo EV/EBITDA de comparables"""
+    return terminal_year_ebitda * ev_ebitda_multiple
+
+
+def blended_terminal_value(gordon_tv: float, exit_multiple_tv: float,
+                            gordon_weight: float = 1.0) -> float:
+    """Combina ambos métodos. gordon_weight=1.0 -> Gordon Growth puro
+    (metodología por defecto). El modelo de referencia pondera cada
+    segmento de forma distinta (p.ej. 80% Gordon / 20% múltiplo para
+    North America); aquí se aplica un único peso a nivel de empresa
+    porque no segmentamos el negocio para tickers arbitrarios.
+    """
+    return gordon_weight * gordon_tv + (1 - gordon_weight) * exit_multiple_tv
+
+
+# ---------------------------------------------------------------------------
+# Pipeline completo
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DCFInputs:
+    ebit: list[float]
+    tax_rate: list[float]
+    d_and_a: list[float]
+    capex: list[float]
+    change_in_nwc: list[float]
+    wacc: float
+    terminal_growth_rate: float
+    stub_fraction: float = 1.0
+    cash: float = 0.0
+    total_debt: float = 0.0
+    diluted_shares: float = 1.0
+    terminal_ev_ebitda_multiple: Optional[float] = None
+    gordon_weight: float = 1.0
+
+    def __post_init__(self) -> None:
+        lengths = {len(self.ebit), len(self.tax_rate), len(self.d_and_a),
+                   len(self.capex), len(self.change_in_nwc)}
+        if len(lengths) != 1:
+            raise ValueError("Todas las series de proyección deben tener la misma longitud")
+        if self.diluted_shares <= 0:
+            raise ValueError("diluted_shares debe ser positivo")
+
+
+@dataclass
+class DCFResult:
+    unlevered_fcf: list[float]
+    pv_unlevered_fcf: list[float]
+    discount_periods: list[float]
+    gordon_terminal_value: float
+    exit_multiple_terminal_value: Optional[float]
+    terminal_value: float
+    pv_terminal_value: float
+    enterprise_value: float
+    equity_value: float
+    implied_share_price: float
+
+
+def run_dcf(inputs: DCFInputs) -> DCFResult:
+    ufcf = [
+        unlevered_fcf(e, t, d, c, n)
+        for e, t, d, c, n in zip(inputs.ebit, inputs.tax_rate, inputs.d_and_a,
+                                  inputs.capex, inputs.change_in_nwc)
+    ]
+    periods = discount_periods(len(ufcf), inputs.stub_fraction)
+    pv_ufcf = pv_of_cash_flows(ufcf, inputs.wacc, periods, inputs.stub_fraction)
+
+    gordon_tv = gordon_growth_terminal_value(ufcf[-1], inputs.wacc, inputs.terminal_growth_rate)
+
+    exit_tv = None
+    if inputs.terminal_ev_ebitda_multiple is not None:
+        terminal_ebitda = inputs.ebit[-1] + inputs.d_and_a[-1]
+        exit_tv = exit_multiple_terminal_value(terminal_ebitda, inputs.terminal_ev_ebitda_multiple)
+        terminal_value = blended_terminal_value(gordon_tv, exit_tv, inputs.gordon_weight)
+    else:
+        terminal_value = gordon_tv
+
+    pv_terminal_value = terminal_value / (1 + inputs.wacc) ** periods[-1]
+    enterprise_value = sum(pv_ufcf) + pv_terminal_value
+    equity_value = enterprise_value + inputs.cash - inputs.total_debt
+    implied_share_price = equity_value / inputs.diluted_shares
+
+    return DCFResult(
+        unlevered_fcf=ufcf,
+        pv_unlevered_fcf=pv_ufcf,
+        discount_periods=periods,
+        gordon_terminal_value=gordon_tv,
+        exit_multiple_terminal_value=exit_tv,
+        terminal_value=terminal_value,
+        pv_terminal_value=pv_terminal_value,
+        enterprise_value=enterprise_value,
+        equity_value=equity_value,
+        implied_share_price=implied_share_price,
+    )
