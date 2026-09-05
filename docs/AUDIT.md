@@ -1,0 +1,301 @@
+# Auditoría técnica — Agente de valoración DCF
+
+**Fecha:** 2026-09-05 (sesión 15). **Alcance:** todo `engine/`, `ai/`,
+`app/`, `tests/`, comparado sistemáticamente contra `Advanced DCF.xlsx`
+(el modelo profesional de referencia). Metodología: relectura completa
+del código (no solo memoria de sesiones anteriores) + verificación
+puntual de cada hallazgo con datos reales antes de reportarlo — mismo
+estándar que se ha aplicado en toda la sesión.
+
+Cada hallazgo indica: qué es, por qué importa, y si se ha verificado
+con evidencia concreta (no solo inspección de código).
+
+---
+
+## Resumen ejecutivo
+
+El motor de cálculo (`engine/valuation.py`) está validado **exacto**
+contra el Excel a nivel de fórmula — WACC, FCFF, descuento, TSM, valor
+terminal blended reproducen el precio real ($216.41) al céntimo. Esa
+parte es sólida y no tiene hallazgos nuevos.
+
+Los hallazgos reales de esta auditoría están en la **orquestación**: piezas
+del motor que están bien construidas y testeadas de forma aislada, pero
+que el pipeline real (`scenarios.py`, `validation.py`, `app/streamlit_app.py`)
+no termina de aprovechar, o usa con supuestos congelados que ya no
+reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
+y de serialización JSON encontrados en sesiones anteriores: no rompen
+nada de forma visible, pero sí introducen un sesgo silencioso.
+
+**1 hallazgo crítico, 4 importantes, 5 moderados, 3 informativos.**
+
+---
+
+## Crítico
+
+### C1. El "stub period" nunca se calcula en el pipeline real
+
+**Qué es:** `discount_periods()` y `pv_of_cash_flows()` soportan un
+`stub_fraction` — la fracción del primer año fiscal que queda entre la
+fecha de valoración y el cierre del ejercicio (validado exacto contra
+el Excel, sesión 2: `stub=0.1667` para una valoración de noviembre).
+`DCFInputs.stub_fraction` tiene un default de `1.0`.
+
+**El problema:** ningún sitio del pipeline real (`engine/scenarios.py`,
+`engine/validation.py`, `ai/memo_generator.py`, `app/streamlit_app.py`)
+calcula jamás un stub real a partir de la fecha de hoy. Verificado por
+grep: `stub_fraction` solo aparece definido y documentado dentro de
+`engine/valuation.py`, en ningún sitio más.
+
+**Por qué importa:** cada valoración que produce la herramienta asume
+implícitamente que "hoy" es el 1 de enero del primer año proyectado
+(stub=1.0, sin convención de mitad de año en el primer periodo). Si se
+ejecuta hoy (septiembre), el stub real sería ~4/12 ≈ 0.33, no 1.0 — el
+primer flujo de caja se está descontando por más tiempo del que
+corresponde, lo que **infravalora sistemáticamente** el precio implícito
+en una cantidad pequeña pero real y sistemática, mayor cuanto más
+avanzado esté el año en que se ejecuta la herramienta.
+
+**Verificado:** sí, por inspección directa del código y confirmado que
+no hay ningún cálculo de fecha (`datetime`, `date.today()`) en ninguno
+de los módulos de orquestación.
+
+**Cómo se arreglaría:** una función `stub_fraction_from_fiscal_year_end(fiscal_year_end_month: int, today: date) -> float`
+en `engine/valuation.py` o `engine/projections.py`, e inyectarla en
+`DCFInputs` desde `run_scenarios()`/`value_ticker()`/la app. Requiere
+decidir de dónde sale `fiscal_year_end_month` por ticker (Alpha
+Vantage/yfinance no siempre lo exponen limpio) — no trivial, pero el
+mecanismo de cálculo ya existe y está probado.
+
+---
+
+## Importante
+
+### I1. Risk-free rate y prima de riesgo de mercado: constantes congeladas, no en vivo
+
+**Qué es:** `RISK_FREE_RATE = 0.03909` y `MARKET_RISK_PREMIUM = 0.0406`
+en `app/streamlit_app.py`, copiadas literalmente del Excel de
+referencia (WACC!F11, WACC!F13 — datos de ~noviembre 2024).
+
+**Por qué importa:** el tipo libre de riesgo (rendimiento del bono a 10
+años) se mueve de forma no trivial en 18-24 meses. Usar un valor
+congelado de hace año y medio para valorar una empresa "hoy" introduce
+un error sistemático en el WACC de todas las valoraciones, y no es
+ajustable desde la interfaz (a diferencia de `terminal_growth_rate`,
+`n_years`, etc., que sí son sliders).
+
+**Verificado:** sí, por grep — son las únicas dos apariciones de esos
+valores en toda la base de código, sin ninguna fuente de datos en vivo
+detrás.
+
+**Cómo se arreglaría:** Alpha Vantage tiene `TREASURY_YIELD` (ya
+disponible como conector en esta sesión) y yfinance puede leer el
+ticker `^TNX`. Cualquiera de los dos sustituye la constante por un dato
+fresco. La prima de riesgo de mercado es más discutible (no hay un
+consenso único "correcto"), pero como mínimo debería ser un slider
+ajustable, no una constante oculta en el código.
+
+### I2. El Treasury Stock Method está construido y validado, pero nunca se usa
+
+**Qué es:** `treasury_stock_method()` / `diluted_shares_outstanding()`
+en `engine/valuation.py`, validados exactos contra `Shares!E14` del
+Excel (10,876.07M).
+
+**El problema:** verificado por grep — ninguna llamada a estas
+funciones existe fuera de `engine/valuation.py` y sus propios tests.
+Todo el pipeline real usa `snap["shares_outstanding"]` en bruto
+(directamente de Alpha Vantage/yfinance), sin ajuste por opciones
+in-the-money ni convertibles.
+
+**Por qué importa:** para compañías con programas de opciones/RSUs
+grandes (típico en tech), el recuento diluido real puede ser
+sensiblemente mayor que el "basic shares outstanding" reportado — el
+precio objetivo implícito estaría inflado en esa proporción.
+
+**Verificado:** sí, por grep. No verificado el impacto cuantitativo
+(requeriría datos de tramos de opciones por ticker, que ni Alpha
+Vantage ni yfinance exponen de forma limpia y gratuita — es la razón
+real de que nunca se haya conectado).
+
+**Cómo se arreglaría:** en la práctica, sin una fuente de datos de
+opciones outstanding por tramo de precio de ejercicio, no hay mucho que
+hacer salvo documentarlo como limitación conocida (ya lo está, mejor
+esta sesión) y usar `shares_outstanding` como aproximación razonable —
+que es lo que ya se hace, solo que sin decirlo tan explícitamente en el
+código como en la documentación.
+
+### I3. Riesgos de excepción no controlados en modo "cualquier ticker"
+
+**Qué es:** en `app/streamlit_app.py`, la rama `else` (ticker arbitrario
+vía yfinance) hace:
+```python
+rd = cost_of_debt(hist["interest_expense"].dropna().iloc[-1] or 0, ...)
+...
+re = cost_of_equity(RISK_FREE_RATE, snap["beta"], MARKET_RISK_PREMIUM)
+```
+
+**El problema:** si `hist["interest_expense"].dropna()` da una serie
+vacía (posible con yfinance, que solo trae ~4 años de historia — más
+probable en compañías con poco histórico), `.iloc[-1]` lanza
+`IndexError` sin capturar. Si `snap["beta"]` es `None` (yfinance no
+siempre calcula beta para compañías de baja liquidez o recién
+salidas a bolsa), `cost_of_equity()` lanza `TypeError` al intentar
+`None * MARKET_RISK_PREMIUM`. Ninguno de los dos casos está envuelto en
+`try/except`, a diferencia de la sección de ratios más abajo en el
+mismo archivo, que sí maneja `ValueError` limpiamente.
+
+**Por qué importa:** la app crashearía (pantalla de error de Streamlit)
+para cualquier ticker real que caiga en estos casos — que existen (small
+caps, IPOs recientes, compañías con estructura de capital atípica).
+
+**Verificado:** sí, por inspección de código. No se ha probado con un
+ticker real que dispare el fallo (no se identificó uno en los tickers
+ya probados: AMZN, MSFT, GOOGL, META, AAPL, KO, PG, JNJ, NVDA — todos
+grandes, líquidos, con beta e historial de intereses completos).
+
+**Cómo se arreglaría:** envolver la construcción del WACC simplificado
+en un `try/except (IndexError, TypeError)` con un mensaje explicativo,
+igual que ya se hace con los ratios.
+
+### I4. Universo de comparables pequeño y no siempre homogéneo
+
+Ya identificado y documentado en la sesión 14 (`docs/METHODOLOGY.md`
+sección 16): con solo 3-5 comparables por grupo, un ticker con un
+perfil de negocio distinto al resto del grupo (AAPL dentro de "Big
+Tech", que en realidad es hardware premium frente a cloud/software)
+recibe un múltiplo de salida poco representativo. Se incluye aquí
+formalmente como hallazgo de auditoría, no solo nota de sesión — está
+verificado con el impacto cuantitativo real ya medido (AAPL empeoró de
+-56.1% a -63.0% de desviación tras el fix del múltiplo de peers).
+
+---
+
+## Moderado
+
+### M1. `requirements.txt` sin versiones fijadas
+
+Ninguna dependencia tiene versión pinneada (`pandas` en vez de
+`pandas==3.0.5`). Verificado: las versiones realmente instaladas en el
+venv (`pip freeze`) son bastante recientes (pandas 3.0.5, numpy 2.5.2,
+streamlit 1.63.0) — una instalación fresca dentro de unos meses podría
+traer versiones con cambios incompatibles (p. ej., un pandas 4.x)
+sin ningún aviso. Para un proyecto que se presenta como riguroso, esto
+es una brecha de reproducibilidad real, fácil de cerrar (`pip freeze > requirements.txt`
+sobre el venv actual, curado a mano).
+
+### M2. `gordon_weight` por defecto (0.8) es una constante heredada, no justificada para el caso general
+
+El Excel usa 80% Gordon / 20% múltiplo específicamente para el segmento
+North America (maduro, bajo crecimiento) — un peso pensado para ESE
+segmento, no una regla general de la industria. Nuestro motor lo usa
+como valor por defecto para cualquier compañía, en cualquier sector,
+sin ninguna justificación propia más allá de "es lo que traía el
+Excel". No es necesariamente incorrecto, pero sí es una constante sin
+razonar explícitamente, cuando el proyecto se ha esforzado en razonar
+cada supuesto (ver secciones 5-16 de `docs/METHODOLOGY.md`). Al menos
+merece una nota explícita de que es una elección arbitraria heredada,
+no derivada.
+
+### M3. `DCFInputs` no valida `wacc > 0` ni `0 <= gordon_weight <= 1`
+
+`__post_init__` valida longitudes de listas y `diluted_shares > 0`, pero
+no protege contra un WACC negativo o cero, ni contra un `gordon_weight`
+fuera de `[0,1]` (p. ej. 1.5, que produciría un blended_terminal_value
+extrapolado, no una media ponderada real). Estos valores nunca deberían
+llegar así desde el pipeline real (WACC siempre positivo por
+construcción, gordon_weight siempre viene de un slider acotado a
+[0,1]), pero la clase en sí no lo garantiza si se usa directamente
+(p. ej. en un test futuro, o si alguien integra `engine/` en otro
+proyecto sin pasar por la interfaz).
+
+### M4. `gordon_growth_terminal_value()` se calcula siempre, incluso con `gordon_weight=0`
+
+Visto en `run_dcf()`: el cálculo y el aviso de spread WACC-g estrecho
+se disparan aunque el resultado de Gordon Growth no vaya a usarse en
+absoluto (peso 0 en el blend). No es un bug de resultado (la media
+ponderada da el número correcto), pero si un usuario pone
+`gordon_weight=0` específicamente para evitar la inestabilidad de
+Gordon Growth en un caso con spread estrecho, seguirá viendo el aviso
+—que en ese caso concreto ya no es relevante para su resultado— y
+gastando cómputo en un valor que se descarta.
+
+### M5. Sin verificación de divisa de reporte
+
+Ninguna función comprueba `reportedCurrency` (Alpha Vantage) o el
+equivalente en yfinance. Si un ticker reportara en una divisa distinta
+de USD (no ocurre en los 9 tickers probados, pero sí en ADRs de
+compañías extranjeras con reporte local), se mezclarían cifras en esa
+divisa con un risk-free rate y una prima de riesgo en USD sin ningún
+aviso — un error silencioso de escala completo, no solo un sesgo
+pequeño.
+
+---
+
+## Informativo (sin acción necesaria, pero documentado)
+
+### N1. Tipo impositivo y ΔNWC: forma de fade verificada contra el Excel
+
+Ampliando la comprobación de la sesión 13 (que cubrió margen/D&A/CapEx):
+regresión lineal sobre las series del Excel da **tipo impositivo
+R²=0.001** (sin tendencia real, pura variación año a año alrededor de
+~16.6% — nuestro tratamiento plano es correcto) y **ΔNWC R²=0.425**
+(tendencia débil, pero rango muy estrecho, -3.4% a -2.9%). Sin cambios
+necesarios en ninguno de los dos.
+
+### N2. Sin tests automatizados de `app/streamlit_app.py`
+
+Ningún test de `pytest` ejercita el script de Streamlit directamente
+(es la práctica estándar de la industria para apps Streamlit, dado su
+modelo de ejecución) — se ha verificado cada sesión con smoke-tests
+manuales (arranque del servidor + réplica de la ruta de cómputo exacta
+con datos reales). Aceptable, pero merece constar como límite conocido
+del enfoque de testing.
+
+### N3. Degradación silenciosa de la ventana de histórico
+
+`default_assumptions_from_history()` no verifica que consiguió
+exactamente `lookback_years + 1` puntos para el CAGR — si hay menos
+(típico con yfinance, que solo da ~4 años), usa silenciosamente una
+ventana más corta sin avisar. No es incorrecto (la lógica sigue siendo
+válida con menos puntos), pero un usuario podría no darse cuenta de que
+su `lookback_years=5` se convirtió en un CAGR de 3 años sin ningún
+aviso en la interfaz.
+
+---
+
+## Fortalezas confirmadas (para que esta auditoría no sea solo una lista de problemas)
+
+- **Motor de cálculo exacto contra el Excel real**, no aproximado:
+  WACC/CAPM, FCFF, descuento mid-year+stub, TSM, valor terminal blended
+  reproducen $216.41/acción al céntimo (`tests/test_valuation.py`).
+- **3 bugs de datos/serialización reales encontrados y corregidos** en
+  sesiones anteriores (`interest_expense=0` espurio, `np.bool_` en
+  JSON, `Infinity` en JSON) — todos verificando de punta a punta con
+  datos reales antes de dar una pieza por cerrada, no solo con tests
+  sintéticos.
+- **La forma del fade de crecimiento se corrigió tras comparar contra
+  el Excel** (sesión 12) con mejora medible y honesta (54.8%→42.8% de
+  desviación media), y la de margen/D&A se confirmó ya correcta con
+  evidencia estadística (R²>0.97), no solo inspección visual.
+- **El múltiplo de salida se corrigió** de "propio de la empresa" a
+  "mediana de comparables" (sesión 14), con el efecto mixto reportado
+  con honestidad en vez de maquillado.
+- **97 tests, cero dependen de red** — toda la suite corre offline con
+  fixtures fieles al formato real de las APIs.
+- **Capa generativa desacoplada del cálculo por diseño**, no como
+  parche — el LLM nunca ve datos crudos, solo un paquete ya cerrado.
+
+---
+
+## Prioridad recomendada de arreglo
+
+1. **C1 (stub period)** — afecta a cada valoración, mecanismo ya
+   existe y probado, solo falta wiring.
+2. **I3 (excepciones no controladas)** — riesgo de crash real para
+   usuarios con tickers menos líquidos, arreglo mecánico y rápido.
+3. **I1 (risk-free rate en vivo)** — mejora de precisión real,
+   Alpha Vantage ya tiene el endpoint.
+4. **M1 (pin de versiones)** — trivial, buena higiene antes de
+   compartir el repo públicamente.
+5. Resto, según interés — I2 y M5 son limitaciones más estructurales
+   (dependen de datos que no tenemos fácilmente) que bugs a corregir.

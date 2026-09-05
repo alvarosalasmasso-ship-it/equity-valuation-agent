@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-05 (sesión 14)
+**Última actualización:** 2026-09-05 (sesión 15)
 
 ---
 
@@ -667,33 +667,73 @@ casualidad (999x), para probar sin ambigüedad que se usa el de peers.
 97 tests, todos en verde. Diagnóstico completo en `docs/METHODOLOGY.md`
 sección 16.
 
+### Detalle sesión 15 — auditoría técnica profesional completa
+
+El usuario pidió una auditoría completa: releer todo el código (no solo
+memoria de sesiones anteriores) y comparar sistemáticamente contra el
+Excel en todas las dimensiones aún no revisadas. Resultado en
+`docs/AUDIT.md` (y publicado como artifact navegable) — **1 hallazgo
+crítico, 4 importantes, 5 moderados, 3 informativos**, todos verificados
+con evidencia concreta (grep del código real, no solo inspección):
+
+- **C1 (crítico): el stub period nunca se calcula en el pipeline real.**
+  `discount_periods()`/`pv_of_cash_flows()` soportan `stub_fraction`
+  (validado exacto contra el Excel), pero ningún módulo de orquestación
+  calcula jamás la fracción de año real desde la fecha de hoy —
+  `DCFInputs.stub_fraction` siempre usa su default de 1.0. Cada
+  valoración asume implícitamente que "hoy" es el 1 de enero del primer
+  año proyectado, infravalorando sistemáticamente cuanto más avanzado
+  esté el año en que se ejecuta la herramienta.
+- **I1: risk-free rate (3.909%) y MRP (4.06%) son constantes congeladas**
+  del Excel de ~nov-2024, no en vivo, no ajustables desde la interfaz.
+  Alpha Vantage ya tiene `TREASURY_YIELD`; yfinance puede leer `^TNX`.
+- **I2: el Treasury Stock Method está construido y validado exacto,
+  pero nunca se usa** — todo el pipeline real usa `shares_outstanding`
+  en bruto. Limitación estructural (sin fuente de datos de opciones
+  outstanding gratuita), no un bug de una línea.
+- **I3: excepciones no controladas en modo "cualquier ticker"** —
+  `IndexError`/`TypeError` sin capturar si `interest_expense` está
+  vacío o `beta` es `None` (posible en small caps/IPOs recientes vía
+  yfinance). La app crashearía para esos tickers.
+- **I4: universo de comparables pequeño/heterogéneo** — ya documentado
+  en sesión 14, incluido aquí formalmente.
+- **M1-M5:** `requirements.txt` sin versiones fijadas; `gordon_weight=0.8`
+  heredado del Excel sin justificación propia; `DCFInputs` sin validar
+  `wacc>0`/`gordon_weight∈[0,1]`; Gordon Growth se calcula y avisa
+  aunque su peso sea 0; sin verificación de divisa de reporte.
+- **N1-N3 (informativo, sin acción):** tipo impositivo (R²=0.001, sin
+  tendencia, plano es correcto) y ΔNWC (R²=0.425, rango estrecho)
+  verificados contra el Excel — cierra la comprobación de forma de fade
+  para TODOS los drivers, no solo margen/D&A/CapEx/crecimiento. Sin
+  tests de `app/streamlit_app.py` en sí (práctica estándar para
+  Streamlit). Degradación silenciosa de la ventana de histórico si hay
+  menos años de los pedidos.
+
+**No se ha corregido nada todavía** — la auditoría es el entregable de
+esta sesión; los arreglos quedan priorizados (C1 > I3 > I1 > M1 > resto)
+para la próxima.
+
 ## 5. Próximo paso inmediato
 
-El motor está validado en diez capas independientes y los cinco módulos
-de `engine/` (valuation, data_provider/yfinance_provider, projections,
-wacc_builder, comps, ratios, scenarios, validation) están todos
-conectados de punta a punta — ya no quedan piezas huérfanas. Opciones
-para la próxima sesión, de más a menos prioritaria:
+Ejecutar la auditoría de la sesión 15, en el orden de prioridad que ya
+recomienda `docs/AUDIT.md`:
 
-1. **Universo de comparables más amplio y mejor segmentado** — el
-   hallazgo de la sesión 14 (AAPL no tiene comparables homogéneos en
-   solo 4 tickers de "Big Tech") sugiere que 3-5 comparables por sector
-   es insuficiente para un múltiplo de salida robusto. Ampliar el
-   universo piloto o segmentar mejor (p.ej. "hardware premium" vs
-   "cloud/software") mejoraría esto de raíz.
-2. **Auditoría de campos similares** al bug de `interest_expense`:
-   revisar `ebit`, `d_and_a`, `capex` por el mismo patrón (cero espurio
-   en el año más reciente) en algún ticker del universo.
-3. **Validación visual de la interfaz** en una sesión con navegador
-   disponible — pospuesto explícitamente hasta que lo matemático/técnico
-   esté impecable.
-4. Cuando se decida dar el paso a la API de pago: añadir
-   `ANTHROPIC_API_KEY` y probar `generate_memo()` en vivo.
-5. Fase 8 (despliegue) — sin remoto configurado, decisión pendiente del
-   usuario.
+1. **C1 — Stub period.** Mecanismo ya existe y está probado; falta
+   calcular la fracción real desde la fecha de hoy e inyectarla en
+   `DCFInputs` desde `run_scenarios()`/`value_ticker()`/la app.
+2. **I3 — Excepciones no controladas.** Envolver la construcción del
+   WACC simplificado en modo "cualquier ticker" en `try/except`, igual
+   que ya se hace con los ratios.
+3. **I1 — Risk-free rate en vivo.** Sustituir la constante por
+   `TREASURY_YIELD` (Alpha Vantage) o `^TNX` (yfinance).
+4. **M1 — Fijar versiones** en `requirements.txt`.
+5. Resto según interés — I2 y M5 son limitaciones estructurales, no
+   arreglos rápidos.
 
 **Principio de fondo que sigue aplicando:** cualquier UI debe mostrar el
-número junto a su explicación, nunca el número solo. Y: no revertir un
+número junto a su explicación, nunca el número solo. No revertir un
 cambio metodológicamente correcto solo porque el resultado agregado no
-mejora en un universo concreto — eso sería sobreajustar a un caso
-conocido, exactamente lo que este proyecto ha evitado en cada sesión.
+mejora. Y ahora también: **auditar la orquestación, no solo las
+fórmulas** — el motor de cálculo puede estar validado exacto y aun así
+el pipeline real dejar sin usar piezas ya construidas y probadas (stub
+period, TSM), tal y como reveló esta sesión.
