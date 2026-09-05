@@ -147,6 +147,50 @@ def test_market_snapshot_derives_price_from_market_cap_and_shares():
     assert snapshot["sector"] == "TECHNOLOGY"
 
 
+def test_historical_financials_treats_zero_interest_expense_as_missing_when_debt_exists():
+    """Regresión: caso real encontrado con AAPL. Alpha Vantage reportó
+    interestExpense=0 en el año más reciente pese a total_debt>0 (deuda
+    real de $119bn) -- un coste de deuda real de cero es casi imposible
+    con deuda de ese tamaño, así que se trata como dato faltante para
+    que cost_of_debt() no calcule silenciosamente un 0%."""
+    client = make_fake_client()
+    client.income_statement.return_value = {
+        "annualReports": [
+            {**INCOME_FIXTURE["annualReports"][0], "interestExpense": "0"},  # 2022, año más reciente
+            {**INCOME_FIXTURE["annualReports"][1], "interestExpense": "2.8"},  # 2021
+        ]
+    }
+    df = historical_financials(client, "TEST")
+
+    row_2022 = df[df["fiscal_year"] == 2022].iloc[0]
+    row_2021 = df[df["fiscal_year"] == 2021].iloc[0]
+    assert pd.isna(row_2022["interest_expense"])  # tratado como faltante, no como 0 real
+    assert row_2021["interest_expense"] == pytest.approx(2.8)
+    # dropna().iloc[-1] debe caer en el último año con dato genuino (2021), no en el 0 espurio
+    assert df["interest_expense"].dropna().iloc[-1] == pytest.approx(2.8)
+
+
+def test_historical_financials_keeps_genuine_zero_interest_expense_when_no_debt():
+    """Una compañía sin deuda (total_debt=0) SÍ puede tener
+    interest_expense=0 legítimo -- no debe filtrarse en ese caso."""
+    client = make_fake_client()
+    client.income_statement.return_value = {
+        "annualReports": [
+            {**INCOME_FIXTURE["annualReports"][0], "interestExpense": "0"},
+            INCOME_FIXTURE["annualReports"][1],
+        ]
+    }
+    client.balance_sheet.return_value = {
+        "annualReports": [
+            {**BALANCE_FIXTURE["annualReports"][0], "shortLongTermDebtTotal": "0"},
+            BALANCE_FIXTURE["annualReports"][1],
+        ]
+    }
+    df = historical_financials(client, "TEST")
+    row_2022 = df[df["fiscal_year"] == 2022].iloc[0]
+    assert row_2022["interest_expense"] == pytest.approx(0.0)
+
+
 def test_client_requires_api_key():
     import os
     saved = os.environ.pop("ALPHA_VANTAGE_API_KEY", None)

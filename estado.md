@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-05 (sesión 10)
+**Última actualización:** 2026-09-05 (sesión 11)
 
 ---
 
@@ -72,7 +72,7 @@ IA (que solo redacta, nunca calcula).
 | 4 — Tests unitarios | ✅ Hecho (Fases 1-3 y 7) | 60 tests, todos en verde (`./.venv/Scripts/python.exe -m pytest tests/ -v`) |
 | 5 — Capa generativa (Investment Memo) | ⬜ No empezado | |
 | 6 — Interfaz Streamlit | ⬜ No empezado | |
-| 7 — Validación vs consenso de analistas | ✅ Hecho | `engine/validation.py`. Resultado real sobre los 5 tickers piloto: desviación media absoluta 54.7% vs. mercado, 53.3% vs. consenso — ver detalle abajo, causa raíz identificada (no bugs) |
+| 7 — Validación vs consenso de analistas | ✅ Hecho | `engine/validation.py`. Resultado real sobre los 5 tickers piloto: desviación media absoluta 54.8% vs. mercado, 53.4% vs. consenso — ver detalle abajo, causa raíz identificada (no bugs) |
 | 8 — Despliegue | ⬜ No empezado | `Advanced DCF.xlsx` SÍ se versiona: el autor lo comparte de libre uso en su canal de YouTube. Se usa como estándar profesional de referencia, no como plantilla a copiar literal — el motor propio generaliza su lógica a cualquier ticker (ver sección 2). |
 | 9 (extensión) — Sentiment earnings calls | ⬜ No empezado | |
 
@@ -186,9 +186,9 @@ GOOGL, META, AAPL descargados y cacheados esta sesión):
 | MSFT | 8.78% | $295.80 | $499.70 | $572.92 | -40.8% | -48.4% |
 | GOOGL | 8.68% | $270.02 | $705.51 | $428.07 | -61.7% | -36.9% |
 | META | 8.47% | $365.03 | $712.53 | $754.77 | -48.8% | -51.6% |
-| AAPL | 8.77% | $143.94 | $319.97 | $323.86 | -55.0% | -55.6% |
+| AAPL | 8.84% | $142.74 | $319.97 | $323.86 | -55.4% | -55.9% |
 
-**Desviación media absoluta: 54.7% vs. mercado, 53.3% vs. consenso.**
+**Desviación media absoluta: 54.8% vs. mercado, 53.4% vs. consenso.**
 
 **⚠️ Diagnóstico investigado a fondo, no asumido:** que las 5 compañías
 (independientes entre sí) salgan infravaloradas en magnitud similar es
@@ -458,28 +458,88 @@ del mismo cálculo.
 `matplotlib` y `streamlit` instalados en el venv y añadidos a
 `requirements.txt`.
 
+### Detalle sesión 11 — bug real encontrado: `interest_expense=0` espurio en AAPL
+
+El usuario pidió explícitamente rigor matemático/técnico antes de seguir
+con visuales y preguntó qué más había por desarrollar. En vez de asumir
+que todo estaba fino, se auditó lo que nunca se había validado contra
+datos reales: `engine/ratios.py` y `engine/comps.py`, construidos en la
+Fase 3 con solo fixtures sintéticas.
+
+Al correr los 8 ratios reales, `interest_coverage()` dio `inf` para
+AAPL — investigado antes de aceptarlo. **Causa raíz:** Alpha Vantage
+reporta `interestExpense=0` en FY2024 (y `None` en FY2025) pese a que
+AAPL mantiene ~$112-119bn de deuda real (FY2023 sí reportó $3.933bn
+correctamente). Esto NO es un caso raro sin consecuencias: ese mismo
+campo alimenta `cost_of_debt()` dentro de `wacc_builder.build_wacc()` —
+con el dato espurio, `cost_of_debt` de AAPL se calculaba silenciosamente
+como **0.0%**.
+
+**Por qué pasó desapercibido en las sesiones 6-9:** el peso de la deuda
+en el WACC de AAPL es pequeño, así que el WACC agregado seguía
+"pareciendo razonable" (8.77% en vez del 8.84% correcto, solo 7 puntos
+básicos de diferencia) — el error se escondía dentro de un output que
+superficialmente parecía plausible. Lección metodológica explícita:
+revisar solo si el agregado "parece razonable" no basta; hay que auditar
+inputs individuales, sobre todo los de bajo peso, que son los que un
+vistazo al resultado final no detecta.
+
+**Corregido** en ambos proveedores de datos (`_clean_interest_expense()`
+en `data_provider.py` y `yfinance_provider.py`, misma lógica en los dos
+para que no reaparezca por otra fuente): un `interest_expense=0`
+reportado junto a `total_debt>0` se trata como dato faltante, no como
+coste de deuda real de cero — cae al último año con un valor genuino.
+Una compañía sin deuda sí puede tener 0 legítimo; ese caso no se filtra
+(test dedicado para ambas ramas).
+
+**Impacto verificado:** `cost_of_debt` AAPL 0.0%→3.50%, WACC AAPL
+8.77%→8.84%, `interest_coverage` AAPL `inf`→29.06x. Tabla de la Fase 7
+(sección 3 de este documento y `docs/METHODOLOGY.md` sección 7) y
+resumen agregado actualizados con las cifras corregidas (el cambio en la
+desviación media es marginal, 54.7%→54.8%, pero ahora es la cifra
+correcta). 3 tests de regresión nuevos (87 en total, todos en verde).
+
+**Ratios validados con los 8 tickers reales, todos con sentido**
+(ver `docs/METHODOLOGY.md` sección 13 para el detalle): las 8 compañías
+"crean valor" (ROIC > WACC), ROE de AAPL extremo pero correcto (~165%,
+consistente con recompras masivas reduciendo su equity contable — no es
+un bug, es el comportamiento real y conocido de esa métrica en AAPL),
+Debt/EBITDA e interest coverage en rangos plausibles en las demás 7.
+
+**Sigue pendiente, identificado pero no implementado:** ni `ratios.py`
+ni `comps.py` están conectados todavía a `app/streamlit_app.py` ni a
+`ai/memo_generator.py` — existen, están testeados y ahora también
+validados con datos reales, pero el usuario final de la app/memo no los
+ve todavía. Candidato claro para la próxima sesión si se sigue en la
+línea de "cerrar huecos" antes de visuales.
+
 ## 5. Próximo paso inmediato
 
-El motor está validado en seis capas independientes, la capa generativa
-está lista (probada manualmente sin coste, lista para la API cuando se
-decida pagarla), y ahora hay una interfaz funcional sobre todo ello.
-Opciones para la próxima sesión, de más a menos prioritaria:
+El motor está validado en siete capas independientes (incluyendo ahora
+una auditoría de bugs reales en inputs de bajo peso, no solo en el
+resultado agregado). Opciones para la próxima sesión, de más a menos
+prioritaria:
 
-1. **Validación visual de la interfaz** en una sesión con navegador
-   disponible (Playwright u otro) — la lógica ya está verificada de
-   punta a punta, pero nadie ha visto todavía cómo se ve realmente.
-2. Cuando se decida dar el paso a la API de pago: añadir
-   `ANTHROPIC_API_KEY` a `.env` y probar `generate_memo()` en vivo desde
-   la propia interfaz (el botón ya está condicionado a que exista la
-   key).
-3. Opcional, bajo interés: usar `yfinance_provider.py` como fuente
-   primaria en vez de Alpha Vantage para no depender de ninguna cuota
-   diaria — a cambio de menos años de histórico (4-5 vs. 15-20).
-4. Fase 8 (despliegue): Streamlit Community Cloud + repo público en
-   GitHub — sin remoto configurado todavía, decisión pendiente del
-   usuario.
+1. **Conectar `ratios.py` y `comps.py` al resto del pipeline** — hoy son
+   módulos correctos pero huérfanos; deberían aparecer en el memo (el
+   prompt ya podría incluir ROIC vs WACC, Debt/EBITDA) y opcionalmente en
+   la interfaz.
+2. **Auditoría de campos similares**: `interest_expense` no es
+   necesariamente el único campo de Alpha Vantage/yfinance con huecos de
+   calidad de datos — revisar si `ebit`, `d_and_a` o `capex` tienen el
+   mismo patrón (valor espurio de 0 en el año más reciente) en algún
+   ticker del universo, ahora que se sabe qué buscar.
+3. **Validación visual de la interfaz** en una sesión con navegador
+   disponible (Playwright u otro) — pospuesto explícitamente por el
+   usuario hasta que lo matemático/técnico esté impecable.
+4. Cuando se decida dar el paso a la API de pago: añadir
+   `ANTHROPIC_API_KEY` a `.env` y probar `generate_memo()` en vivo.
+5. Fase 8 (despliegue) — sin remoto configurado todavía, decisión
+   pendiente del usuario.
 
 **Principio de fondo que sigue aplicando:** cualquier UI debe mostrar el
 número junto a su explicación (supuestos, mecanismo de desviación
 detectado, rango de escenarios), nunca el número solo — ya implementado
-en `app/streamlit_app.py`.
+en `app/streamlit_app.py`. Y ahora también: no dar por válido un
+resultado agregado solo porque "parece razonable" — auditar inputs
+individuales, como reveló el bug de `interest_expense`.

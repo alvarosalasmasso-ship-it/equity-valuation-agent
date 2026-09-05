@@ -271,10 +271,10 @@ frente a precio de mercado y consenso de analistas.
 | MSFT | 8.78% | $295.80 | $499.70 | $572.92 | -40.8% | -48.4% |
 | GOOGL | 8.68% | $270.02 | $705.51 | $428.07 | -61.7% | -36.9% |
 | META | 8.47% | $365.03 | $712.53 | $754.77 | -48.8% | -51.6% |
-| AAPL | 8.77% | $143.94 | $319.97 | $323.86 | -55.0% | -55.6% |
+| AAPL | 8.84% | $142.74 | $319.97 | $323.86 | -55.4% | -55.9% |
 
-**Desviación media absoluta: 54.7% vs. mercado, 53.3% vs. consenso de
-analistas** (mediana 55.0% / 51.6%). Parámetros: `n_years=5`,
+**Desviación media absoluta: 54.8% vs. mercado, 53.4% vs. consenso de
+analistas** (mediana 55.4% / 51.6%). Parámetros: `n_years=5`,
 `terminal_growth_rate=2.5%`, `lookback_years=3`, `gordon_weight=0.8`
 (80% Gordon Growth / 20% múltiplo de salida).
 
@@ -574,3 +574,51 @@ defecto de cada widget —incluida la figura de matplotlib y la tabla
 tanto para el modo de universo cacheado (AMZN) como para el modo de
 ticker arbitrario (NVDA, vía yfinance). Pendiente de una sesión futura
 con navegador: captura visual real de la interfaz renderizada.
+
+## 13. Bug real encontrado y corregido: `interest_expense=0` espurio (AAPL)
+
+Al validar por fin `engine/ratios.py` contra datos reales de los 8
+tickers cacheados (nunca se había hecho — el módulo solo tenía tests con
+fixtures sintéticas desde que se creó en la Fase 3), `interest_coverage()`
+devolvió `inf` para AAPL. Investigado antes de aceptarlo (mismo estándar
+de siempre):
+
+**Causa raíz:** Alpha Vantage reporta `interestExpense=0` para AAPL en
+FY2024 y `None` en FY2025, pese a que AAPL mantiene ~$112bn-119bn de
+deuda con intereses reales (FY2023 reportó correctamente $3.933bn). Es
+un hueco de calidad de datos del proveedor, no un coste de deuda real de
+cero — ninguna empresa con esa deuda paga 0% de interés.
+
+**Por qué es grave y no se detectó antes:** `interest_expense` alimenta
+directamente `cost_of_debt()` dentro de `wacc_builder.build_wacc()`. Con
+el dato espurio, `cost_of_debt(0, total_debt) = 0.0%`. Como el peso de
+la deuda en el WACC de AAPL es pequeño, el WACC agregado seguía
+"pareciendo razonable" (8.77% en vez del 8.84% correcto — un desliz de
+7 puntos básicos) — **precisamente por eso pasó desapercibido en las
+sesiones 6-9**: revisar solo si el output agregado parece plausible no
+basta cuando un input de bajo peso está mal y el agregado lo absorbe sin
+verse raro. La lección metodológica: auditar inputs individuales, no
+solo el resultado final.
+
+**Corrección** (`_clean_interest_expense()` en `engine/data_provider.py`
+y `engine/yfinance_provider.py`, misma lógica en ambos proveedores para
+que no reaparezca por otra fuente de datos): si `interest_expense == 0`
+y `total_debt > 0`, se trata como dato faltante (`None`) en vez de cero
+real, para que `.dropna().iloc[-1]` caiga en el último año con un valor
+genuino. Una compañía genuinamente sin deuda sí puede tener
+`interest_expense=0` legítimo — ese caso NO se filtra (verificado con
+test dedicado).
+
+**Impacto verificado tras la corrección:**
+- `cost_of_debt` AAPL: 0.0% -> **3.50%** (usando el interest_expense real
+  de FY2023, el último disponible)
+- WACC AAPL: 8.77% -> **8.84%**
+- `interest_coverage` AAPL: `inf` -> **29.06x** (razonable, no infinito)
+- Tabla de la Fase 7 (sección 7) y `estado.md` actualizadas con el valor
+  corregido — el precio implícito de AAPL cambia de $143.94 a $142.74
+  (variación pequeña, ~0.8%, pero es la cifra correcta, no la que
+  "daba la casualidad de parecer razonable").
+
+3 tests de regresión (2 en `test_data_provider.py`, 1 en
+`test_yfinance_provider.py`) verifican tanto el filtrado del cero
+espurio como que un cero legítimo (sin deuda) no se filtra.

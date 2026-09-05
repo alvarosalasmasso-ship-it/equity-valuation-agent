@@ -131,6 +131,30 @@ def test_market_snapshot_matches_data_provider_schema():
     assert snapshot["symbol"] == "TEST"
 
 
+def test_historical_financials_treats_zero_interest_expense_as_missing_when_debt_exists():
+    """Regresión: mismo caso real encontrado con AAPL vía Alpha Vantage,
+    verificado también en yfinance_provider por consistencia. Interest
+    Expense=0 en el año más reciente con Total Debt>0 se trata como dato
+    faltante, no como coste de deuda real de cero."""
+    financials = _make_frame({
+        "Total Revenue": [100.0, 90.0],
+        "EBIT": [20.0, 18.0],
+        "EBITDA": [25.0, 22.0],
+        "Pretax Income": [18.0, 16.0],
+        "Tax Provision": [3.6, 2.8],
+        "Net Income": [14.4, 13.2],
+        "Interest Expense": [0.0, 0.9],  # 2023 (más reciente) = 0 espurio
+    }, DATES)
+    ticker = FakeTicker(financials, BALANCE_SHEET, CASHFLOW, INFO, ticker="TEST")
+
+    df = historical_financials(ticker)
+    row_2023 = df[df["fiscal_year"] == 2023].iloc[0]
+    row_2022 = df[df["fiscal_year"] == 2022].iloc[0]
+    assert pd.isna(row_2023["interest_expense"])
+    assert row_2022["interest_expense"] == pytest.approx(0.9)
+    assert df["interest_expense"].dropna().iloc[-1] == pytest.approx(0.9)
+
+
 def test_market_snapshot_falls_back_to_market_cap_over_shares_when_no_price_field():
     info = dict(INFO)
     info["currentPrice"] = None

@@ -131,6 +131,21 @@ def _to_float(value) -> Optional[float]:
         return None
 
 
+def _clean_interest_expense(interest_expense: Optional[float], total_debt: Optional[float]) -> Optional[float]:
+    """Alpha Vantage a veces reporta interestExpense=0 en el año más
+    reciente pese a que la compañía mantiene deuda real (verificado con
+    AAPL: FY2023 = $3.933bn real, FY2024 = 0 reportado con total_debt =
+    $119bn, FY2025 = None). Un interest_expense de 0 con deuda material
+    es casi con certeza un hueco de datos, no un coste de deuda real de
+    cero. Sin este filtro, cost_of_debt() calcularía silenciosamente un
+    0% de coste de deuda (bug real encontrado y corregido en sesión,
+    afectaba al WACC de AAPL). Se trata como dato faltante (None) para
+    que .dropna().iloc[-1] caiga al último año con un valor genuino."""
+    if interest_expense == 0 and (total_debt or 0) > 0:
+        return None
+    return interest_expense
+
+
 def _annual_reports_by_year(payload: dict) -> dict:
     return {r["fiscalDateEnding"][:4]: r for r in payload.get("annualReports", [])}
 
@@ -194,7 +209,9 @@ def historical_financials(client: AlphaVantageClient, symbol: str,
             "capex": capex,
             "change_in_nwc": change_in_nwc,
             "net_income": _to_float(inc.get("netIncome")),
-            "interest_expense": _to_float(inc.get("interestExpense")),
+            "interest_expense": _clean_interest_expense(
+                _to_float(inc.get("interestExpense")), _to_float(bs.get("shortLongTermDebtTotal"))
+            ),
             "total_assets": _to_float(bs.get("totalAssets")),
             "total_equity": _to_float(bs.get("totalShareholderEquity")),
             "total_debt": _to_float(bs.get("shortLongTermDebtTotal")),

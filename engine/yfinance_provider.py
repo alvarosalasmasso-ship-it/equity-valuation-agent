@@ -40,6 +40,19 @@ def _clean(value) -> Optional[float]:
     return float(value)
 
 
+def _clean_interest_expense(interest_expense: Optional[float], total_debt: Optional[float]) -> Optional[float]:
+    """Mismo filtro que engine.data_provider._clean_interest_expense:
+    un interest_expense de 0 con deuda material reportada es casi con
+    certeza un hueco de datos del proveedor, no un coste de deuda real
+    de cero (bug real encontrado con Alpha Vantage/AAPL en sesión — sin
+    este filtro, cost_of_debt() calcularía silenciosamente un 0%). Se
+    trata como dato faltante para que el resto del pipeline caiga al
+    último año con un valor genuino."""
+    if interest_expense == 0 and (total_debt or 0) > 0:
+        return None
+    return interest_expense
+
+
 def historical_financials(ticker) -> pd.DataFrame:
     """ticker: objeto con atributos .financials, .balance_sheet, .cashflow
     (yfinance.Ticker, o un doble de prueba con la misma forma)."""
@@ -93,7 +106,9 @@ def historical_financials(ticker) -> pd.DataFrame:
             "capex": capex,
             "change_in_nwc": change_in_nwc,
             "net_income": _clean(inc.get("Net Income")),
-            "interest_expense": _clean(inc.get("Interest Expense")),
+            "interest_expense": _clean_interest_expense(
+                _clean(inc.get("Interest Expense")), _clean(bs.get("Total Debt"))
+            ),
             "total_assets": _clean(bs.get("Total Assets")),
             "total_equity": _clean(bs.get("Stockholders Equity")),
             "total_debt": _clean(bs.get("Total Debt")),
