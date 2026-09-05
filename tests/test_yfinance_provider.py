@@ -8,7 +8,7 @@ más un dict .info. Confirmado a mano contra la API real de yfinance
 import pandas as pd
 import pytest
 
-from engine.yfinance_provider import historical_financials, market_snapshot
+from engine.yfinance_provider import HISTORICAL_FINANCIALS_COLUMNS, historical_financials, market_snapshot
 
 
 class FakeTicker:
@@ -171,3 +171,17 @@ def test_market_snapshot_falls_back_to_market_cap_over_shares_when_no_price_fiel
     ticker = FakeTicker(FINANCIALS, BALANCE_SHEET, CASHFLOW, info)
     snapshot = market_snapshot(ticker)
     assert snapshot["price"] == pytest.approx(1000.0 / 10.0)
+
+
+def test_historical_financials_returns_empty_dataframe_for_invalid_ticker():
+    """Regresión (auditoría sesión 15, hallazgo I3): confirmado
+    reproducible con un símbolo inexistente real -- yfinance devuelve
+    financials/balance_sheet/cashflow vacíos (sin fechas en común), y
+    pd.DataFrame([]).sort_values('fiscal_year') lanzaba
+    KeyError('fiscal_year'). Debe devolver un DataFrame vacío pero con
+    las columnas esperadas."""
+    empty = pd.DataFrame()
+    ticker = FakeTicker(empty, empty, empty, {}, ticker="ZZZZINVALID")
+    df = historical_financials(ticker)
+    assert df.empty
+    assert list(df.columns) == HISTORICAL_FINANCIALS_COLUMNS

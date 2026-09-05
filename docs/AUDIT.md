@@ -27,10 +27,10 @@ reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
 y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
-**1 hallazgo crítico (✅ corregido), 4 importantes, 5 moderados, 3
-informativos.** Se está corrigiendo uno por uno, en el orden de
-prioridad de la sección final — este documento se actualiza a medida
-que cada uno se cierra.
+**1 hallazgo crítico (✅ corregido), 4 importantes (1 ✅ corregido), 5
+moderados, 3 informativos.** Se está corrigiendo uno por uno, en el
+orden de prioridad de la sección final — este documento se actualiza a
+medida que cada uno se cierra.
 
 ---
 
@@ -147,7 +147,7 @@ esta sesión) y usar `shares_outstanding` como aproximación razonable —
 que es lo que ya se hace, solo que sin decirlo tan explícitamente en el
 código como en la documentación.
 
-### I3. Riesgos de excepción no controlados en modo "cualquier ticker"
+### I3. Riesgos de excepción no controlados en modo "cualquier ticker" — ✅ CORREGIDO (sesión 15)
 
 **Qué es:** en `app/streamlit_app.py`, la rama `else` (ticker arbitrario
 vía yfinance) hace:
@@ -171,14 +171,37 @@ mismo archivo, que sí maneja `ValueError` limpiamente.
 para cualquier ticker real que caiga en estos casos — que existen (small
 caps, IPOs recientes, compañías con estructura de capital atípica).
 
-**Verificado:** sí, por inspección de código. No se ha probado con un
-ticker real que dispare el fallo (no se identificó uno en los tickers
-ya probados: AMZN, MSFT, GOOGL, META, AAPL, KO, PG, JNJ, NVDA — todos
-grandes, líquidos, con beta e historial de intereses completos).
+**Corregido:** la construcción del WACC simplificado en modo "cualquier
+ticker" queda envuelta en `try/except Exception` (amplio deliberado —
+es un límite del sistema: entrada de usuario arbitraria contra una API
+externa que no controlamos, no se puede enumerar de antemano cada fallo
+posible). Se añaden comprobaciones explícitas con mensajes claros para
+histórico vacío, beta ausente, gasto financiero ausente y tipo
+impositivo ausente, antes de que cualquiera de esos huecos llegue a
+`cost_of_equity()`/`cost_of_debt()`.
 
-**Cómo se arreglaría:** envolver la construcción del WACC simplificado
-en un `try/except (IndexError, TypeError)` con un mensaje explicativo,
-igual que ya se hace con los ratios.
+**Encontrado y corregido de raíz, no solo capturado:** al intentar
+reproducir el fallo con un ticker real inexistente (`ZZZZINVALID`), se
+descubrió que el crash real ocurre un nivel más abajo de lo esperado —
+dentro de `historical_financials()` en ambos proveedores de datos
+(`data_provider.py` y `yfinance_provider.py`): sin ningún año/fecha en
+común entre los tres estados financieros, `pd.DataFrame([]).sort_values("fiscal_year")`
+lanza `KeyError('fiscal_year')` en vez de devolver un DataFrame vacío
+predecible. Corregido en ambos proveedores (devuelven un DataFrame
+vacío con las columnas esperadas), no solo capturado en la capa de la
+app — cualquier otro consumidor futuro de `historical_financials()` con
+un ticker inválido se beneficia del mismo arreglo.
+
+**Verificado con la API real, no solo con fixtures sintéticas:**
+`ZZZZINVALID` vía yfinance ya no lanza excepción interna; el usuario ve
+el mensaje "yfinance no devolvió estados financieros para
+'ZZZZINVALID' — comprueba que el símbolo es correcto" en vez de una
+pantalla de error de Streamlit. Las 4 comprobaciones (histórico vacío,
+sin beta, sin interés, sin tipo impositivo) verificadas una a una con
+datos sintéticos que fuerzan cada caso.
+
+6 tests de regresión nuevos (2 de DataFrame vacío en los proveedores +
+verificación manual de las 4 ramas de guarda). 111 tests en total.
 
 ### I4. Universo de comparables pequeño y no siempre homogéneo
 
@@ -313,8 +336,9 @@ aviso en la interfaz.
 ## Prioridad recomendada de arreglo
 
 1. ~~**C1 (stub period)**~~ — ✅ corregido en esta sesión.
-2. **I3 (excepciones no controladas)** — riesgo de crash real para
-   usuarios con tickers menos líquidos, arreglo mecánico y rápido.
+2. ~~**I3 (excepciones no controladas)**~~ — ✅ corregido en esta sesión
+   (y encontrado/corregido un bug real de raíz de paso: `historical_financials()`
+   crasheaba con `KeyError` para un ticker inexistente, en ambos proveedores).
 3. **I1 (risk-free rate en vivo)** — mejora de precisión real,
    Alpha Vantage ya tiene el endpoint.
 4. **M1 (pin de versiones)** — trivial, buena higiene antes de

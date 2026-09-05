@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-05 (sesión 15)
+**Última actualización:** 2026-09-06 (sesión 15, continuación)
 
 ---
 
@@ -694,7 +694,8 @@ con evidencia concreta (grep del código real, no solo inspección):
 - **I3: excepciones no controladas en modo "cualquier ticker"** —
   `IndexError`/`TypeError` sin capturar si `interest_expense` está
   vacío o `beta` es `None` (posible en small caps/IPOs recientes vía
-  yfinance). La app crashearía para esos tickers.
+  yfinance). La app crashearía para esos tickers. ✅ **Corregido esta
+  sesión (continuación)** — ver detalle abajo.
 - **I4: universo de comparables pequeño/heterogéneo** — ya documentado
   en sesión 14, incluido aquí formalmente.
 - **M1-M5:** `requirements.txt` sin versiones fijadas; `gordon_weight=0.8`
@@ -710,8 +711,9 @@ con evidencia concreta (grep del código real, no solo inspección):
   menos años de los pedidos.
 
 El usuario pidió corregir los hallazgos uno por uno, empezando por el
-crítico. **C1 (stub period) ya está corregido y validado con datos
-reales en esta misma sesión** — ver detalle abajo.
+crítico. **C1 (stub period) e I3 (excepciones no controladas) ya están
+corregidos y validados con datos reales en esta misma sesión** — ver
+detalle de cada uno abajo.
 
 ### Detalle — C1 corregido: stub period real, no siempre 1.0
 
@@ -738,14 +740,44 @@ cierre reportado (salta correctamente al ejercicio siguiente).
 12 tests de regresión nuevos. 109 tests en total, todos en verde.
 Servidor Streamlit re-verificado arrancando limpio tras el cambio.
 
+### Detalle — I3 corregido: excepciones no controladas en modo "cualquier ticker"
+
+Arreglo en dos capas, no solo un parche superficial:
+
+1. **Capa app (`app/streamlit_app.py`):** toda la rama "cualquier ticker"
+   ahora vive dentro de un `try/except Exception`, con comprobaciones
+   explícitas antes de calcular el WACC simplificado — histórico vacío,
+   `beta` ausente, `interest_expense`/`tax_rate` sin datos. Cualquier
+   fallo muestra `st.error(...)` con el motivo concreto y sugiere probar
+   otro ticker, en vez de un traceback crudo.
+2. **Causa raíz más profunda, encontrada al validar con un ticker
+   inválido real (`ZZZZINVALID`), no solo con la hipótesis sintética de
+   la auditoría:** `historical_financials()` en **ambos** proveedores
+   (`data_provider.py` y `yfinance_provider.py`) crasheaba con
+   `KeyError: 'fiscal_year'` cuando no hay ningún año/fecha en común
+   entre los tres estados financieros — `pd.DataFrame([]).sort_values(...)`
+   falla porque un DataFrame de cero filas construido desde una lista
+   vacía no tiene columnas. Arreglado en la fuente: ambos proveedores
+   ahora devuelven `pd.DataFrame(columns=HISTORICAL_FINANCIALS_COLUMNS)`
+   (vacío pero con la forma correcta) en ese caso, en vez de dejar que
+   la excepción se propague sin control.
+
+**Validado con datos reales:** probado en la app con el ticker inválido
+`ZZZZINVALID` — antes crasheaba con traceback en pantalla, ahora
+muestra el mensaje de error esperado y controlado. Confirma que sin
+esta segunda capa, la capa de la app por sí sola no habría bastado (el
+crash ocurría un nivel más abajo de lo que la auditoría original
+señalaba).
+
+2 tests de regresión nuevos (uno por proveedor). **111 tests en total,
+todos en verde.** Servidor Streamlit re-verificado arrancando limpio.
+
 ## 5. Próximo paso inmediato
 
 Seguir corrigiendo uno por uno, en el orden de `docs/AUDIT.md`:
 
-1. ~~C1 — Stub period.~~ ✅ Corregido esta sesión.
-2. **I3 — Excepciones no controladas.** Envolver la construcción del
-   WACC simplificado en modo "cualquier ticker" en `try/except`, igual
-   que ya se hace con los ratios.
+1. ~~C1 — Stub period.~~ ✅ Corregido sesión 15.
+2. ~~I3 — Excepciones no controladas.~~ ✅ Corregido sesión 15 (continuación).
 3. **I1 — Risk-free rate en vivo.** Sustituir la constante por
    `TREASURY_YIELD` (Alpha Vantage) o `^TNX` (yfinance).
 4. **M1 — Fijar versiones** en `requirements.txt`.

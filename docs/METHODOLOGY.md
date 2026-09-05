@@ -977,3 +977,53 @@ histórico (`stub_fraction_from_history`, incluida la degradación a 1.0
 sin las columnas nuevas), y el wiring end-to-end en `run_scenarios`/
 `value_ticker` (el precio cambia de verdad al pasar un histórico con
 fechas fiscales reales). 109 tests en total, todos en verde.
+
+## 18. Excepciones no controladas en modo "cualquier ticker" (auditoría sesión 15, hallazgo I3)
+
+La rama de `app/streamlit_app.py` que acepta un ticker arbitrario (no
+del universo cacheado) construye un WACC simplificado a partir de datos
+de yfinance sin ningún `try/except`. La auditoría señaló dos puntos de
+fallo concretos: `hist["interest_expense"].dropna().iloc[-1]` (lanza
+`IndexError` si la serie queda vacía) y `cost_of_equity(..., snap["beta"], ...)`
+(lanza `TypeError` si `beta` es `None`).
+
+**Corregido con dos capas, no solo una:**
+
+1. **Defensa en el límite del sistema** (`app/streamlit_app.py`): el
+   bloque completo queda envuelto en `try/except Exception` — amplio de
+   forma deliberada, justificado porque es un límite real del sistema
+   (entrada de texto arbitraria del usuario contra una API externa que
+   no controlamos; no se puede enumerar de antemano cada fallo posible
+   de yfinance). Comprobaciones explícitas con mensajes claros para:
+   histórico vacío, beta ausente, gasto financiero ausente, tipo
+   impositivo ausente.
+
+2. **Corrección de raíz, descubierta al intentar reproducir el fallo
+   con un ticker real** (`ZZZZINVALID`): el crash real no estaba donde
+   parecía. Ocurre un nivel más abajo, dentro de `historical_financials()`
+   en AMBOS proveedores (`data_provider.py`, `yfinance_provider.py`):
+   sin ningún año/fecha en común entre income statement, balance sheet
+   y cash flow, `rows` queda vacío y `pd.DataFrame([]).sort_values("fiscal_year")`
+   lanza `KeyError('fiscal_year')` — un DataFrame de cero filas no tiene
+   ninguna columna, así que ordenar por una columna que no existe
+   revienta. Corregido devolviendo un DataFrame vacío con las columnas
+   esperadas (`HISTORICAL_FINANCIALS_COLUMNS`, constante compartida
+   entre ambos proveedores) en vez de dejar que `sort_values` falle.
+   Esto beneficia a cualquier consumidor futuro de `historical_financials()`,
+   no solo a la app — es una corrección de biblioteca, no un parche de
+   interfaz.
+
+**Verificado con la API real, no con fixtures:** `ZZZZINVALID` vía
+yfinance ya no lanza ninguna excepción interna (confirmado con una
+llamada de red real, no mockeada) — `historical_financials()` devuelve
+un DataFrame vacío con el esquema correcto, y el bloque de la app
+produce el mensaje "yfinance no devolvió estados financieros para
+'ZZZZINVALID' — comprueba que el símbolo es correcto" en vez de una
+pantalla de error de Streamlit. Las otras tres comprobaciones (sin
+beta, sin interés, sin tipo impositivo) verificadas una a una con datos
+sintéticos que fuerzan cada caso por separado.
+
+6 tests de regresión nuevos (DataFrame vacío en ambos proveedores +
+verificación manual de las 4 ramas de guarda de la app, que no tiene
+tests automatizados por sí misma — ver hallazgo N2). 111 tests en
+total, todos en verde.

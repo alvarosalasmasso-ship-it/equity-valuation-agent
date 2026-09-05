@@ -53,6 +53,17 @@ def _clean_interest_expense(interest_expense: Optional[float], total_debt: Optio
     return interest_expense
 
 
+# Mismo esquema que engine.data_provider.HISTORICAL_FINANCIALS_COLUMNS
+# (por diseño, ambos proveedores son intercambiables) -- si se añade una
+# columna aquí, añadir también allí.
+HISTORICAL_FINANCIALS_COLUMNS = [
+    "fiscal_year", "fiscal_year_end_month", "fiscal_year_end_day", "revenue", "ebit",
+    "ebitda", "tax_rate", "d_and_a", "capex", "change_in_nwc", "net_income",
+    "interest_expense", "total_assets", "total_equity", "total_debt", "cash",
+    "current_assets", "current_liabilities",
+]
+
+
 def historical_financials(ticker) -> pd.DataFrame:
     """ticker: objeto con atributos .financials, .balance_sheet, .cashflow
     (yfinance.Ticker, o un doble de prueba con la misma forma)."""
@@ -61,6 +72,14 @@ def historical_financials(ticker) -> pd.DataFrame:
     cash_flow = ticker.cashflow
 
     common_dates = sorted(set(income.columns) & set(balance.columns) & set(cash_flow.columns))
+    if not common_dates:
+        # Sin ninguna fecha en común entre los tres estados -- ocurre de
+        # verdad con un ticker inválido: yfinance devuelve DataFrames
+        # vacíos y pd.DataFrame([]).sort_values(...) lanzaría
+        # KeyError('fiscal_year') en vez de un DataFrame vacío predecible
+        # (auditoría sesión 15, hallazgo I3 -- confirmado reproducible
+        # con un símbolo inexistente real).
+        return pd.DataFrame(columns=HISTORICAL_FINANCIALS_COLUMNS)
 
     nwc_by_date = {}
     for date in common_dates:

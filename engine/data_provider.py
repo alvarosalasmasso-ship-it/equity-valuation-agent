@@ -150,6 +150,17 @@ def _annual_reports_by_year(payload: dict) -> dict:
     return {r["fiscalDateEnding"][:4]: r for r in payload.get("annualReports", [])}
 
 
+# Mismo esquema que engine.yfinance_provider.HISTORICAL_FINANCIALS_COLUMNS
+# (por diseño, ambos proveedores son intercambiables) -- si se añade una
+# columna aquí, añadir también allí.
+HISTORICAL_FINANCIALS_COLUMNS = [
+    "fiscal_year", "fiscal_year_end_month", "fiscal_year_end_day", "revenue", "ebit",
+    "ebitda", "tax_rate", "d_and_a", "capex", "change_in_nwc", "net_income",
+    "interest_expense", "total_assets", "total_equity", "total_debt", "cash",
+    "current_assets", "current_liabilities",
+]
+
+
 def historical_financials(client: AlphaVantageClient, symbol: str,
                            use_cache: bool = True) -> pd.DataFrame:
     """Combina INCOME_STATEMENT + BALANCE_SHEET + CASH_FLOW en un
@@ -165,6 +176,13 @@ def historical_financials(client: AlphaVantageClient, symbol: str,
     cash_flow = _annual_reports_by_year(client.cash_flow(symbol, use_cache))
 
     years = sorted(set(income) & set(balance) & set(cash_flow))
+    if not years:
+        # Sin ningún año en común entre los tres estados -- p.ej. un símbolo
+        # válido pero con historial no solapado. pd.DataFrame([]).sort_values(...)
+        # lanzaría KeyError('fiscal_year') en vez de un DataFrame vacío
+        # predecible (auditoría sesión 15, hallazgo I3 -- mismo bug real
+        # encontrado también en yfinance_provider.py para tickers inválidos).
+        return pd.DataFrame(columns=HISTORICAL_FINANCIALS_COLUMNS)
     rows = []
     nwc_by_year = {}
 

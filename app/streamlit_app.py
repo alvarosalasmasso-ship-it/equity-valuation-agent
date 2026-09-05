@@ -104,16 +104,56 @@ with st.sidebar:
         target = st.text_input("Símbolo (ej. NVDA, DIS, WMT)", value="NVDA").strip().upper()
         wacc_detail = None
         if target:
-            ticker_obj = yf_get_ticker(target)
-            hist = yf_historical_financials(ticker_obj)
-            snap = yf_market_snapshot(ticker_obj)
-            hist_data, snap_data = {target: hist}, {target: snap}
-            from engine.valuation import cost_of_debt, cost_of_equity, wacc as wacc_fn
-            re = cost_of_equity(RISK_FREE_RATE, snap["beta"], MARKET_RISK_PREMIUM)
-            rd = cost_of_debt(hist["interest_expense"].dropna().iloc[-1] or 0, snap["total_debt"] or 1)
-            wacc_value = wacc_fn(snap["market_cap"], snap["total_debt"] or 0, re, rd,
-                                  float(hist["tax_rate"].dropna().iloc[-1]))
-            st.caption("⚠️ WACC simplificado: beta propio, sin releverage por comparables.")
+            # Auditoría sesión 15, hallazgo I3: este bloque procesa un ticker
+            # arbitrario tecleado por el usuario contra una API externa (yfinance)
+            # que no controlamos -- es un límite del sistema (entrada de usuario +
+            # datos de terceros), no una llamada interna con datos ya validados.
+            # yfinance puede devolver estados financieros vacíos, sin beta, sin
+            # gasto financiero o sin tipo impositivo (frecuente en small caps e
+            # IPOs recientes, que solo traen ~4 años de historia) -- cualquiera
+            # de esos huecos hacía crashear la app (IndexError/TypeError/KeyError
+            # sin capturar) antes de este fix. Excepción amplia deliberada: no se
+            # puede enumerar de antemano cada fallo posible de una API externa
+            # ante una entrada arbitraria.
+            try:
+                ticker_obj = yf_get_ticker(target)
+                hist = yf_historical_financials(ticker_obj)
+                snap = yf_market_snapshot(ticker_obj)
+                if hist.empty:
+                    raise ValueError(
+                        f"yfinance no devolvió estados financieros para '{target}' "
+                        "— comprueba que el símbolo es correcto."
+                    )
+
+                beta = snap.get("beta")
+                if beta is None:
+                    raise ValueError(
+                        f"yfinance no reporta beta para '{target}' (frecuente en small "
+                        "caps o IPOs recientes) — no se puede construir el WACC simplificado."
+                    )
+
+                interest_expense_series = hist["interest_expense"].dropna()
+                if interest_expense_series.empty:
+                    raise ValueError(f"Sin dato de gasto financiero disponible para '{target}'.")
+
+                tax_rate_series = hist["tax_rate"].dropna()
+                if tax_rate_series.empty:
+                    raise ValueError(f"Sin tipo impositivo disponible para '{target}'.")
+
+                hist_data, snap_data = {target: hist}, {target: snap}
+                from engine.valuation import cost_of_debt, cost_of_equity, wacc as wacc_fn
+                re = cost_of_equity(RISK_FREE_RATE, beta, MARKET_RISK_PREMIUM)
+                rd = cost_of_debt(interest_expense_series.iloc[-1] or 0, snap.get("total_debt") or 1)
+                wacc_value = wacc_fn(snap.get("market_cap") or 0, snap.get("total_debt") or 0, re, rd,
+                                      float(tax_rate_series.iloc[-1]))
+                st.caption("⚠️ WACC simplificado: beta propio, sin releverage por comparables.")
+            except Exception as e:
+                st.error(
+                    f"No se pudo construir la valoración de '{target}': {e}\n\n"
+                    "Prueba con otro ticker (los del universo cacheado siempre funcionan) "
+                    "o revisa que el símbolo existe en yfinance."
+                )
+                st.stop()
 
     st.divider()
     n_years = st.slider("Años de proyección", 3, 10, 5)

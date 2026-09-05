@@ -202,6 +202,24 @@ def test_historical_financials_keeps_genuine_zero_interest_expense_when_no_debt(
     assert row_2022["interest_expense"] == pytest.approx(0.0)
 
 
+def test_historical_financials_returns_empty_dataframe_when_no_years_overlap():
+    """Regresión (auditoría sesión 15, hallazgo I3): sin ningún año en
+    común entre los tres estados (p.ej. símbolo inválido/sin datos),
+    pd.DataFrame([]).sort_values('fiscal_year') lanzaría
+    KeyError('fiscal_year') -- debe devolver un DataFrame vacío pero con
+    las columnas esperadas, no crashear."""
+    from engine.data_provider import HISTORICAL_FINANCIALS_COLUMNS
+
+    client = make_fake_client()
+    client.income_statement.return_value = {"annualReports": []}
+    client.balance_sheet.return_value = {"annualReports": []}
+    client.cash_flow.return_value = {"annualReports": []}
+
+    df = historical_financials(client, "INVALID")
+    assert df.empty
+    assert list(df.columns) == HISTORICAL_FINANCIALS_COLUMNS
+
+
 def test_client_requires_api_key():
     import os
     saved = os.environ.pop("ALPHA_VANTAGE_API_KEY", None)
