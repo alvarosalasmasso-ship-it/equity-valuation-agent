@@ -460,3 +460,42 @@ en Big Tech; spread WACC-g estrecho + outliers de un año en staples de
 bajo beta) están ahora identificados, verificados con desgloses completos
 y explicados con precisión — el objetivo de un motor riguroso no es "dar
 siempre el número correcto" sino "saber exactamente por qué da lo que da".
+
+## 10. Escenarios explícitos (`engine/scenarios.py`)
+
+Ni "conservador" ni "agresivo" describen bien el comportamiento real del
+motor (secciones 7-9: el mismo motor sale infravalorado en Big Tech y
+sobrevalorado en algunas maduras, por mecanismos distintos). En vez de
+intentar una heurística única "mejor calibrada", `scenarios.py` hace la
+ambigüedad explícita: ofrece 2-3 lecturas alternativas del mismo
+histórico, todas derivadas de datos reales, ninguna inventada:
+
+- **Conservador** — el valor por defecto de `default_assumptions_from_history()`:
+  cada driver revierte a su media histórica.
+- **Mantener nivel actual** — margen, D&A, CapEx y ΔNWC se congelan en
+  el valor real del último ejercicio fiscal (ni reversión ni mejora).
+- **Alcista** — el margen EBIT extrapola hacia delante la MISMA
+  magnitud de mejora que ya se observó frente a su media histórica (no
+  una cifra arbitraria); D&A/CapEx/ΔNWC se mantienen en su nivel actual.
+
+### Hallazgo no intuitivo, verificado con AMZN (datos ya cacheados, sin API nueva)
+
+```
+Conservador (reversión a la media)          -> $84.82
+Mantener nivel actual                       -> $71.04   <- por debajo del conservador
+Alcista (continúa la tendencia reciente)    -> $107.09
+```
+
+"Mantener nivel actual" da un precio MENOR que "conservador", pese a
+partir de un margen más alto. Investigado (mismo estándar que siempre):
+AMZN tiene el CapEx actual en pico (18.4% de ventas, supercycle de IA,
+sección 7) frente a un promedio histórico de 13.5%. El escenario
+conservador deja que el CapEx revierta a la baja (13.5%) igual que hace
+con el margen; "mantener nivel actual" congela el CapEx en su pico
+(18.4%) durante los 5 años, igual que congela el margen. El lastre de
+CapEx elevado pesa más que la mejora de margen — el motor revela así
+**cuál de los dos supuestos domina realmente la sensibilidad del valor
+en esta compañía concreta**, algo que un único número nunca hubiera
+comunicado. No se ha "corregido" el orden para que parezca más
+intuitivo (bear < base < bull) — sería ocultar información real detrás
+de una expectativa estética.

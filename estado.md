@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-05 (sesión 7)
+**Última actualización:** 2026-09-05 (sesión 8)
 
 ---
 
@@ -331,38 +331,69 @@ identificados y verificados con desgloses completos: CapEx>>D&A (Big
 Tech) y spread WACC-g estrecho + outliers de un año (staples de bajo
 beta). 69 tests, todos en verde.
 
+### Detalle sesión 8 — `engine/scenarios.py`
+
+El usuario pidió seguir desarrollando sin usar Alpha Vantage. Se
+construyó `engine/scenarios.py`: en vez de una etiqueta "conservador/
+agresivo" (que las sesiones 6-7 mostraron que no describe bien el
+comportamiento real del motor), expone 2-3 lecturas explícitas del mismo
+histórico, todas derivadas de datos reales, ninguna inventada:
+
+- **Conservador** — el valor por defecto (`default_assumptions_from_history`):
+  cada driver revierte a su media histórica.
+- **Mantener nivel actual** — margen, D&A, CapEx y ΔNWC se congelan en
+  el último ejercicio fiscal real.
+- **Alcista** — el margen EBIT extrapola la MISMA magnitud de mejora que
+  ya se observó frente a su media (no una cifra arbitraria); el resto de
+  drivers se mantienen en su nivel actual.
+
+**Hallazgo no intuitivo, verificado con AMZN** (datos ya cacheados, sin
+llamar a ninguna API): "Mantener nivel actual" ($71.04) sale POR DEBAJO
+del "Conservador" ($84.82), pese a partir de un margen más alto; el
+"Alcista" da $107.09. Investigado antes de aceptarlo: AMZN tiene el
+CapEx actual en pico (18.4% de ventas) frente a un promedio histórico de
+13.5% (mismo mecanismo de la sesión 6-7). El escenario conservador deja
+que el CapEx revierta a la baja igual que el margen; "mantener nivel
+actual" lo congela en su pico durante los 5 años — el lastre de CapEx
+pesa más que la mejora de margen. El motor revela así qué supuesto
+domina realmente la sensibilidad del valor en cada compañía, información
+que un único número nunca comunicaría. No se reordenó el resultado para
+que pareciera más intuitivo (bear<base<bull) — sería esconder
+información real. Diagnóstico completo en `docs/METHODOLOGY.md`
+sección 10. 6 tests nuevos (75 en total, todos en verde), matemática
+verificable a mano con un histórico sintético de tendencia conocida.
+
 ## 5. Próximo paso inmediato
 
-El motor está validado en cinco capas independientes (matemática exacta
+El motor está validado en seis capas independientes (matemática exacta
 contra Excel, datos exactos contra Excel, comportamiento sistemático en
 5 compañías de hiper-crecimiento, contraprueba completa en 3 empresas
-maduras, y dos mecanismos de desviación distintos ya identificados y
-explicados con precisión). yfinance funciona como fuente alternativa sin
-límite de cuota. Opciones para la próxima sesión, de más a menos
-prioritaria:
+maduras, dos mecanismos de desviación distintos ya identificados, y
+ahora escenarios explícitos que muestran qué supuesto domina en cada
+caso). yfinance funciona como fuente alternativa sin límite de cuota.
+Opciones para la próxima sesión, de más a menos prioritaria:
 
-1. **Fase 5 (capa generativa):** el Investment Memo tiene ahora contenido
-   real y con matices para redactar — no un mensaje único ("conservador
-   vs. mercado"), sino condicionado al mecanismo detectado: CapEx>>D&A
-   en crecimiento, spread WACC-g estrecho o outliers de un año en
-   maduras, o ninguno de los dos (caso KO, alta confianza). El prompt
-   debe recibir el desglose de `DCFResult` + `ValuationCheck` + qué aviso
-   (`warnings`) saltó, nunca datos crudos — el LLM sigue sin calcular
-   nada. Requiere una API key de Anthropic (no configurada todavía en
-   `.env`) para probarlo en vivo; la construcción del prompt y el
-   formateo del input SÍ se pueden testear sin key (mockeando la llamada).
-2. Exponer una tesis "alcista" vs. "conservadora" explícita (dos
-   `ProjectionAssumptions` predefinidos) — más urgente ahora que se ve
-   que ni "conservador" ni "agresivo" describen bien el comportamiento
-   real del motor; mejor exponer el mecanismo (spread WACC-g, fade de
-   márgenes) directamente que una etiqueta binaria.
-3. Opcional, bajo interés: usar `yfinance_provider.py` como fuente
+1. **Fase 5 (capa generativa):** el Investment Memo tiene ahora
+   contenido real, con matices y hasta 3 escenarios por ticker para
+   redactar — no un mensaje único, sino condicionado al mecanismo
+   detectado (CapEx>>D&A, spread WACC-g estrecho, outlier de un año, o
+   ninguno) y al rango bear/hold/bull de `engine.scenarios`. El prompt
+   debe recibir ese desglose estructurado, nunca datos crudos — el LLM
+   sigue sin calcular nada. Requiere una API key de Anthropic (no
+   configurada todavía en `.env`) para probarlo en vivo; la construcción
+   del prompt y el formateo del input SÍ se pueden testear sin key
+   (mockeando la llamada) — se puede avanzar bastante hoy mismo sin la
+   key y dejar solo la llamada real pendiente.
+2. Opcional, bajo interés: usar `yfinance_provider.py` como fuente
    primaria en vez de Alpha Vantage para no depender de ninguna cuota
-   diaria — a cambio de menos años de histórico (4 vs. 15-20), lo que
-   podría degradar el CAGR de ingresos con `lookback_years` altos.
+   diaria — a cambio de menos años de histórico (4 vs. 15-20).
+3. Esqueleto de Streamlit (Fase 6) usando datos ya cacheados (AMZN,
+   MSFT, GOOGL, META, AAPL, KO, PG, JNJ) — mostrando el rango de
+   escenarios + el mecanismo de desviación detectado, no un número
+   suelto. No requiere ninguna API nueva para desarrollarse.
 
 **Ya no aplica el veto anterior a Streamlit/LLM** ("no construir la
 interfaz antes de validar") — la Fase 7 y su contraprueba ya están
 medidas y explicadas. Sigue aplicando el principio de fondo: cualquier UI
 debe mostrar el número junto a su explicación (supuestos, mecanismo de
-desviación detectado), nunca el número solo.
+desviación detectado, rango de escenarios), nunca el número solo.
