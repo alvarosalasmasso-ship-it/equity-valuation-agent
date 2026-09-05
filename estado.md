@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-05 (sesión 13)
+**Última actualización:** 2026-09-05 (sesión 14)
 
 ---
 
@@ -626,22 +626,61 @@ punta con datos reales de AMZN antes de dar la integración por cerrada.
 10 tests nuevos (96 en total, todos en verde). `comps.py` sigue sin
 conectar — candidato claro para la próxima sesión.
 
+### Detalle sesión 14 — `comps.py` conectado: múltiplo de salida de peers, no propio
+
+Última pieza huérfana conectada. Hasta ahora, el múltiplo EV/EBITDA del
+valor terminal blended era el de la PROPIA empresa objetivo — circular
+(si el mercado ya tiene a AMZN sobre/infravalorada, ese sesgo se cuela
+directo en nuestra propia valoración). El Excel usa un múltiplo de una
+tabla de comparables, no el propio.
+
+**Corregido:** `value_ticker()` ahora usa la mediana de los comparables
+del universo (excluyendo el target) como múltiplo de salida, igual que
+ya hacía con el WACC. `ValuationCheck` expone `peer_ev_ebitda_multiple`
+para que quede trazable. La interfaz hace lo mismo en modo universo
+cacheado y muestra la tabla de comparables completa.
+
+**Impacto real, mixto — reportado tal cual, no maquillado:**
+
+| Universo | Antes (múltiplo propio) | Después (múltiplo peers) |
+|---|---|---|
+| Big Tech (media vs. mercado) | 42.8% | 43.4% (~igual) |
+| AMZN | -59.6% | **-54.1%** (mejora) |
+| AAPL | -56.1% | -63.0% (empeora bastante) |
+| KO | +2.8% | **+0.1%** (casi exacto) |
+| PG | +85.2% | +92.1% (empeora) |
+
+A diferencia del fix de la forma del crecimiento (sesión 12, mejora
+limpia en las 5 compañías), este cambio es correcto en principio
+(evita la circularidad) pero de efecto mixto en este universo concreto:
+AAPL cotiza muy por encima de sus propios comparables de "Big Tech"
+(28.4x vs. 13-16x del resto), así que excluir su propio múltiplo la
+hace ver más barata de lo que el mercado realmente le asigna. Se
+mantiene el cambio de todas formas — es la réplica correcta de la
+metodología, y revertirlo porque el agregado no mejoró sería
+sobreajustar a un resultado, el mismo error que este proyecto ha evitado
+siempre. El problema real que revela (solo 3-5 comparables por sector,
+no siempre homogéneos) queda anotado como límite conocido, no resuelto.
+
+1 test de regresión con un múltiplo propio imposible de coincidir por
+casualidad (999x), para probar sin ambigüedad que se usa el de peers.
+97 tests, todos en verde. Diagnóstico completo en `docs/METHODOLOGY.md`
+sección 16.
+
 ## 5. Próximo paso inmediato
 
-El motor está validado en nueve capas independientes: fórmulas exactas
-contra Excel, datos exactos contra Excel, comportamiento sistemático en
-growth/maduras, dos mecanismos de desviación identificados, un bug real
-de datos corregido, la forma del fade de crecimiento alineada con el
-modelo de referencia (y la de margen/D&A/CapEx verificada como ya
-correcta), y ahora ratios de rentabilidad/apalancamiento conectados de
-punta a punta. Opciones para la próxima sesión, de más a menos
-prioritaria:
+El motor está validado en diez capas independientes y los cinco módulos
+de `engine/` (valuation, data_provider/yfinance_provider, projections,
+wacc_builder, comps, ratios, scenarios, validation) están todos
+conectados de punta a punta — ya no quedan piezas huérfanas. Opciones
+para la próxima sesión, de más a menos prioritaria:
 
-1. **Conectar `comps.py`** — tabla de comparables real en la interfaz
-   (múltiplos EV/EBITDA de los peers ya cargados) y usarla como múltiplo
-   de salida real en vez de la constante puntual `snap["ev_to_ebitda"]"
-   usada hasta ahora (el propio múltiplo de la empresa, no el de sus
-   comparables).
+1. **Universo de comparables más amplio y mejor segmentado** — el
+   hallazgo de la sesión 14 (AAPL no tiene comparables homogéneos en
+   solo 4 tickers de "Big Tech") sugiere que 3-5 comparables por sector
+   es insuficiente para un múltiplo de salida robusto. Ampliar el
+   universo piloto o segmentar mejor (p.ej. "hardware premium" vs
+   "cloud/software") mejoraría esto de raíz.
 2. **Auditoría de campos similares** al bug de `interest_expense`:
    revisar `ebit`, `d_and_a`, `capex` por el mismo patrón (cero espurio
    en el año más reciente) en algún ticker del universo.
@@ -649,14 +688,12 @@ prioritaria:
    disponible — pospuesto explícitamente hasta que lo matemático/técnico
    esté impecable.
 4. Cuando se decida dar el paso a la API de pago: añadir
-   `ANTHROPIC_API_KEY` y probar `generate_memo()` en vivo (ahora con
-   ratios incluidos en el memo).
+   `ANTHROPIC_API_KEY` y probar `generate_memo()` en vivo.
 5. Fase 8 (despliegue) — sin remoto configurado, decisión pendiente del
    usuario.
 
 **Principio de fondo que sigue aplicando:** cualquier UI debe mostrar el
-número junto a su explicación, nunca el número solo. Y: no dar por
-válido un resultado agregado solo porque "parece razonable" — auditar
-inputs individuales (reveló el bug de `interest_expense`) y verificar
-con datos reales antes de dar una pieza por terminada (reveló los dos
-bugs de serialización JSON de esta sesión).
+número junto a su explicación, nunca el número solo. Y: no revertir un
+cambio metodológicamente correcto solo porque el resultado agregado no
+mejora en un universo concreto — eso sería sobreajustar a un caso
+conocido, exactamente lo que este proyecto ha evitado en cada sesión.

@@ -126,6 +126,17 @@ if not target:
 hist = hist_data[target]
 snap = snap_data[target]
 
+# --- Múltiplo de salida: mediana de comparables, no el propio de la empresa ---
+
+from engine.comps import build_comps_table, peer_average_multiple
+
+comps_table = None
+if len(snap_data) > 1:
+    comps_table = build_comps_table(list(snap_data.values()))
+    terminal_multiple = peer_average_multiple(comps_table, "ev_to_ebitda", exclude_symbol=target, method="median")
+else:
+    terminal_multiple = snap.get("ev_to_ebitda")
+
 # --- Métricas clave ---------------------------------------------------------
 
 col1, col2, col3, col4 = st.columns(4)
@@ -140,7 +151,7 @@ st.subheader("Rango de escenarios")
 scenario_results, warnings_text = run_scenarios_capturing_warnings(
     hist, wacc=wacc_value, cash=snap.get("cash") or 0, total_debt=snap.get("total_debt") or 0,
     diluted_shares=snap["shares_outstanding"], n_years=n_years, terminal_growth_rate=terminal_growth_rate,
-    lookback_years=lookback_years, terminal_ev_ebitda_multiple=snap.get("ev_to_ebitda"),
+    lookback_years=lookback_years, terminal_ev_ebitda_multiple=terminal_multiple,
     gordon_weight=gordon_weight,
 )
 
@@ -217,6 +228,23 @@ except ValueError as e:
     ratio_snapshot = None
     st.caption(f"No se pudieron calcular los ratios: {e}")
 
+# --- Comparables ---------------------------------------------------------------
+
+st.subheader("Comparables")
+if comps_table is not None:
+    st.dataframe(comps_table, use_container_width=True)
+    st.caption(
+        f"Múltiplo EV/EBITDA de salida usado en el valor terminal: **{terminal_multiple:.2f}x** "
+        f"(mediana de los comparables, excluyendo {target} — no el múltiplo de la propia empresa)."
+    )
+elif terminal_multiple:
+    st.caption(
+        f"Sin grupo de comparables en modo ticker libre — el múltiplo de salida usado "
+        f"({terminal_multiple:.2f}x) es el de la propia empresa, no el de comparables."
+    )
+else:
+    st.caption("No hay múltiplo EV/EBITDA disponible — el valor terminal usa Gordon Growth puro.")
+
 # --- Matriz de sensibilidad ---------------------------------------------------
 
 st.subheader("Sensibilidad: WACC × tasa de crecimiento terminal")
@@ -230,7 +258,7 @@ base_inputs = DCFInputs(
     ebit=projection.ebit, tax_rate=projection.tax_rate, d_and_a=projection.d_and_a,
     capex=projection.capex, change_in_nwc=projection.change_in_nwc, wacc=wacc_value,
     terminal_growth_rate=terminal_growth_rate, cash=snap.get("cash") or 0, total_debt=snap.get("total_debt") or 0,
-    diluted_shares=snap["shares_outstanding"], terminal_ev_ebitda_multiple=snap.get("ev_to_ebitda"),
+    diluted_shares=snap["shares_outstanding"], terminal_ev_ebitda_multiple=terminal_multiple,
     gordon_weight=gordon_weight,
 )
 

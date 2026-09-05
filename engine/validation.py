@@ -18,6 +18,7 @@ from typing import Optional
 
 import pandas as pd
 
+from engine.comps import build_comps_table, peer_average_multiple
 from engine.projections import default_assumptions_from_history, project_financials
 from engine.valuation import DCFInputs, run_dcf
 from engine.wacc_builder import PeerInput, build_wacc
@@ -49,6 +50,7 @@ class ValuationCheck:
     analyst_target_price: Optional[float]
     deviation_vs_market: Optional[float]
     deviation_vs_consensus: Optional[float]
+    peer_ev_ebitda_multiple: float
 
 
 def value_ticker(target: str, universe_hist: dict[str, pd.DataFrame],
@@ -58,6 +60,11 @@ def value_ticker(target: str, universe_hist: dict[str, pd.DataFrame],
                   gordon_weight: float = 0.8) -> ValuationCheck:
     """Corre el pipeline completo para un ticker del universo y lo
     compara contra su propio precio de mercado y consenso de analistas.
+
+    El múltiplo EV/EBITDA de salida del valor terminal es la MEDIANA de
+    los comparables del universo (excluyendo `target`), nunca el propio
+    múltiplo de la empresa objetivo — igual que el WACC, para no usar
+    una referencia que puede estar ya sobre/infra valorada.
 
     Requiere al menos 2 tickers en el universo (target + >=1 peer).
     """
@@ -86,12 +93,19 @@ def value_ticker(target: str, universe_hist: dict[str, pd.DataFrame],
     )
     projection = project_financials(hist["revenue"].iloc[-1], assumptions)
 
+    # Múltiplo de salida = mediana de los COMPARABLES (nunca el propio
+    # múltiplo de la empresa objetivo, que puede estar ya sobre/infra
+    # valorado y no aportaría ninguna referencia externa real) — ver
+    # docs/METHODOLOGY.md sección 16.
+    comps_table = build_comps_table(list(universe_snap.values()))
+    peer_ev_ebitda = peer_average_multiple(comps_table, "ev_to_ebitda", exclude_symbol=target, method="median")
+
     inputs = DCFInputs(
         ebit=projection.ebit, tax_rate=projection.tax_rate, d_and_a=projection.d_and_a,
         capex=projection.capex, change_in_nwc=projection.change_in_nwc,
         wacc=wacc_result.wacc, terminal_growth_rate=terminal_growth_rate,
         cash=snap["cash"], total_debt=snap["total_debt"], diluted_shares=snap["shares_outstanding"],
-        terminal_ev_ebitda_multiple=snap.get("ev_to_ebitda"), gordon_weight=gordon_weight,
+        terminal_ev_ebitda_multiple=peer_ev_ebitda, gordon_weight=gordon_weight,
     )
     result = run_dcf(inputs)
 
@@ -104,6 +118,7 @@ def value_ticker(target: str, universe_hist: dict[str, pd.DataFrame],
         ticker=target, wacc=wacc_result.wacc, implied_price=result.implied_share_price,
         market_price=market_price, analyst_target_price=consensus,
         deviation_vs_market=dev_market, deviation_vs_consensus=dev_consensus,
+        peer_ev_ebitda_multiple=peer_ev_ebitda,
     )
 
 

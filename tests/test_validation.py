@@ -29,13 +29,13 @@ UNIVERSE_HIST = {
 }
 
 UNIVERSE_SNAP = {
-    "AAA": {"beta": 1.0, "total_debt": 300.0, "cash": 100.0, "market_cap": 5000.0,
+    "AAA": {"symbol": "AAA", "beta": 1.0, "total_debt": 300.0, "cash": 100.0, "market_cap": 5000.0,
             "shares_outstanding": 100.0, "ev_to_ebitda": 15.0, "price": 55.0,
             "analyst_target_price": 60.0},
-    "BBB": {"beta": 1.2, "total_debt": 500.0, "cash": 200.0, "market_cap": 8000.0,
+    "BBB": {"symbol": "BBB", "beta": 1.2, "total_debt": 500.0, "cash": 200.0, "market_cap": 8000.0,
             "shares_outstanding": 150.0, "ev_to_ebitda": 16.0, "price": 60.0,
             "analyst_target_price": 65.0},
-    "CCC": {"beta": 0.9, "total_debt": 250.0, "cash": 150.0, "market_cap": 4000.0,
+    "CCC": {"symbol": "CCC", "beta": 0.9, "total_debt": 250.0, "cash": 150.0, "market_cap": 4000.0,
             "shares_outstanding": 80.0, "ev_to_ebitda": 14.0, "price": 55.0,
             "analyst_target_price": 50.0},
 }
@@ -54,6 +54,21 @@ def test_value_ticker_computes_deviation_vs_market_and_consensus():
     assert check.implied_price > 0
     assert check.deviation_vs_market == pytest.approx(check.implied_price / 55.0 - 1)
     assert check.deviation_vs_consensus == pytest.approx(check.implied_price / 60.0 - 1)
+
+
+def test_value_ticker_reports_peer_multiple_not_own_multiple():
+    """Regresión: el múltiplo de salida debe ser la MEDIANA de los
+    comparables (BBB=16, CCC=14 -> mediana 15), nunca el propio múltiplo
+    de AAA. Se fuerza el propio de AAA a 999 (imposible que coincida por
+    casualidad) para verificar sin ambigüedad que no se usa."""
+    snap_with_distinct_own_multiple = {
+        **UNIVERSE_SNAP,
+        "AAA": {**UNIVERSE_SNAP["AAA"], "ev_to_ebitda": 999.0},
+    }
+    check = value_ticker("AAA", UNIVERSE_HIST, snap_with_distinct_own_multiple,
+                          risk_free_rate=0.04, market_risk_premium=0.05)
+    assert check.peer_ev_ebitda_multiple == pytest.approx(15.0)  # mediana de BBB(16) y CCC(14)
+    assert check.peer_ev_ebitda_multiple != pytest.approx(999.0)
 
 
 def test_value_ticker_requires_target_in_universe():

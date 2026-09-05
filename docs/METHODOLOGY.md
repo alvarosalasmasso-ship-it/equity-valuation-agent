@@ -726,6 +726,10 @@ modelo a seguir" — el primer principio del blueprint ("usa tu propia
 plantilla DCF como fuente de verdad"). Que el resultado suba es una
 consecuencia observada, no el objetivo del cambio.
 
+> **Nota (sesión posterior):** la sección 16 cambia además el múltiplo
+> de salida (de "propio de la empresa" a "mediana de comparables"),
+> desplazando estos números una vez más. Tabla vigente en la sección 16.
+
 ### Impacto verificado (universo Big Tech, mismos parámetros que la sección 7)
 
 | Ticker | Implícito (antes) | Implícito (después) | Mercado | Desv. antes | Desv. después |
@@ -855,3 +859,68 @@ por terminada, no por casualidad.
 en verde. `comps.py` sigue sin conectar — candidato para una próxima
 sesión (tabla de comparables en la interfaz, múltiplo de salida real en
 vez de las constantes puntuales usadas hasta ahora).
+
+## 16. `engine/comps.py` conectado: múltiplo de salida de peers, no de la propia empresa
+
+Hasta esta sesión, el múltiplo EV/EBITDA usado en el valor terminal
+blended era **el de la propia empresa objetivo** (`snap["ev_to_ebitda"]`).
+Esto es circular: valorar AMZN usando el múltiplo con el que el mercado
+YA valora a AMZN no aporta ninguna referencia externa — si el mercado
+tiene a AMZN sobre o infravalorada, ese sesgo se cuela directo en
+nuestro propio valor terminal. El Excel de referencia no hace esto:
+usa `Comps!AC22`, el múltiplo de una tabla de comparables, no el de la
+propia Amazon.
+
+**Corregido:** `engine.validation.value_ticker()` ahora calcula el
+múltiplo de salida como la **mediana de los comparables del universo,
+excluyendo el ticker objetivo** (`engine.comps.build_comps_table()` +
+`peer_average_multiple(..., exclude_symbol=target, method="median")`),
+igual que ya hacía con el WACC. `ValuationCheck` expone el múltiplo
+usado (`peer_ev_ebitda_multiple`) para que quede trazable, no oculto
+dentro del cálculo. `app/streamlit_app.py` hace lo mismo en modo
+universo cacheado, y muestra la tabla de comparables completa; en modo
+"cualquier ticker" (sin peers) sigue usando el múltiplo propio, con un
+aviso explícito de que es una referencia más débil.
+
+### Impacto real — mixto, no una mejora uniforme, y así se reporta
+
+| Ticker | Múltiplo propio | Múltiplo peers | Desv. mercado (propio) | Desv. mercado (peers) |
+|---|---|---|---|---|
+| AMZN | 11.22x | 15.87x | -59.6% | **-54.1%** (mejora) |
+| MSFT | 17.68x | 13.14x | -20.5% | -27.3% (empeora) |
+| GOOGL | 12.22x | 15.87x | -52.7% | **-49.4%** (mejora) |
+| META | 14.05x | 14.95x | -25.0% | -23.0% (mejora leve) |
+| AAPL | 28.37x | 13.14x | -56.1% | -63.0% (empeora bastante) |
+| KO | 24.06x | 17.32x | +2.8% | **+0.1%** (casi exacto) |
+| PG | 14.80x | 21.95x | +85.2% | +92.1% (empeora) |
+| JNJ | 19.83x | 19.43x | +52.0% | +62.6% (empeora) |
+
+**Agregado Big Tech: 42.8%→43.4% vs. mercado, 41.3%→41.5% vs. consenso
+— esencialmente sin cambio neto.** A diferencia del fix de la forma del
+crecimiento (sesión 12, mejora limpia en las 5 compañías), este cambio
+es mecánicamente correcto pero de efecto mixto en ESTE universo
+concreto: AAPL cotiza a un múltiplo (28.4x) muy por encima de sus
+propios comparables de "Big Tech" (13-16x) — excluir su propio múltiplo
+rico al valorarla la hace ver más barata según sus peers, pero esos
+peers no necesariamente son el grupo de comparación correcto para el
+múltiplo real que el mercado le asigna a AAPL específicamente. Mismo
+patrón con PG (el más barato de los tres staples) y KO (el más caro):
+KO mejora casi a la perfección, PG empeora.
+
+**Por qué se mantiene el cambio de todas formas:** es la réplica
+correcta de la metodología del Excel (evitar la circularidad de
+autovalorarse con el propio múltiplo) y del sentido común financiero
+(un múltiplo de salida debe venir de una referencia externa, no de la
+propia valoración que se está intentando cuestionar). Que el efecto
+agregado sea neutro en este universo concreto no es motivo para
+revertirlo — sería sobreajustar a un resultado, exactamente el error que
+este proyecto ha evitado en cada sesión. El verdadero problema que
+revela (AAPL/KO no tienen comparables realmente homogéneos dentro de su
+grupo "Big Tech"/"Consumo defensivo") es un límite conocido de trabajar
+con solo 3-5 comparables por sector en vez de un universo más amplio y
+mejor segmentado — anotado como mejora futura, no resuelto aquí.
+
+1 test de regresión que fuerza el múltiplo propio de un ticker a un
+valor imposible de coincidir por casualidad (999x) para probar sin
+ambigüedad que se usa el de los peers. 97 tests en total, todos en
+verde.
