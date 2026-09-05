@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-05 (sesión 8)
+**Última actualización:** 2026-09-05 (sesión 9)
 
 ---
 
@@ -363,34 +363,66 @@ información real. Diagnóstico completo en `docs/METHODOLOGY.md`
 sección 10. 6 tests nuevos (75 en total, todos en verde), matemática
 verificable a mano con un histórico sintético de tendencia conocida.
 
+### Detalle sesión 9 — `ai/memo_generator.py` (Fase 5, capa generativa)
+
+Se construyó la capa generativa completa, con la parte determinista
+100% testeada sin clave de Anthropic (instalada la SDK `anthropic` en
+el venv):
+
+- `ai/prompts/investment_memo_system.md` — prompt de sistema versionado
+  (no un string embebido en el código): prohíbe explícitamente inventar
+  o calcular cualquier cifra no presente en el paquete de datos, exige
+  decir "no disponible" en vez de omitir en silencio, fija la estructura
+  del memo (Executive Summary, Tesis de Valoración, Rango de Escenarios,
+  Riesgos y Limitaciones del Modelo, Conclusión), prohíbe una
+  recomendación de compra/venta (disclaimer educativo), y exige explicar
+  el mecanismo detrás de una desviación grande en vez de presentarla
+  como un fallo.
+- `MemoInput` — paquete cerrado de datos: ticker, precio de mercado,
+  consenso, WACC, los 2-3 escenarios de `engine.scenarios`, desviación
+  vs. mercado/consenso del escenario conservador, supuestos clave, y
+  **los avisos técnicos del propio modelo** (capturados con
+  `run_scenarios_capturing_warnings()`, que envuelve `run_scenarios` con
+  `warnings.catch_warnings` para recoger el aviso de
+  `MIN_PRUDENT_WACC_GROWTH_SPREAD` de la sesión 7 como texto).
+- `build_prompt()` — serializa `MemoInput` a JSON en el mensaje de
+  usuario; nada de texto libre que el LLM pueda confundir con una
+  instrucción.
+- `generate_memo(memo_input, client=None, ...)` — `client` inyectable
+  (cualquier objeto con `.messages.create(...)`), así que toda la
+  construcción del paquete y del prompt tiene tests sin red; solo la
+  llamada real necesita `ANTHROPIC_API_KEY` en `.env` (no configurada
+  todavía).
+
+**Validado de punta a punta con datos reales de AMZN** (ya cacheados,
+sin llamar a ninguna API): el JSON completo que recibiría el LLM se
+generó correctamente — precio de mercado $258.51, consenso $328.17, los
+3 escenarios ($84.82 / $71.04 / $107.09), desviaciones, supuestos clave,
+y una lista de avisos vacía (correcto: el spread WACC-g de AMZN, 8.27%
+- 2.5% = 5.77%, es sano, no debía saltar el aviso de la sesión 7).
+
+9 tests nuevos (84 en total, todos en verde) — ninguno llama a la API
+real.
+
 ## 5. Próximo paso inmediato
 
-El motor está validado en seis capas independientes (matemática exacta
-contra Excel, datos exactos contra Excel, comportamiento sistemático en
-5 compañías de hiper-crecimiento, contraprueba completa en 3 empresas
-maduras, dos mecanismos de desviación distintos ya identificados, y
-ahora escenarios explícitos que muestran qué supuesto domina en cada
-caso). yfinance funciona como fuente alternativa sin límite de cuota.
-Opciones para la próxima sesión, de más a menos prioritaria:
+El motor está validado en seis capas independientes y la capa generativa
+está lista salvo la llamada real (falta `ANTHROPIC_API_KEY`). yfinance
+funciona como fuente alternativa sin límite de cuota. Opciones para la
+próxima sesión, de más a menos prioritaria:
 
-1. **Fase 5 (capa generativa):** el Investment Memo tiene ahora
-   contenido real, con matices y hasta 3 escenarios por ticker para
-   redactar — no un mensaje único, sino condicionado al mecanismo
-   detectado (CapEx>>D&A, spread WACC-g estrecho, outlier de un año, o
-   ninguno) y al rango bear/hold/bull de `engine.scenarios`. El prompt
-   debe recibir ese desglose estructurado, nunca datos crudos — el LLM
-   sigue sin calcular nada. Requiere una API key de Anthropic (no
-   configurada todavía en `.env`) para probarlo en vivo; la construcción
-   del prompt y el formateo del input SÍ se pueden testear sin key
-   (mockeando la llamada) — se puede avanzar bastante hoy mismo sin la
-   key y dejar solo la llamada real pendiente.
-2. Opcional, bajo interés: usar `yfinance_provider.py` como fuente
+1. **Conseguir una API key de Anthropic** y probar `generate_memo()` en
+   vivo con el caso AMZN ya preparado (o cualquier otro de los 8 tickers
+   cacheados) — es la única pieza de la Fase 5 que falta por ejecutar de
+   verdad, todo lo demás ya está construido y testeado.
+2. Esqueleto de Streamlit (Fase 6) usando datos ya cacheados (AMZN,
+   MSFT, GOOGL, META, AAPL, KO, PG, JNJ) — mostrando el rango de
+   escenarios + el mecanismo de desviación detectado + (si hay key) el
+   memo generado, no un número suelto. No requiere ninguna API nueva
+   para desarrollarse, solo para la parte del memo.
+3. Opcional, bajo interés: usar `yfinance_provider.py` como fuente
    primaria en vez de Alpha Vantage para no depender de ninguna cuota
    diaria — a cambio de menos años de histórico (4 vs. 15-20).
-3. Esqueleto de Streamlit (Fase 6) usando datos ya cacheados (AMZN,
-   MSFT, GOOGL, META, AAPL, KO, PG, JNJ) — mostrando el rango de
-   escenarios + el mecanismo de desviación detectado, no un número
-   suelto. No requiere ninguna API nueva para desarrollarse.
 
 **Ya no aplica el veto anterior a Streamlit/LLM** ("no construir la
 interfaz antes de validar") — la Fase 7 y su contraprueba ya están

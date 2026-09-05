@@ -499,3 +499,31 @@ en esta compañía concreta**, algo que un único número nunca hubiera
 comunicado. No se ha "corregido" el orden para que parezca más
 intuitivo (bear < base < bull) — sería ocultar información real detrás
 de una expectativa estética.
+
+## 11. Capa generativa — Fase 5 (`ai/memo_generator.py`)
+
+Principio de arquitectura del proyecto, ahora implementado: **el LLM
+nunca calcula, solo redacta** a partir de un paquete de datos ya cerrado
+(`MemoInput`). Todo lo que puede aparecer en el memo está ya en ese
+paquete; el prompt (`ai/prompts/investment_memo_system.md`) prohíbe
+explícitamente inventar, calcular o estimar cualquier cifra que no esté
+ahí, y obliga a decir "no disponible" en vez de omitir un dato en
+silencio.
+
+`MemoInput` incluye: ticker, precio de mercado, consenso de analistas,
+WACC, los 2-3 escenarios de `engine.scenarios` (bear/hold/bull),
+desviación vs. mercado/consenso del escenario conservador, supuestos
+clave de proyección, y **los avisos técnicos del propio modelo**
+(`warnings.warn` de `MIN_PRUDENT_WACC_GROWTH_SPREAD`, capturados por
+`run_scenarios_capturing_warnings()`) — el memo debe explicar esos
+avisos como riesgo real del cálculo, no suavizarlos.
+
+**Diseño para ser testeable sin clave de Anthropic:** `generate_memo()`
+acepta un `client` inyectable (cualquier objeto con
+`.messages.create(...)`), así que `build_memo_input()` y `build_prompt()`
+(las partes deterministas, sin red) tienen cobertura completa de tests,
+y `generate_memo()` se testea con un cliente falso que no llama a la
+API real. Solo falta una `ANTHROPIC_API_KEY` en `.env` para probar la
+llamada real — el resto del pipeline (empaquetado + prompt) está
+verificado de punta a punta con datos reales de AMZN (ver
+`tests/test_memo_generator.py` y el dry-run documentado en `estado.md`).
