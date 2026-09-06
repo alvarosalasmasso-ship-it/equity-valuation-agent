@@ -339,6 +339,15 @@ def market_snapshot(client: AlphaVantageClient, symbol: str, use_cache: bool = T
         # OVERVIEW, sin coste de petición adicional.
         "week_52_high": _to_float(overview.get("52WeekHigh")),
         "week_52_low": _to_float(overview.get("52WeekLow")),
+        # Sesión 17: distribución de recomendaciones de analistas, ya
+        # expuesta en OVERVIEW sin coste adicional -- complementa el
+        # precio de consenso con "cuántos" analistas opinan qué, útil
+        # junto al reverse DCF (docs/METHODOLOGY.md sección 24).
+        "analyst_rating_strong_buy": _to_float(overview.get("AnalystRatingStrongBuy")),
+        "analyst_rating_buy": _to_float(overview.get("AnalystRatingBuy")),
+        "analyst_rating_hold": _to_float(overview.get("AnalystRatingHold")),
+        "analyst_rating_sell": _to_float(overview.get("AnalystRatingSell")),
+        "analyst_rating_strong_sell": _to_float(overview.get("AnalystRatingStrongSell")),
         # Auditoría sesión 15/16, hallazgo M5: divisa de reporte de los
         # estados financieros. risk_free_rate y market_risk_premium están
         # calibrados en USD (Treasury americano) -- mezclar una compañía

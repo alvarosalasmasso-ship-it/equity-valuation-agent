@@ -1265,7 +1265,34 @@ WACC-g más estrecho) para confirmar que no hay bugs de `None`/división
 por cero no capturados por los fixtures sintéticos del AppTest.
 Documentado en `docs/METHODOLOGY.md` sección 23.
 
-## 15. Próximo paso inmediato
+## 15. Sesión 17 (continuación) — Cobertura de analistas, rango de consenso, tendencia histórica
+
+Mismo hilo que la sección 14, con la misma disciplina: solo campos ya
+disponibles sin coste adicional en Alpha Vantage/yfinance.
+
+- **Cobertura de analistas**: desglose de recomendaciones por tramo
+  (Alpha Vantage: `AnalystRatingStrongBuy/Buy/Hold/Sell/StrongSell`) o
+  recomendación consenso + nº de analistas (yfinance). Verificado con
+  AMZN real: 15 compra fuerte, 44 compra, 2 mantener, 0 venta —
+  refuerza la narrativa del reverse DCF. Mostrado como tooltip del
+  metric "Consenso analistas" ya existente.
+- **Rango de precio objetivo** (yfinance: `targetLowPrice`/
+  `targetHighPrice`) añadido como barra extra del football field
+  cuando está disponible. JNJ real: $190–$320 frente a una media de
+  $275.64.
+- **Gráfico de tendencia histórica** al inicio de "Supuestos y
+  expectativas": crecimiento de ingresos YoY + margen EBIT sobre todo
+  el histórico disponible (no solo la ventana del fade) — contexto
+  antes de la tabla de supuestos. Verificado con AMZN real (20 años de
+  histórico): visualiza la misma historia de la sección 14, margen
+  cerca de cero durante más de una década, expansión fuerte solo en
+  los últimos 3 años.
+
+**176 tests en total, todos en verde.** Verificado con datos reales de
+AMZN y JNJ fuera de la suite. Documentado en `docs/METHODOLOGY.md`
+sección 24.
+
+## 16. Próximo paso inmediato
 
 1. C — Monte Carlo: bandas de confianza probabilísticas (P10/P50/P90)
    sobre el precio implícito, muestreando WACC/margen/CapEx desde su

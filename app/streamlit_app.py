@@ -46,6 +46,7 @@ COLORS = {
     "series": "#2F6690",  # magnitud ordenada (escenarios, mapa de calor) -- no es una categórica de identidad
     "good": "#1F7A5C", "warn": "#A66A1B", "bad": "#B23B36",
     "market_ref": "#6B7280", "consensus_ref": "#A66A1B",
+    "series_alt": "#5B6B8C",  # segunda serie categórica (margen EBIT en el gráfico de tendencia histórica) -- distinta de accent (navy) y de good/warn/bad (semánticas, reservadas)
 }
 FONT_SANS = "IBM Plex Sans, -apple-system, Segoe UI, sans-serif"
 FONT_MONO = "IBM Plex Mono, SFMono-Regular, Consolas, monospace"
@@ -393,9 +394,30 @@ stub_fraction = stub_fraction_from_history(hist, valuation_date=valuation_date)
 
 st.markdown(f"### {target}")
 with st.container(border=True):
+    # Cobertura de analistas: Alpha Vantage da el desglose por tramo de
+    # rating (Strong Buy/.../Strong Sell); yfinance da la recomendación
+    # consenso como texto + media 1-5 + nº de analistas -- formatos
+    # distintos, se muestra el que esté disponible como tooltip del
+    # precio de consenso (sesión 17, docs/METHODOLOGY.md sección 24).
+    analyst_coverage_help = None
+    rating_counts = [snap.get(k) for k in (
+        "analyst_rating_strong_buy", "analyst_rating_buy", "analyst_rating_hold",
+        "analyst_rating_sell", "analyst_rating_strong_sell",
+    )]
+    if all(c is not None for c in rating_counts):
+        sb, b, h, s, ss = (int(c) for c in rating_counts)
+        analyst_coverage_help = f"Recomendaciones: {sb} compra fuerte, {b} compra, {h} mantener, {s} venta, {ss} venta fuerte."
+    elif snap.get("analyst_recommendation_key"):
+        n = snap.get("analyst_num_opinions")
+        analyst_coverage_help = (
+            f"Recomendación consenso: {snap['analyst_recommendation_key']}"
+            + (f" ({int(n)} analistas)" if n else "") + "."
+        )
+
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Precio de mercado", f"${snap['price']:.2f}" if snap.get("price") else "n/d")
-    col2.metric("Consenso analistas", f"${snap['analyst_target_price']:.2f}" if snap.get("analyst_target_price") else "n/d")
+    col2.metric("Consenso analistas", f"${snap['analyst_target_price']:.2f}" if snap.get("analyst_target_price") else "n/d",
+                help=analyst_coverage_help)
     col3.metric("WACC", f"{wacc_value*100:.2f}%",
                 help="Coste medio ponderado de capital, vía CAPM con beta de comparables (universo cacheado) o beta propia (cualquier ticker).")
     col4.metric("Sector", snap.get("sector") or "n/d")
@@ -515,6 +537,11 @@ with tab_valoracion:
         ff_categories.append("Rango 52 semanas")
         ff_low.append(snap["week_52_low"])
         ff_high.append(snap["week_52_high"])
+
+    if snap.get("analyst_target_price_low") and snap.get("analyst_target_price_high"):
+        ff_categories.append("Consenso de analistas (rango)")
+        ff_low.append(snap["analyst_target_price_low"])
+        ff_high.append(snap["analyst_target_price_high"])
 
     if len(ff_categories) >= 2:
         ff_fig = go.Figure()
@@ -651,6 +678,36 @@ with tab_valoracion:
         st.caption("Rango de WACC insuficiente para la matriz con la g elegida (sube el WACC o baja g).")
 
 with tab_supuestos:
+    st.subheader("Tendencia histórica")
+    st.caption(
+        "Contexto antes de la proyección: de dónde parte cada supuesto del fade. El año 1 del "
+        "escenario conservador ancla en el último punto real de esta serie; el año N, en su "
+        "promedio de los últimos años (ver tabla debajo)."
+    )
+    hist_years = hist["fiscal_year"].tolist()
+    hist_revenue_growth_pct = (hist["revenue"].pct_change() * 100).tolist()
+    hist_ebit_margin_pct = ((hist["ebit"] / hist["revenue"]) * 100).tolist()
+    trend_fig = go.Figure()
+    trend_fig.add_trace(go.Scatter(
+        x=hist_years, y=hist_revenue_growth_pct, name="Crecimiento de ingresos (YoY)",
+        mode="lines+markers", line=dict(color=COLORS["accent"], width=2.5), marker=dict(size=7),
+        hovertemplate="%{x}: %{y:.1f}%<extra>Crecimiento de ingresos</extra>",
+    ))
+    trend_fig.add_trace(go.Scatter(
+        x=hist_years, y=hist_ebit_margin_pct, name="Margen EBIT",
+        mode="lines+markers", line=dict(color=COLORS["series_alt"], width=2.5), marker=dict(size=7),
+        hovertemplate="%{x}: %{y:.1f}%<extra>Margen EBIT</extra>",
+    ))
+    trend_fig.update_layout(
+        height=260, margin=dict(l=10, r=10, t=10, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(family=FONT_SANS, size=12)),
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"],
+        font=dict(family=FONT_SANS, color=COLORS["ink_soft"], size=13),
+        xaxis=dict(title=None, gridcolor=COLORS["border"], type="category"),
+        yaxis=dict(title="%", gridcolor=COLORS["border"], zeroline=True, zerolinecolor=COLORS["border"]),
+    )
+    st.plotly_chart(trend_fig, width="stretch", config={"displayModeBar": False})
+
     st.subheader("Supuestos de proyección (escenario conservador)")
     assumptions_df = pd.DataFrame([
         {"Driver": "Crecimiento de ingresos", "Año 1": f"{assumptions.revenue_growth.start*100:.2f}%",

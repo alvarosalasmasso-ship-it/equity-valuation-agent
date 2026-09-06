@@ -190,6 +190,17 @@ def market_snapshot(ticker) -> dict:
         # coste de petición adicional.
         "week_52_high": _clean(info.get("fiftyTwoWeekHigh")),
         "week_52_low": _clean(info.get("fiftyTwoWeekLow")),
+        # Sesión 17: yfinance no da el desglose por tramo de rating que sí
+        # da Alpha Vantage (ver el mismo campo en data_provider.py) -- lo
+        # más parecido gratis en .info es la recomendación consenso
+        # (texto "buy"/"hold"/...), su media en escala 1-5 y el número de
+        # analistas, más el rango alto/bajo del precio objetivo (no solo
+        # la media, ya expuesta como analyst_target_price).
+        "analyst_recommendation_key": info.get("recommendationKey"),
+        "analyst_recommendation_mean": _clean(info.get("recommendationMean")),
+        "analyst_num_opinions": _clean(info.get("numberOfAnalystOpinions")),
+        "analyst_target_price_low": _clean(info.get("targetLowPrice")),
+        "analyst_target_price_high": _clean(info.get("targetHighPrice")),
         # Auditoría sesión 15/16, hallazgo M5: divisa de reporte de los
         # estados financieros -- ver el mismo campo en data_provider.py
         # para la justificación completa. yfinance separa "currency"

@@ -99,6 +99,9 @@ def _fake_snapshot(symbol: str, revenue_last: float = 100.0, currency: str = "US
         "analyst_target_price": revenue_last * 1.2,
         "cash": revenue_last * 0.3, "total_debt": revenue_last * 0.4,
         "currency": currency,
+        "week_52_high": revenue_last * 1.3, "week_52_low": revenue_last * 0.7,
+        "analyst_rating_strong_buy": 5, "analyst_rating_buy": 10, "analyst_rating_hold": 3,
+        "analyst_rating_sell": 1, "analyst_rating_strong_sell": 0,
     }
 
 
@@ -180,20 +183,33 @@ def test_default_state_shows_key_metrics():
     assert price_metric.value == "$100.00"  # AMZN en _REVENUE_BY_SYMBOL
 
 
-def test_sensitivity_section_renders_with_four_plotly_charts():
-    """Regresión (sesión 17): la pestaña 'Valoración' ahora tiene 3
-    gráficos Plotly (football field + escenarios + heatmap WACC×g) y
-    'Supuestos y expectativas' 1 más (tornado chart de sensibilidad) --
-    4 en total sobre AMZN con universo cacheado (comps_valuation
-    disponible, así que el football field incluye la barra de
-    comparables)."""
+def test_analyst_coverage_shown_as_consensus_metric_tooltip():
+    """Regresión (sesión 17): la distribución de recomendaciones de
+    analistas (Alpha Vantage: desglose por tramo) se muestra como
+    tooltip del metric 'Consenso analistas', no como un elemento nuevo
+    que desordene el layout ya establecido."""
+    at = _run_app()
+    consensus_metric = next(m for m in at.main.metric if m.label == "Consenso analistas")
+    assert "5 compra fuerte" in consensus_metric.help
+    assert "10 compra" in consensus_metric.help
+    assert "3 mantener" in consensus_metric.help
+
+
+def test_sensitivity_section_renders_with_five_plotly_charts():
+    """Regresión (sesión 17): 'Valoración' tiene 3 gráficos Plotly
+    (football field + escenarios + heatmap WACC×g) y 'Supuestos y
+    expectativas' 2 más (tendencia histórica + tornado chart de
+    sensibilidad) -- 5 en total sobre AMZN con universo cacheado
+    (comps_valuation disponible, así que el football field incluye la
+    barra de comparables)."""
     at = _run_app()
     assert not at.exception
     headers = [h.value for h in at.subheader]
     assert "Sensibilidad del precio a cada supuesto" in headers
     assert "Football field: triangulación de métodos" in headers
     assert "Valor terminal: Gordon Growth vs. múltiplo de salida" in headers
-    assert len(at.get("plotly_chart")) == 4
+    assert "Tendencia histórica" in headers
+    assert len(at.get("plotly_chart")) == 5
 
 
 def test_roic_delta_color_reflects_creates_value():

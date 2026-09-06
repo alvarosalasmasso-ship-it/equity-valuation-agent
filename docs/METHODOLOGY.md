@@ -1512,3 +1512,60 @@ multiple producen números coherentes y sin excepciones sobre el
 universo "Consumo defensivo" completo, el caso con el spread WACC-g más
 estrecho y por tanto el más propenso a exponer un bug de división por
 cero o `None` no gestionado.
+
+## 24. Continuación de la comparación bancaria: tendencia histórica, cobertura de analistas, rango de consenso (sesión 17)
+
+Mismo hilo que la sección 23, con la misma disciplina: solo campos que
+YA estaban disponibles sin coste adicional en los proveedores de datos,
+verificados con valores reales antes de conectarlos.
+
+**Cobertura de analistas.** `OVERVIEW` de Alpha Vantage expone el
+desglose de recomendaciones por tramo (`AnalystRatingStrongBuy/Buy/
+Hold/Sell/StrongSell`) — nunca usado hasta ahora, pese a estar en la
+misma respuesta que ya se descarga para el precio de consenso.
+Verificado con AMZN real: 15 compra fuerte, 44 compra, 2 mantener, 0
+venta, 0 venta fuerte — un dato que refuerza directamente la narrativa
+del reverse DCF (sección 20): el consenso no solo pone un precio alto,
+la cobertura está casi unánimemente del lado comprador. yfinance no da
+ese desglose por tramo en `.info` (requeriría `.recommendations`, una
+llamada distinta) — se usa el mejor sustituto disponible sin coste
+extra: `recommendationKey` (texto), `recommendationMean` (escala 1-5) y
+`numberOfAnalystOpinions`. Se muestra como tooltip del metric "Consenso
+analistas" ya existente, no como un elemento nuevo que reordene el
+layout.
+
+**Rango de precio objetivo de analistas.** yfinance expone
+`targetLowPrice`/`targetHighPrice` además de la media ya usada — Alpha
+Vantage solo da el promedio, sin rango. Cuando está disponible (modo
+yfinance), se añade como una barra más del football field de la
+sección 23 ("Consenso de analistas (rango)"), en vez de solo la línea
+vertical de la media — verificado con JNJ real: rango $190–$320 frente
+a una media de consenso de $275.64.
+
+**Gráfico de tendencia histórica.** Nuevo, al principio de la pestaña
+"Supuestos y expectativas": crecimiento de ingresos interanual y margen
+EBIT, año a año, sobre TODO el histórico disponible del proveedor (no
+solo la ventana de `lookback_years` que alimenta el fade) — da
+contexto de dónde parte cada supuesto antes de mostrar la tabla de
+proyección, tal como abre la sección financiera de cualquier informe
+bancario. Ambas series en el mismo eje (mismo tipo de unidad,
+porcentaje) — nunca un eje Y doble, ver `docs/AUDIT.md`/dataviz.
+Verificado con AMZN real (20 años de histórico vía Alpha Vantage): la
+serie muestra visualmente la propia historia de la sección 14 — margen
+EBIT cerca de cero durante más de una década (crecimiento a toda costa)
+y expandiéndose con fuerza solo en los últimos 3 años (2.4%→6.4%→
+11.1%→13.9%), el mismo patrón que ya motivó preferir "continuar la
+tendencia" como hipótesis alcista en vez de "revertir a la media" del
+histórico completo.
+
+### Verificación
+
+Campos nuevos en ambos proveedores (`analyst_rating_*` en Alpha
+Vantage; `analyst_recommendation_*`, `analyst_target_price_low/high` en
+yfinance) con tests de esquema actualizados. `test_app.py`: nuevo test
+del tooltip de cobertura de analistas; conteo de gráficos Plotly
+actualizado a 5 (el nuevo gráfico de tendencia histórica). **176 tests
+en total, todos en verde.** Verificado con datos reales de AMZN
+(Alpha Vantage) y JNJ (yfinance) fuera de la suite de tests para
+confirmar que los campos nuevos traen valores sensatos y ningún `None`
+no gestionado rompe el formateo de la UI.

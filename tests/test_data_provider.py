@@ -83,6 +83,11 @@ OVERVIEW_FIXTURE = {
     "Currency": "USD",
     "52WeekHigh": "135.0",
     "52WeekLow": "82.0",
+    "AnalystRatingStrongBuy": "5",
+    "AnalystRatingBuy": "10",
+    "AnalystRatingHold": "3",
+    "AnalystRatingSell": "1",
+    "AnalystRatingStrongSell": "0",
 }
 
 
@@ -162,6 +167,11 @@ def test_market_snapshot_derives_price_from_market_cap_and_shares():
     assert snapshot["currency"] == "USD"
     assert snapshot["week_52_high"] == pytest.approx(135.0)
     assert snapshot["week_52_low"] == pytest.approx(82.0)
+    assert snapshot["analyst_rating_strong_buy"] == pytest.approx(5)
+    assert snapshot["analyst_rating_buy"] == pytest.approx(10)
+    assert snapshot["analyst_rating_hold"] == pytest.approx(3)
+    assert snapshot["analyst_rating_sell"] == pytest.approx(1)
+    assert snapshot["analyst_rating_strong_sell"] == pytest.approx(0)
 
 
 def test_market_snapshot_exposes_non_usd_currency():

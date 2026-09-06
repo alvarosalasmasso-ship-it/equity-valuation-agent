@@ -76,6 +76,11 @@ INFO = {
     "currency": "USD",
     "fiftyTwoWeekHigh": 135.0,
     "fiftyTwoWeekLow": 82.0,
+    "recommendationKey": "buy",
+    "recommendationMean": 1.9,
+    "numberOfAnalystOpinions": 22,
+    "targetLowPrice": 90.0,
+    "targetHighPrice": 150.0,
 }
 
 
@@ -143,6 +148,8 @@ def test_market_snapshot_matches_data_provider_schema():
         "price", "beta", "ev_to_ebitda", "ev_to_revenue", "pe_ratio",
         "price_to_sales", "price_to_book", "analyst_target_price", "cash", "total_debt",
         "currency", "week_52_high", "week_52_low",
+        "analyst_recommendation_key", "analyst_recommendation_mean", "analyst_num_opinions",
+        "analyst_target_price_low", "analyst_target_price_high",
     }
     assert expected_keys.issubset(snapshot.keys())
     assert snapshot["price"] == pytest.approx(100.0)
@@ -151,6 +158,11 @@ def test_market_snapshot_matches_data_provider_schema():
     assert snapshot["currency"] == "USD"
     assert snapshot["week_52_high"] == pytest.approx(135.0)
     assert snapshot["week_52_low"] == pytest.approx(82.0)
+    assert snapshot["analyst_recommendation_key"] == "buy"
+    assert snapshot["analyst_recommendation_mean"] == pytest.approx(1.9)
+    assert snapshot["analyst_num_opinions"] == pytest.approx(22)
+    assert snapshot["analyst_target_price_low"] == pytest.approx(90.0)
+    assert snapshot["analyst_target_price_high"] == pytest.approx(150.0)
 
 
 def test_market_snapshot_prefers_financial_currency_over_quote_currency():
