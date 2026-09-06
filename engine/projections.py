@@ -270,6 +270,53 @@ def _margin_fade_from_recent_to_average(window: pd.DataFrame, column: str,
     return FadeAssumption(start=float(recent_value), end=float(average_value))
 
 
+def historical_ratio_stats(history: pd.DataFrame, column: str, lookback_years: int) -> tuple[float, float]:
+    """Media y desviación típica de `column`/`revenue` sobre exactamente
+    los últimos `lookback_years` puntos -- misma ventana que usa
+    `_margin_fade_from_recent_to_average()` para el fade, expuesta aquí
+    para que `engine.monte_carlo` pueda muestrear cada supuesto desde su
+    propia dispersión histórica real en vez de un rango inventado.
+    Desviación típica muestral (ddof=1); con un único punto válido
+    devuelve std=0.0 (no hay dispersión que medir, no es un error)."""
+    window = history.tail(lookback_years)
+    ratios = _valid_ratio_series(window[column].tolist(), window["revenue"].tolist())
+    if not ratios:
+        raise ValueError(f"Sin ningún dato válido de '{column}' en el histórico disponible.")
+    mean = statistics.mean(ratios)
+    std = statistics.stdev(ratios) if len(ratios) > 1 else 0.0
+    return mean, std
+
+
+def historical_revenue_growth_stats(history: pd.DataFrame,
+                                     lookback_years: Optional[int] = None) -> tuple[float, float]:
+    """Media y desviación típica del crecimiento interanual de ingresos
+    -- a diferencia del CAGR plano de `default_assumptions_from_history()`
+    (un único punto, extremo a extremo), esto usa cada tasa año a año
+    individual para medir cuánto varía de verdad el crecimiento de esta
+    empresa, insumo para `engine.monte_carlo`.
+
+    `lookback_years`: si se pasa, usa solo los últimos `lookback_years+1`
+    puntos (mismo tamaño de ventana que `historical_ratio_stats()` para
+    margen/CapEx) -- IMPORTANTE mantenerlo alineado en Monte Carlo:
+    verificado con datos reales de AMZN (20+ años de histórico vía Alpha
+    Vantage) que medir la dispersión sobre TODO el histórico mezcla la
+    era de hiper-crecimiento inicial (2005-2010) con el régimen actual,
+    infla la desviación típica muy por encima de la incertidumbre real
+    del crecimiento reciente, y produce precios simulados negativos sin
+    sentido económico. Si se omite (`None`), usa todo el histórico
+    disponible -- comportamiento por defecto para cualquier otro
+    consumidor de esta función que sí quiera la variabilidad completa.
+    Requiere al menos 3 puntos de revenue no nulo en la ventana elegida
+    (2 tasas de crecimiento) para que la desviación típica tenga
+    sentido."""
+    clean = history.dropna(subset=["revenue"])
+    revenue = (clean.tail(lookback_years + 1) if lookback_years is not None else clean)["revenue"].tolist()
+    if len(revenue) < 3:
+        raise ValueError("Se necesitan al menos 3 años de revenue histórico para medir su dispersión.")
+    growth_rates = [revenue[i] / revenue[i - 1] - 1 for i in range(1, len(revenue))]
+    return statistics.mean(growth_rates), statistics.stdev(growth_rates)
+
+
 def default_assumptions_from_history(history: pd.DataFrame, n_years: int = 5,
                                       lookback_years: int = 5) -> ProjectionAssumptions:
     """Deriva supuestos de proyección a partir de los últimos

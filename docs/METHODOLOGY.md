@@ -1861,3 +1861,83 @@ para Net Debt/EBITDA, 1 en `test_app.py` para el aviso de sector, 2 en
 nuevos verificados con `AppTest` contra la app real (JPM/PLD para el
 aviso de sector, NVDA para el de hiper-crecimiento) — aparecen en el
 panel "Aviso técnico del modelo" tal como se diseñaron.
+
+## 29. Monte Carlo: bandas de confianza probabilísticas (sesión 17, Lote C)
+
+Última de las 5 palancas de rigor matemático propuestas al principio de
+la sesión 17 (junto a A/B, ya construidas). En vez de un precio único +
+3 escenarios con nombre, `engine/monte_carlo.py::run_monte_carlo()`
+corre el DCF completo 2.000 veces, muestreando 4 supuestos A LA VEZ
+desde su propia dispersión histórica real (no un rango inventado):
+margen EBIT y CapEx % ventas (`Normal(media, sigma)` medidos sobre la
+misma ventana `lookback_years` que usa el fade por defecto, nueva
+`engine.projections.historical_ratio_stats()`), crecimiento de ingresos
+(`Normal` sobre la dispersión real de las tasas año a año, nueva
+`historical_revenue_growth_stats()`) y tasa de crecimiento terminal g
+(`Normal(g, 0.5pp)`, incertidumbre macro fija y pequeña, no de la
+empresa). WACC y D&A/ΔNWC se mantienen fijos — alcance deliberado,
+documentado en el propio módulo, no un hueco escondido.
+
+### Dos problemas reales encontrados y corregidos antes de dar la simulación por buena
+
+**1. Ventana de dispersión del crecimiento inconsistente con la de
+margen/CapEx.** Primera versión: `historical_revenue_growth_stats()`
+medía la desviación típica sobre TODO el histórico disponible.
+Verificado con AMZN real (20+ años vía Alpha Vantage): eso mezcla la
+era de hiper-crecimiento inicial (2005-2010) con el régimen actual,
+inflando la sigma de crecimiento a 9.9pp (media 25.1%) frente al ~1pp
+que da la misma ventana de 3 años que ya usan margen/CapEx — y producía
+precios simulados absurdos. Corregido: `historical_revenue_growth_stats()`
+acepta ahora `lookback_years`, alineado con el resto de supuestos.
+
+**2. Precios implícitos negativos en la cola de la distribución.**
+Incluso con la ventana corregida, algunos draws (margen bajo + CapEx
+alto a la vez, ambos dentro del rango real observado de AMZN) siguen
+dando un FCFF terminal negativo — mismo mecanismo que I10 (TSLA/BA) —
+y por tanto un "precio" negativo. Verificado con AMZN real: sin
+protección, P10 salía en -$34, un número sin sentido económico para un
+accionista de responsabilidad limitada (nunca pierde MÁS que su
+inversión). Corregido: cada precio simulado se flota en $0 (no se
+descarta la simulación, cuenta como éxito) — deliberadamente NO
+aplicado en `run_dcf()` ni en los escenarios con nombre, donde un valor
+terminal negativo real (I10) es información diagnóstica útil sobre un
+caso concreto, no ruido a limpiar en una distribución de miles de
+draws.
+
+### Resultado real, verificado con AMZN
+
+Tras ambas correcciones: **P10=$17.88, P50=$115.45, P90=$214.74**
+(media $118.36, sigma $72.51), con **6% de las simulaciones cayendo en
+$0** — destrucción total de valor bajo una combinación de margen/CapEx
+extremos pero dentro de la dispersión histórica real de la propia
+empresa. Esto es, en sí mismo, un hallazgo cuantitativo honesto: la
+propia dispersión reciente de AMZN en margen (dominado por el
+supercycle de CapEx de IA, secciones 7/21) es tan grande que una cola
+no despreciable de escenarios plausibles destruye el valor del equity
+bajo este DCF — exactamente el tipo de información que un punto único
+nunca comunica.
+
+### Dónde vive en la app
+
+`app/streamlit_app.py`, pestaña "Valoración", justo debajo del football
+field: histograma Plotly de los 2.000 precios simulados, líneas P10/
+P50/P90 y precio de mercado, métricas P10/P50/P90 y caption con el %
+de simulaciones en el suelo de $0 cuando es material (>2%). Envuelto en
+`try/except ValueError` — si todos los draws de g terminal cruzan WACC
+(caso extremo), degrada a un caption explicando por qué en vez de
+crashear o bloquear el resto de la valoración ya calculada.
+
+### Verificación
+
+9 tests nuevos en `test_monte_carlo.py` (orden P10<P50<P90,
+reproducibilidad con semilla fija, CapEx nunca negativo, suelo de $0
+verificado explícitamente, fallo explícito si todos los draws fallan) +
+2 en `test_projections.py` (`historical_ratio_stats`,
+`historical_revenue_growth_stats` con y sin `lookback_years`) + 2 en
+`test_app.py` (degradación con historial corto vía `AppTest`, render
+completo con historial suficiente). **209 tests en total, todos en
+verde.** Verificado de punta a punta con datos reales de AMZN vía
+`AppTest` sin mocks (red real): 2.1s de carga total de página,
+incluidas las 2.000 simulaciones — rendimiento aceptable para
+recalcularse en cada interacción de Streamlit (el modelo de rerun
+completo del framework).

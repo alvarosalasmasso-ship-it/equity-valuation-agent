@@ -8,6 +8,7 @@ Ejecutar con:  ./.venv/Scripts/streamlit.exe run app/streamlit_app.py
 """
 
 import sys
+import warnings
 from datetime import date
 from pathlib import Path
 
@@ -521,6 +522,22 @@ sensitivities = driver_sensitivities(
     gordon_weight=gordon_weight, valuation_date=valuation_date,
 )
 
+from engine.monte_carlo import run_monte_carlo
+
+try:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        monte_carlo_result = run_monte_carlo(
+            hist, wacc=wacc_value, cash=snap.get("cash") or 0, total_debt=snap.get("total_debt") or 0,
+            diluted_shares=snap["shares_outstanding"], n_years=n_years, terminal_growth_rate=terminal_growth_rate,
+            lookback_years=lookback_years, terminal_ev_ebitda_multiple=terminal_multiple,
+            gordon_weight=gordon_weight, stub_fraction=stub_fraction, n_simulations=2000,
+        )
+    monte_carlo_error = None
+except ValueError as e:
+    monte_carlo_result = None
+    monte_carlo_error = str(e)
+
 from engine.ratios import latest_ratio_snapshot
 
 try:
@@ -631,6 +648,56 @@ with tab_valoracion:
             )
     else:
         st.caption("Datos insuficientes para triangular más de un método en este caso.")
+
+    st.subheader("Simulación Monte Carlo: distribución de precios")
+    st.caption(
+        "2.000 simulaciones del DCF completo, muestreando margen EBIT, CapEx % ventas, crecimiento "
+        "de ingresos y tasa de crecimiento terminal desde la dispersión histórica REAL de esta "
+        "empresa (WACC y D&A/ΔNWC fijos en su valor puntual — ver `docs/METHODOLOGY.md` sección 29). "
+        "En vez de un único número, esto responde 'con qué probabilidad cae el precio en tal rango'."
+    )
+    if monte_carlo_result is not None:
+        mc = monte_carlo_result
+        mc_cols = st.columns(3)
+        mc_cols[0].metric("P10", f"${mc.p10:,.2f}", help="10% de las simulaciones dan un precio igual o menor.")
+        mc_cols[1].metric("P50 (mediana)", f"${mc.p50:,.2f}")
+        mc_cols[2].metric("P90", f"${mc.p90:,.2f}", help="10% de las simulaciones dan un precio igual o mayor.")
+
+        mc_fig = go.Figure()
+        mc_fig.add_histogram(
+            x=mc.prices, nbinsx=60, marker_color=COLORS["series"], marker_line_width=0,
+            hovertemplate="$%{x:,.0f}<br>%{y} simulaciones<extra></extra>",
+        )
+        for value, label, color in [
+            (mc.p10, "P10", COLORS["ink_faint"]), (mc.p50, "P50", COLORS["accent"]),
+            (mc.p90, "P90", COLORS["ink_faint"]),
+        ]:
+            mc_fig.add_vline(x=value, line_dash="dot", line_width=1.5, line_color=color)
+        if snap.get("price"):
+            mc_fig.add_vline(x=snap["price"], line_dash="dash", line_width=1.5, line_color=COLORS["market_ref"],
+                              annotation_text=f"Mercado ${snap['price']:.2f}", annotation_position="top",
+                              annotation_font=dict(family=FONT_SANS, size=11, color=COLORS["market_ref"]))
+        mc_fig.update_layout(
+            height=260, margin=dict(l=10, r=10, t=30, b=40), showlegend=False,
+            plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"],
+            font=dict(family=FONT_SANS, color=COLORS["ink_soft"], size=13),
+            xaxis=dict(title="Precio implícito ($)", gridcolor=COLORS["border"]),
+            yaxis=dict(title="Nº de simulaciones", gridcolor=COLORS["border"]),
+            bargap=0.05,
+        )
+        st.plotly_chart(mc_fig, width="stretch", config={"displayModeBar": False})
+
+        pct_at_floor = sum(1 for p in mc.prices if p == 0.0) / len(mc.prices)
+        floor_note = (f" **{pct_at_floor:.0%} de las simulaciones caen en $0** (destrucción total de "
+                       "valor bajo esa combinación de supuestos — responsabilidad limitada, nunca un "
+                       "precio negativo real)." if pct_at_floor > 0.02 else "")
+        st.caption(
+            f"{mc.successful_simulations:,} simulaciones válidas de {mc.n_simulations:,} "
+            f"({mc.failed_simulations} descartadas por WACC≤g terminal en ese draw concreto), "
+            f"media ${mc.mean:,.2f}, desviación típica ${mc.std:,.2f}.{floor_note}"
+        )
+    else:
+        st.caption(f"No se pudo completar la simulación: {monte_carlo_error}")
 
     st.subheader("Rango de escenarios")
 

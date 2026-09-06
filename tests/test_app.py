@@ -201,7 +201,13 @@ def test_sensitivity_section_renders_with_five_plotly_charts():
     expectativas' 2 más (tendencia histórica + tornado chart de
     sensibilidad) -- 5 en total sobre AMZN con universo cacheado
     (comps_valuation disponible, así que el football field incluye la
-    barra de comparables)."""
+    barra de comparables). El histograma de Monte Carlo (Lote C) NO
+    cuenta aquí: `_fake_history()` solo trae 2 años, y
+    `historical_revenue_growth_stats()` exige al menos 3 -- degrada con
+    gracia a un caption ("No se pudo completar la simulación"), no un
+    6º gráfico ni una excepción. Ver
+    test_monte_carlo_histogram_renders_with_enough_history para el
+    caso con datos suficientes."""
     at = _run_app()
     assert not at.exception
     headers = [h.value for h in at.subheader]
@@ -209,7 +215,45 @@ def test_sensitivity_section_renders_with_five_plotly_charts():
     assert "Football field: triangulación de métodos" in headers
     assert "Valor terminal: Gordon Growth vs. múltiplo de salida" in headers
     assert "Tendencia histórica" in headers
+    assert "Simulación Monte Carlo: distribución de precios" in headers
     assert len(at.get("plotly_chart")) == 5
+
+
+def test_monte_carlo_histogram_renders_with_enough_history():
+    """Con al menos 4 años de histórico (mínimo real para
+    historical_revenue_growth_stats con lookback_years=3), la
+    simulación de Monte Carlo sí debe completarse y añadir un 6º
+    gráfico Plotly (el histograma), con P10 <= P50 <= P90 mostrados."""
+    def longer_history(symbol):
+        revenue_last = _REVENUE_BY_SYMBOL.get(symbol, 100.0)
+        revenue = [revenue_last / 1.1**3, revenue_last / 1.1**2, revenue_last / 1.1, revenue_last]
+        return pd.DataFrame({
+            "fiscal_year": [2020, 2021, 2022, 2023],
+            "revenue": revenue,
+            "ebit": [r * 0.20 for r in revenue],
+            "d_and_a": [r * 0.05 for r in revenue],
+            "capex": [r * 0.08 for r in revenue],
+            "change_in_nwc": [None] + [r * 0.02 for r in revenue[1:]],
+            "tax_rate": [0.25] * 4,
+            "interest_expense": [r * 0.01 for r in revenue],
+            "total_assets": [r * 2.0 for r in revenue],
+            "total_equity": [r * 1.2 for r in revenue],
+            "total_debt": [r * 0.4 for r in revenue],
+            "cash": [r * 0.3 for r in revenue],
+            "current_assets": [r * 0.5 for r in revenue],
+            "current_liabilities": [r * 0.25 for r in revenue],
+            "ebitda": [r * 0.25 for r in revenue],
+            "net_income": [r * 0.15 for r in revenue],
+        })
+
+    at = _run_app(
+        extra_patches=[patch("engine.data_provider.historical_financials",
+                              side_effect=lambda client, symbol, use_cache=True: longer_history(symbol))],
+    )
+    assert not at.exception
+    assert len(at.get("plotly_chart")) == 6
+    metric_labels = {m.label for m in at.main.metric}
+    assert {"P10", "P50 (mediana)", "P90"}.issubset(metric_labels)
 
 
 def test_roic_delta_color_reflects_creates_value():

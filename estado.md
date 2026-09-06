@@ -1436,17 +1436,38 @@ abierto en `docs/AUDIT.md`** — todos corregidos, decididos con
 evidencia, o aceptados como limitación estructural. 193 tests en
 total, todos en verde. Documentado en `docs/METHODOLOGY.md` sección 28.
 
-## 21. Próximo paso inmediato
+## 21. Sesión 17 (continuación) — Lote C: Monte Carlo construido y verificado
+
+`engine/monte_carlo.py` (nuevo): 2.000 simulaciones del DCF completo
+por carga de página, muestreando margen EBIT, CapEx % ventas,
+crecimiento de ingresos y g terminal desde la dispersión histórica REAL
+de la empresa (WACC y D&A/ΔNWC fijos, alcance deliberado). Dos
+problemas reales encontrados y corregidos antes de darlo por bueno:
+
+1. La dispersión de crecimiento se medía sobre TODO el histórico
+   (mezclaba regímenes muy distintos en AMZN, 20+ años) en vez de la
+   misma ventana `lookback_years` que margen/CapEx — corregido,
+   `historical_revenue_growth_stats()` ahora acepta `lookback_years`.
+2. Algunos draws daban un precio implícito NEGATIVO (mismo mecanismo
+   que I10) — corregido con un suelo de $0 (responsabilidad limitada),
+   solo dentro de Monte Carlo, nunca en `run_dcf()`/escenarios con
+   nombre.
+
+Resultado real con AMZN: P10=$17.88, P50=$115.45, P90=$214.74, con 6%
+de las simulaciones en $0 — un hallazgo cuantitativo honesto sobre
+cuánta destrucción de valor cabe dentro de la propia dispersión
+histórica de margen/CapEx de la empresa. Conectado a la app (histograma
+en la pestaña "Valoración", justo bajo el football field). 209 tests en
+total, todos en verde. Verificado de punta a punta con AppTest + red
+real: 2.1s de carga total de página. Documentado en
+`docs/METHODOLOGY.md` sección 29.
+
+## 22. Próximo paso inmediato
 
 0.5. SEC EDGAR — retomar si se quiere reducir la dependencia de la
    cuota de Alpha Vantage: falta D&A fiable (sin resolver) y construir
    el módulo completo con lo ya validado para el resto de campos.
-1. C — Monte Carlo: bandas de confianza probabilísticas (P10/P50/P90)
-   sobre el precio implícito, muestreando WACC/margen/CapEx desde su
-   propia varianza histórica. La palanca de mayor rigor que queda de las
-   5 propuestas en la sesión 17; construida sobre el motor actual sin
-   tocar supuestos por defecto.
-2. D — Backtesting walk-forward: valor muy alto si es viable, pero
+1. D — Backtesting walk-forward: valor muy alto si es viable, pero
    pendiente de investigar si Alpha Vantage/yfinance free tier dan
    fundamentales histórico punto-en-el-tiempo (riesgo de restatements).
 3. E — Intervalo de confianza (bootstrap) sobre la desviación agregada

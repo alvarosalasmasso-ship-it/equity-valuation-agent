@@ -7,6 +7,7 @@ para poder afirmar el resultado exacto; y con uno con tendencia de margen
 para confirmar el mecanismo de fade "reciente -> media histórica".
 """
 
+import statistics
 from datetime import date
 
 import pandas as pd
@@ -18,6 +19,8 @@ from engine.projections import (
     average_margin,
     cagr,
     default_assumptions_from_history,
+    historical_ratio_stats,
+    historical_revenue_growth_stats,
     implied_revenue_growth,
     linear_fade,
     project_financials,
@@ -47,6 +50,70 @@ def test_average_margin_ignores_missing_pairs():
 def test_average_margin_raises_when_no_valid_pairs():
     with pytest.raises(ValueError):
         average_margin([None, None], [1, 2])
+
+
+# --- historical_ratio_stats / historical_revenue_growth_stats (insumo de Monte Carlo) --
+
+def test_historical_ratio_stats_computes_mean_and_sample_stdev():
+    revenue = [1000.0, 1000.0, 1000.0]
+    history = pd.DataFrame({
+        "fiscal_year": [2021, 2022, 2023],
+        "revenue": revenue,
+        "ebit": [180.0, 200.0, 220.0],  # margen: 0.18, 0.20, 0.22
+    })
+    mean, std = historical_ratio_stats(history, "ebit", lookback_years=3)
+    assert mean == pytest.approx(0.20)
+    assert std == pytest.approx(statistics.stdev([0.18, 0.20, 0.22]))
+
+
+def test_historical_ratio_stats_single_point_has_zero_stdev():
+    history = pd.DataFrame({"revenue": [1000.0], "ebit": [200.0]})
+    mean, std = historical_ratio_stats(history, "ebit", lookback_years=3)
+    assert mean == pytest.approx(0.20)
+    assert std == 0.0
+
+
+def test_historical_ratio_stats_raises_when_no_valid_data():
+    history = pd.DataFrame({"revenue": [1000.0, 1000.0], "capex": [None, None]})
+    with pytest.raises(ValueError):
+        historical_ratio_stats(history, "capex", lookback_years=2)
+
+
+def test_historical_revenue_growth_stats_uses_full_history_not_just_lookback():
+    """A diferencia de default_assumptions_from_history() (un único CAGR
+    extremo a extremo), esto mide cada tasa año a año -- verificado con
+    un histórico donde el crecimiento varía (10%, 20%, 5%)."""
+    revenue = [1000.0, 1100.0, 1320.0, 1386.0]  # +10%, +20%, +5%
+    history = pd.DataFrame({"fiscal_year": [2020, 2021, 2022, 2023], "revenue": revenue})
+    mean, std = historical_revenue_growth_stats(history)
+    growth_rates = [0.10, 0.20, 0.05]
+    assert mean == pytest.approx(statistics.mean(growth_rates))
+    assert std == pytest.approx(statistics.stdev(growth_rates))
+
+
+def test_historical_revenue_growth_stats_requires_at_least_three_years():
+    history = pd.DataFrame({"revenue": [1000.0, 1100.0]})
+    with pytest.raises(ValueError):
+        historical_revenue_growth_stats(history)
+
+
+def test_historical_revenue_growth_stats_with_lookback_years_ignores_older_history():
+    """Regresión sesión 17 (Monte Carlo, AMZN real): sin acotar la
+    ventana, un histórico largo con un régimen de crecimiento antiguo
+    muy distinto (aquí, +50%/año en los primeros años, +10% recientes)
+    infla la desviación típica muy por encima de la del régimen actual.
+    Con lookback_years=3 debe usar solo los últimos 4 puntos (3 tasas),
+    ignorando el tramo antiguo."""
+    # Antiguo (+50%/año, 2 tasas) + reciente (+10%/año estable, 3 tasas)
+    revenue = [100.0, 150.0, 225.0, 247.5, 272.25, 299.475]
+    history = pd.DataFrame({
+        "fiscal_year": [2018, 2019, 2020, 2021, 2022, 2023], "revenue": revenue,
+    })
+    mean_full, std_full = historical_revenue_growth_stats(history)
+    mean_recent, std_recent = historical_revenue_growth_stats(history, lookback_years=3)
+    assert mean_recent == pytest.approx(0.10, rel=1e-6)
+    assert std_recent < 1e-6  # las 3 tasas recientes son idénticas (10% exacto)
+    assert std_full > std_recent  # el tramo antiguo, más volátil, infla la ventana completa
 
 
 def test_linear_fade_interpolates_from_start_to_end_inclusive():
