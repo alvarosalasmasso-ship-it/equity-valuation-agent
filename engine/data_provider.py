@@ -257,7 +257,20 @@ def historical_financials(client: AlphaVantageClient, symbol: str,
         bs = balance[year]
 
         revenue = _to_float(inc.get("totalRevenue"))
-        ebit = _to_float(inc.get("ebit")) or _to_float(inc.get("operatingIncome"))
+        # Auditoría sesión 17 (validación cruzada con SEC EDGAR, hallazgo
+        # crítico): el campo "ebit" de Alpha Vantage NO es Operating
+        # Income -- es incomeBeforeTax + interestExpense, que INCLUYE
+        # partidas no operativas (ganancias de inversión, resultado por
+        # método de participación, etc.). Verificado con datos reales:
+        # para MSFT, "ebit"=$168.985bn vs "operatingIncome"=$155.237bn
+        # (+8.86%, coincide exacto con SEC EDGAR "OperatingIncomeLoss");
+        # para AMZN/GOOGL/JNJ la brecha llega a +24-31%. El Excel de
+        # referencia usa Operating Income por segmento (`Operating
+        # Model!K34` <- `Segments!K12`), nunca "pretax + interest" --
+        # confirma que "operatingIncome" es la cifra metodológicamente
+        # correcta para un DCF (valorar el negocio OPERATIVO, no
+        # ganancias de inversión no recurrentes), no "ebit".
+        ebit = _to_float(inc.get("operatingIncome")) or _to_float(inc.get("ebit"))
         pretax_income = _to_float(inc.get("incomeBeforeTax"))
         tax_expense = _to_float(inc.get("incomeTaxExpense"))
         tax_rate = (tax_expense / pretax_income) if (tax_expense is not None

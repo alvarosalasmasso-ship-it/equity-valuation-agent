@@ -30,7 +30,7 @@ reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
 y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
-**1 hallazgo crítico (✅ corregido), 15 importantes (11 ✅ corregidos —
+**2 hallazgos críticos (✅ ambos corregidos — C2, sesión 17, es el hallazgo de mayor impacto de todo el proyecto: "EBIT" de ambos proveedores incluía partidas no operativas, sobrevalorando el input central de cada DCF desde el inicio), 15 importantes (11 ✅ corregidos —
 I6/I7/I8 de la auditoría matemática/financiera a fondo, I9/I10 de una
 prueba de estrés con 11 tickers reales ("como si un banco fuese a
 usarla"), I12 (aviso de hiper-crecimiento extremo, corrección parcial:
@@ -131,6 +131,105 @@ ni negativa).
 12 tests de regresión nuevos (`compute_stub_fraction`,
 `stub_fraction_from_history`, wiring en `run_scenarios`/`value_ticker`).
 109 tests en total, todos en verde.
+
+---
+
+### C2. El campo "EBIT" de Alpha Vantage y yfinance NO es Operating Income — incluye partidas no operativas, sobrevalora sistemáticamente — ✅ CORREGIDO (sesión 17, retomando SEC EDGAR como validador cruzado)
+
+**Qué es:** construyendo `engine/edgar_provider.py` como validador
+cruzado contra SEC EDGAR (petición explícita del usuario tras observar
+que la mayoría de bugs de código de esta sesión —M8, M9, I13— eran
+huecos/inconsistencias del proveedor de datos, no errores del motor),
+la primera comparación real (MSFT) mostró que **8 de 9 conceptos
+coinciden EXACTOS** entre el proveedor activo y SEC EDGAR (revenue,
+net_income, total_assets, total_equity, current_assets,
+current_liabilities, cash, interest_expense — diferencia 0.00% en
+todos) — una validación fuerte de que el resto del pipeline de datos
+es correcto. Pero **`ebit` mostró +8.86%**: $168.985bn (yfinance/Alpha
+Vantage) vs $155.237bn (SEC EDGAR `OperatingIncomeLoss`, que también
+coincide exacto con el "Operating Income" que ambos proveedores YA
+tienen disponible, sin usar).
+
+**Causa raíz**: tanto Alpha Vantage (`inc["ebit"]`) como yfinance
+(`inc["EBIT"]`) calculan ese campo como `incomeBeforeTax +
+interestExpense` — matemáticamente correcto como definición literal de
+"Earnings Before Interest and Taxes", pero esa fórmula **incluye
+cualquier partida no operativa** que ya esté dentro de `incomeBeforeTax`
+(ganancias/pérdidas de inversión, resultado por método de
+participación, otros ingresos/gastos no operativos) — exactamente lo
+que un DCF de flujo de caja libre debe EXCLUIR, porque el objetivo es
+valorar el negocio operativo recurrente, no ganancias de inversión no
+recurrentes. Ambos proveedores YA exponen el campo correcto por
+separado (`operatingIncome` / `"Operating Income"`), pero el código
+nunca lo usaba — `engine/data_provider.py` preferían `ebit` explícitamente,
+`engine/yfinance_provider.py` leía directamente `"EBIT"`.
+
+**Magnitud verificada con datos reales, no solo MSFT** — comparación
+directa "EBIT" vs "Operating Income" (yfinance, 7 tickers reales):
+
+| Ticker | Operating Income | "EBIT" (Pretax+Interest) | Diferencia |
+|---|---|---|---|
+| AAPL | $133.05bn | $133.05bn | +0.00% |
+| MSFT | $155.24bn | $168.99bn | **+8.86%** |
+| NVDA | $130.39bn | $141.71bn | **+8.68%** |
+| META | $83.28bn | $87.10bn | **+4.59%** |
+| KO | $14.91bn | $17.65bn | **+18.38%** |
+| AMZN | $79.98bn | $99.59bn | **+24.52%** |
+| GOOGL | $129.04bn | $159.56bn | **+23.65%** |
+| JNJ | $25.60bn | $33.55bn | **+31.08%** |
+
+Solo AAPL no muestra diferencia (sin ingresos de inversión/no
+operativos materiales ese ejercicio) — **6 de 7 compañías reales
+muestran una inflación sistemática de doble dígito**. Esto es, con
+diferencia, el input individual más importante del motor (EBIT
+alimenta directamente `unlevered_fcf()`), y el bug estaba presente en
+AMBOS proveedores desde el inicio del proyecto, no solo en esta sesión.
+
+**Evidencia decisiva del Excel de referencia** (mismo criterio que
+M6): `North America` (fila 15, "EBIT") lee `='Operating Model'!K34`,
+que a su vez lee `=Segments!K12` — el Operating Income reportado POR
+SEGMENTO de AMZN, una cifra puramente operativa por construcción (el
+reporting de segmentos bajo US GAAP no incluye partidas corporativas
+no operativas). El banco de referencia nunca usó "pretax + interest"
+como EBIT — confirma que "Operating Income" es la cifra
+metodológicamente correcta, no una elección arbitraria entre dos
+igual de válidas.
+
+**Efecto real medido, universo piloto completo (n=8, recalculado sobre
+la caché ya existente de Alpha Vantage, sin gastar cuota nueva)**:
+
+| | Antes (EBIT=pretax+interest) | Después (Operating Income) |
+|---|---|---|
+| Desviación media abs. vs. mercado | 34.21% | **38.97%** |
+| IC bootstrap 80% | [24.84%, 43.65%] | [31.43%, 46.75%] |
+| GOOGL individual | -0.56% | **-16.72%** |
+| AMZN individual | -56.4% | -62.8% |
+
+**La desviación EMPEORÓ, no mejoró** — señal de anti-sobreajuste
+importante: el fix no se hizo porque acercara el precio al mercado (se
+aleja), se hizo porque es lo metodológicamente correcto, confirmado con
+evidencia independiente (SEC EDGAR) y con el propio Excel de
+referencia. Mismo principio que ha gobernado todo el proyecto desde
+las primeras sesiones.
+
+**Alcance del impacto**: afecta a TODAS las valoraciones de la
+herramienta desde su inicio, ambos proveedores, cualquier empresa con
+ingresos/gastos no operativos materiales -- incluye retroactivamente
+todo el trabajo de "dogfooding" sectorial de esta misma sesión (MSFT,
+semiconductores, utilities, biotech, small/mid-cap: sus cifras de
+precio implícito, margen EBIT y ROIC quedan desactualizadas por este
+fix, no por un error en el análisis de esos sectores en sí). No se
+rehacen esos análisis completos por alcance/tiempo — quedan marcados
+como referencia histórica del comportamiento de la herramienta, no
+como cifras vigentes.
+
+**Corregido**: ambos proveedores ahora prefieren `operatingIncome` /
+`"Operating Income"`, con `ebit`/`"EBIT"` como fallback solo si el
+campo preferido no está disponible (robustez, no el camino principal).
+4 tests de regresión nuevos (preferencia verificada cuando ambos campos
+están presentes; fallback verificado cuando falta el campo preferido,
+en ambos proveedores). **239 tests en total, todos en verde.**
+Documentado en detalle en `docs/METHODOLOGY.md` sección 33.
 
 ---
 

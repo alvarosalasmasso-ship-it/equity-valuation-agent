@@ -147,7 +147,19 @@ def historical_financials(ticker) -> pd.DataFrame:
         bs = balance[date]
 
         revenue = _clean(inc.get("Total Revenue"))
-        ebit = _clean(inc.get("EBIT"))
+        # Auditoría sesión 17 (validación cruzada con SEC EDGAR, hallazgo
+        # crítico, mismo mecanismo que engine.data_provider): la fila
+        # "EBIT" de yfinance NO es Operating Income -- es Pretax Income +
+        # Interest Expense, que INCLUYE partidas no operativas (ganancias
+        # de inversión, resultado por método de participación). Verificado
+        # con datos reales: MSFT "EBIT"=$168.985bn vs "Operating
+        # Income"=$155.237bn (+8.86%, coincide exacto con SEC EDGAR); en
+        # AMZN/GOOGL/JNJ la brecha llega a +24-31%, solo AAPL sin
+        # diferencia. El Excel de referencia usa Operating Income por
+        # segmento, nunca "pretax + interest" (ver docs/AUDIT.md).
+        ebit = _clean(inc.get("Operating Income"))
+        if ebit is None:
+            ebit = _clean(inc.get("EBIT"))
         pretax_income = _clean(inc.get("Pretax Income"))
         tax_provision = _clean(inc.get("Tax Provision"))
         tax_rate = (tax_provision / pretax_income) if (tax_provision is not None

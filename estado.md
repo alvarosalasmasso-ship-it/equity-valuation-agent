@@ -1683,18 +1683,67 @@ nuevos. **235 tests en total, todos en verde.** Documentado en
 `docs/METHODOLOGY.md` sección 32. Con esto se cierra el lote completo
 de 5 palancas de rigor matemático de la sección 13.
 
-## 30. Próximo paso inmediato
+## 30. Sesión 17 (continuación) — SEC EDGAR como validador cruzado: el hallazgo de mayor impacto de todo el proyecto (C2)
 
-0. Commitear el item E (bootstrap CI) con confirmación explícita del
-   usuario.
-1. Seguir analizando más empresas/sectores si el usuario lo pide —
+El usuario, tras observar que la mayoría de bugs de código de esta
+sesión (M8, M9, I13) eran huecos del proveedor de datos, pidió retomar
+SEC EDGAR (investigación pausada, sección 26) — no como tercer
+proveedor, sino como **validador cruzado**: contrastar los campos que
+EDGAR reconstruye con fiabilidad contra el proveedor activo y avisar
+de discrepancias, en vez de descubrirlas ticker a ticker a mano.
+
+`engine/edgar_provider.py` (nuevo): `EdgarClient` (CIK + `companyfacts`
+vía `data.sec.gov`, gratis, sin cuota diaria), 9 conceptos con
+fiabilidad verificada (excluye deliberadamente `total_debt` — EDGAR
+excluye leasing, diferencia de metodología ya conocida — y `d_and_a` —
+reconstrucción no fiable). Detalle nuevo: la taxonomía US-GAAP migra
+de tag por AÑO además de por empresa (MSFT: `InterestExpense` hasta
+FY2024, `InterestExpenseNonoperating` desde FY2025) — hay que fusionar
+todos los tags de fallback, no usar solo el primero con datos.
+
+**El hallazgo (C2, crítico)**: la primera comparación real (MSFT) dio
+8/9 conceptos EXACTOS, pero `ebit` mostró +8.86% — el campo "ebit" de
+AMBOS proveedores (Alpha Vantage Y yfinance) es en realidad
+`incomeBeforeTax + interestExpense`, no Operating Income, e incluye
+partidas no operativas (ganancias de inversión, etc.). Verificado con
+7 tickers más: AAPL sin diferencia, pero NVDA +8.68%, KO +18.38%, AMZN
++24.52%, GOOGL +23.65%, JNJ +31.08% — inflación sistemática de doble
+dígito en el input más importante del motor. El Excel de referencia
+usa Operating Income por segmento, nunca "pretax + interest" —
+confirma el diagnóstico.
+
+**Efecto real (universo piloto, recalculado sin gastar cuota nueva)**:
+desviación media pasa de 34.21% a **38.97%** — EMPEORA, señal de
+anti-sobreajuste: el fix no acerca el precio al mercado, se hizo
+porque es lo correcto. GOOGL: -0.56% → -16.72%.
+
+**Corregido** en ambos proveedores (prefieren Operating Income, EBIT
+como fallback). `scripts/cross_validate_edgar.py` (nuevo) deja esto
+como capacidad permanente y reutilizable. 19 tests nuevos. **254 tests
+en total, todos en verde.**
+
+**Alcance**: afecta a TODO el trabajo de dogfooding de esta sesión
+(MSFT, semis, utilities, biotech, small-caps, secciones 23-31) — sus
+cifras quedan como referencia histórica, no vigentes. No se rehicieron
+esos análisis completos por alcance. Documentado en
+`docs/METHODOLOGY.md` sección 33 y `docs/AUDIT.md` hallazgo C2.
+
+## 31. Próximo paso inmediato
+
+0. Commitear el hallazgo C2 (SEC EDGAR + fix de EBIT) con confirmación
+   explícita del usuario.
+1. Decidir si se rehacen los análisis sectoriales de esta sesión con
+   el EBIT corregido, o se dejan como referencia histórica — pendiente
+   de indicación del usuario.
+2. Seguir analizando más empresas/sectores si el usuario lo pide —
    sectores ya cubiertos: Big Tech (MSFT dogfooding), semiconductores,
    utilities reguladas, biotech/farma, small/mid-cap consumo.
    Candidatos naturales sin cubrir: financiero/cíclico internacional
    (divisa no-USD), energía/materias primas.
-0.5. SEC EDGAR — retomar si se quiere reducir la dependencia de la
-   cuota de Alpha Vantage: falta D&A fiable (sin resolver) y construir
-   el módulo completo con lo ya validado para el resto de campos.
+3. Considerar integrar el validador cruzado de SEC EDGAR en la propia
+   app (panel opcional en la pestaña Fundamentales) — por ahora es un
+   script standalone (`scripts/cross_validate_edgar.py`), no forma
+   parte del flujo interactivo.
 4. Fase 9 (sentiment en earnings calls) — extensión opcional.
 5. Probar la capa generativa con una llamada real — aparcado por ahora
    a petición del usuario, no es una prioridad activa.

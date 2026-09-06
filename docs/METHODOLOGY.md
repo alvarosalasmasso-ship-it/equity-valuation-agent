@@ -2228,3 +2228,117 @@ el JSON guardado sea reproducible entre ejecuciones del mismo día) —
 se calculará automáticamente en la próxima ejecución real del script.
 **235 tests en total, todos en verde.** Con esto se cierra el lote
 completo de 5 palancas de rigor matemático propuesto en la sección 13.
+
+**Nota (sesión 17, posterior):** la cifra de 34.21%/[24.84%, 43.65%]
+de este apartado quedó desactualizada apenas unas horas después de
+escribirse, por el hallazgo C2 de la sección 33 (el campo "EBIT" de
+ambos proveedores incluía partidas no operativas). La cifra corregida
+vigente es **38.97%/[31.43%, 46.75%]** — el mecanismo del intervalo de
+confianza en sí (`bootstrap_deviation_ci()`) no cambió, solo los
+números de entrada. Se deja esta sección tal cual para trazabilidad del
+proceso, igual que el resto de "notas posteriores" ya usadas en este
+documento (ver sección 7).
+
+## 33. SEC EDGAR como validador cruzado, y el hallazgo de mayor impacto de todo el proyecto (sesión 17)
+
+Retomando la investigación pausada en la sección 26: el usuario observó
+que la mayoría de bugs de código reales de esta sesión (M8, M9, I13)
+eran huecos/inconsistencias del proveedor de datos, no errores del
+motor -- y pidió construir SEC EDGAR no como un tercer proveedor
+alternativo, sino como un **validador cruzado**: contrastar
+automáticamente los campos donde EDGAR reconstruye con fiabilidad
+contra lo que ya usa el proveedor activo, para detectar ese PATRÓN de
+bug de forma sistemática en vez de encontrarlo ticker a ticker.
+
+### `engine/edgar_provider.py`
+
+`EdgarClient` (CIK vía el mapeo estático de la SEC, `companyfacts` vía
+`data.sec.gov`, caché en disco 24h, sin cuota diaria -- solo ~10
+peticiones/segundo de buen uso). `CONCEPT_TAGS` cubre 9 conceptos con
+fiabilidad verificada (revenue, ebit, net_income, total_assets,
+total_equity, current_assets, current_liabilities, cash,
+interest_expense) -- deliberadamente EXCLUYE `total_debt` (EDGAR
+reporta solo deuda financiera, sin leasing -- diferencia de
+metodología ya investigada en la sección 26, no un error, compararlo
+generaría falsos positivos sistemáticos) y `d_and_a` (reconstrucción
+XBRL no fiable, ya investigada y descartada en esa misma sección).
+
+**Detalle técnico nuevo, no cubierto en la investigación de la sección
+26**: la taxonomía US-GAAP migra de tag por empresa y AÑO, no solo
+entre empresas -- confirmado con MSFT real: `InterestExpense` se usa
+hasta FY2024 y `InterestExpenseNonoperating` desde FY2025, sin
+solaparse. `_extract_annual_series()` FUSIONA todos los tags de
+fallback de un concepto (recorridos en orden inverso de prioridad para
+que el tag preferido gane en caso de conflicto), no solo el primero
+con datos -- de lo contrario se pierden los años más recientes de
+cualquier empresa que haya migrado de tag.
+
+### El hallazgo (C2, `docs/AUDIT.md`): "EBIT" no es Operating Income
+
+La primera comparación real (MSFT, último año) dio **8 de 9 conceptos
+exactos** (diferencia 0.00%) -- validación fuerte del resto del
+pipeline de datos. Pero `ebit` mostró **+8.86%**: $168.985bn
+(yfinance/Alpha Vantage) vs $155.237bn (SEC EDGAR
+`OperatingIncomeLoss`). Investigado: ambos proveedores calculan su
+campo "ebit"/"EBIT" como `incomeBeforeTax + interestExpense` --
+matemáticamente la definición literal de "Earnings Before Interest and
+Taxes", pero esa fórmula incluye cualquier partida NO operativa que ya
+esté en `incomeBeforeTax` (ganancias de inversión, resultado por
+método de participación) -- justo lo que un DCF de flujo de caja libre
+debe excluir. Ambos proveedores YA exponen el campo correcto por
+separado (`operatingIncome`/`"Operating Income"`), sin usarlo.
+
+**Magnitud, verificada con 7 tickers reales más allá de MSFT** (ver
+tabla completa en `docs/AUDIT.md`, hallazgo C2): AAPL sin diferencia,
+pero NVDA +8.68%, META +4.59%, KO +18.38%, AMZN +24.52%, GOOGL +23.65%,
+JNJ +31.08% -- **6 de 7 compañías reales con inflación sistemática de
+doble dígito** en el input individual más importante del motor.
+
+**Evidencia decisiva del Excel de referencia**: `North America` fila
+15 ("EBIT") lee `='Operating Model'!K34` <- `=Segments!K12` -- Operating
+Income reportado POR SEGMENTO, una cifra puramente operativa por
+construcción bajo US GAAP. El banco de referencia nunca usó "pretax +
+interest" como EBIT.
+
+**Efecto real sobre el universo piloto (n=8, recalculado sobre la
+caché ya existente, sin gastar cuota nueva)**: la desviación media
+absoluta vs. mercado pasa de 34.21% a **38.97%** -- EMPEORA, no
+mejora. Señal de anti-sobreajuste importante: el fix no acerca el
+precio al mercado, se hizo porque es lo metodológicamente correcto,
+con evidencia independiente (SEC EDGAR) y del propio Excel de
+referencia. GOOGL es el caso más dramático: -0.56% → **-16.72%** (tenía
+la mayor inflación de EBIT del grupo, +23.65%).
+
+**Corregido** en ambos proveedores: prefieren `operatingIncome`/
+`"Operating Income"`, con `ebit`/`"EBIT"` como fallback solo si el
+campo preferido falta. 4 tests de regresión en los proveedores + 15
+tests nuevos en `test_edgar_provider.py` (extracción de hechos
+duración/instantáneos, fusión de tags con migración entre años,
+filtrado por formulario 10-K, umbral de mismatch). **254 tests en
+total, todos en verde.**
+
+### Alcance del impacto y lo que NO se rehizo
+
+Afecta a TODAS las valoraciones de la herramienta desde su inicio,
+ambos proveedores -- incluye retroactivamente el "dogfooding" sectorial
+completo de esta sesión (MSFT, semiconductores, utilities, biotech,
+small/mid-cap, secciones 23-31): sus cifras de precio implícito, margen
+EBIT y ROIC quedan desactualizadas por este fix, no por ningún error en
+el análisis de esos sectores en sí. No se rehacen esos análisis
+completos por alcance -- quedan como referencia histórica del
+comportamiento de la herramienta en aquel momento, no como cifras
+vigentes.
+
+### Verificación adicional con el propio script del validador cruzado
+
+`scripts/cross_validate_edgar.py` (nuevo, mismo patrón que
+`validate_universe.py`) corrido contra MSFT/NVDA/VRTX/D/FIZZ tras el
+fix: MSFT, NVDA y FIZZ coinciden EXACTOS en los 9 conceptos; VRTX y D
+muestran un residuo pequeño en `ebit` (+9.13% y +11.71%
+respectivamente, por debajo del umbral de aviso) -- probablemente
+clasificaciones de "Operating Income" ligeramente distintas entre
+Yahoo y la SEC para empresas con partidas de un solo ejercicio (cargo
+de I+D en proceso de VRTX, contabilidad regulatoria de D) -- residuo
+menor, informativo, no un nuevo bug: el fix resuelve la inflación
+sistemática de doble dígito, no garantiza una reconciliación perfecta
+al céntimo en todos los casos.

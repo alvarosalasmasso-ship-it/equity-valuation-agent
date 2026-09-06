@@ -112,6 +112,38 @@ def test_historical_financials_takes_absolute_value_of_capex():
     assert list(df["capex"]) == [10.0, 12.0]
 
 
+def test_historical_financials_prefers_operating_income_over_ebit():
+    """Auditoría sesión 17 (validación cruzada con SEC EDGAR): "EBIT" de
+    yfinance es Pretax Income + Interest Expense, no Operating Income --
+    incluye partidas no operativas (verificado con MSFT real: "EBIT"
+    +8.86% frente a "Operating Income", que sí coincide exacto con SEC
+    EDGAR). Debe preferirse "Operating Income" cuando está presente."""
+    cashflow_with_operating_income = _make_frame({
+        "Depreciation And Amortization": [5.0, 4.0],
+        "Capital Expenditure": [-12.0, -10.0],
+    }, DATES)
+    financials_with_both = _make_frame({
+        "Total Revenue": [100.0, 90.0],
+        "Operating Income": [18.0, 16.0],
+        "EBIT": [20.0, 18.0],  # incluiría partidas no operativas -- no debe usarse
+        "EBITDA": [25.0, 22.0],
+        "Pretax Income": [18.0, 16.0],
+        "Tax Provision": [3.6, 2.8],
+        "Net Income": [14.4, 13.2],
+        "Interest Expense": [1.0, 0.9],
+    }, DATES)
+    ticker = FakeTicker(financials_with_both, BALANCE_SHEET, cashflow_with_operating_income, INFO, ticker="TEST")
+    df = historical_financials(ticker)
+    assert list(df["ebit"]) == [16.0, 18.0]
+
+
+def test_historical_financials_falls_back_to_ebit_when_operating_income_missing():
+    """FINANCIALS (fixture ya existente) solo tiene "EBIT", sin
+    "Operating Income" -- confirma que el fallback sigue funcionando."""
+    df = historical_financials(make_fake_ticker())
+    assert list(df["ebit"]) == [18.0, 20.0]
+
+
 def test_historical_financials_falls_back_to_depletion_label_for_d_and_a():
     """Utilities/energía con contabilidad de depleción (p.ej. D -Dominion
     Energy-, auditoría sesión 17) reportan D&A como "Depreciation

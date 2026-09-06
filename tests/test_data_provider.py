@@ -109,6 +109,42 @@ def test_historical_financials_normalizes_and_sorts_ascending():
     assert list(df["ebit"]) == [15.0, 20.0]
 
 
+def test_historical_financials_prefers_operating_income_over_ebit():
+    """Auditoría sesión 17 (validación cruzada con SEC EDGAR): "ebit" de
+    Alpha Vantage es incomeBeforeTax + interestExpense, no Operating
+    Income -- incluye partidas no operativas (verificado con MSFT real:
+    "ebit" +8.86% frente a "operatingIncome", que sí coincide exacto con
+    SEC EDGAR). Debe preferirse "operatingIncome" cuando está presente."""
+    fixture = {
+        "annualReports": [{
+            "fiscalDateEnding": "2022-12-31",
+            "totalRevenue": "100",
+            "operatingIncome": "18",
+            "ebit": "20",  # incluiría partidas no operativas -- no debe usarse
+            "incomeBeforeTax": "18",
+            "incomeTaxExpense": "3.6",
+            "depreciationAndAmortization": "5",
+            "netIncome": "14.4",
+        }]
+    }
+    client = AlphaVantageClient(api_key="test-key")
+    client.income_statement = MagicMock(return_value=fixture)
+    client.balance_sheet = MagicMock(return_value=BALANCE_FIXTURE)
+    client.cash_flow = MagicMock(return_value=CASH_FLOW_FIXTURE)
+    client.company_overview = MagicMock(return_value=OVERVIEW_FIXTURE)
+    df = historical_financials(client, "TEST")
+    assert df["ebit"].iloc[0] == pytest.approx(18.0)
+
+
+def test_historical_financials_falls_back_to_ebit_when_operating_income_missing():
+    """El fixture ya existente (INCOME_FIXTURE) solo tiene "ebit", sin
+    "operatingIncome" -- confirma que el fallback sigue funcionando para
+    proveedores/años sin ese campo."""
+    client = make_fake_client()
+    df = historical_financials(client, "TEST")
+    assert list(df["ebit"]) == [15.0, 20.0]
+
+
 def test_historical_financials_exposes_fiscal_year_end_month_and_day():
     """Necesario para engine.valuation.compute_stub_fraction (auditoría
     sesión 15, hallazgo C1) -- parseado de 'fiscalDateEnding' (p.ej.
