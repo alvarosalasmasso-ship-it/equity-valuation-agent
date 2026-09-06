@@ -80,6 +80,7 @@ OVERVIEW_FIXTURE = {
     "Beta": "1.2",
     "EVToEBITDA": "15.5",
     "AnalystTargetPrice": "120.5",
+    "Currency": "USD",
 }
 
 
@@ -156,6 +157,26 @@ def test_market_snapshot_derives_price_from_market_cap_and_shares():
     assert snapshot["cash"] == pytest.approx(10.0)  # último año = 2022
     assert snapshot["total_debt"] == pytest.approx(40.0)
     assert snapshot["sector"] == "TECHNOLOGY"
+    assert snapshot["currency"] == "USD"
+
+
+def test_market_snapshot_exposes_non_usd_currency():
+    """Auditoría sesión 15/16, hallazgo M5: una compañía que reporta en
+    otra divisa debe quedar expuesta tal cual, sin normalizar ni
+    esconder -- es la app quien decide qué hacer con ese dato (bloquear
+    la valoración, ver app/streamlit_app.py)."""
+    client = make_fake_client()
+    client.company_overview.return_value = {**OVERVIEW_FIXTURE, "Currency": "EUR"}
+    snapshot = market_snapshot(client, "TEST")
+    assert snapshot["currency"] == "EUR"
+
+
+def test_market_snapshot_currency_is_none_when_missing():
+    client = make_fake_client()
+    overview_without_currency = {k: v for k, v in OVERVIEW_FIXTURE.items() if k != "Currency"}
+    client.company_overview.return_value = overview_without_currency
+    snapshot = market_snapshot(client, "TEST")
+    assert snapshot["currency"] is None
 
 
 def test_historical_financials_treats_zero_interest_expense_as_missing_when_debt_exists():

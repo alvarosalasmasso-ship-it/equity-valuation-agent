@@ -27,10 +27,16 @@ reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
 y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
-**1 hallazgo crítico (✅ corregido), 4 importantes (2 ✅ corregidos), 5
-moderados (3 ✅ corregidos), 3 informativos.** Se está corrigiendo uno
-por uno, en el orden de prioridad de la sección final — este documento
-se actualiza a medida que cada uno se cierra.
+**1 hallazgo crítico (✅ corregido), 4 importantes (2 ✅ corregidos, 2 ✅
+aceptados como limitación documentada), 5 moderados (4 ✅ corregidos, 1
+✅ decisión explícita investigada y mantenida), 3 informativos (sin
+acción necesaria).** Con esto, **todos los hallazgos no informativos de
+esta auditoría tienen un estado cerrado** — corregidos con código, o
+decididos y documentados explícitamente en vez de dejados pendientes
+sin más. "Cerrado" no significa "arreglado con código" en todos los
+casos: I2 e I4 son limitaciones estructurales aceptadas (sin fuente de
+datos gratuita para resolverlas), y M2 es una constante que se investigó
+a fondo y se decidió mantener, no cambiar.
 
 ---
 
@@ -147,7 +153,7 @@ la propia validación del fix de C1, hecha con esa misma tasa vieja).
 7 tests de regresión nuevos (4 en `data_provider.py`, 3 en
 `yfinance_provider.py`). 118 tests en total, todos en verde.
 
-### I2. El Treasury Stock Method está construido y validado, pero nunca se usa
+### I2. El Treasury Stock Method está construido y validado, pero nunca se usa — ✅ DECISIÓN EXPLÍCITA (sesión 16): aceptado como limitación, no se corrige
 
 **Qué es:** `treasury_stock_method()` / `diluted_shares_outstanding()`
 en `engine/valuation.py`, validados exactos contra `Shares!E14` del
@@ -171,10 +177,21 @@ real de que nunca se haya conectado).
 
 **Cómo se arreglaría:** en la práctica, sin una fuente de datos de
 opciones outstanding por tramo de precio de ejercicio, no hay mucho que
-hacer salvo documentarlo como limitación conocida (ya lo está, mejor
-esta sesión) y usar `shares_outstanding` como aproximación razonable —
-que es lo que ya se hace, solo que sin decirlo tan explícitamente en el
-código como en la documentación.
+hacer salvo documentarlo como limitación conocida.
+
+**Decisión explícita (sesión 16, "rigor técnico restante"):** se acepta
+como limitación permanente del alcance actual, no como un hallazgo
+pendiente de arreglo. Motivo: ni Alpha Vantage ni yfinance exponen
+tramos de opciones outstanding por precio de ejercicio de forma
+gratuita — no es una cuestión de tiempo de desarrollo, es una ausencia
+de dato de entrada. Cerrar esto de verdad exigiría una fuente de pago
+(p. ej. el propio 10-K/10-Q vía scraping o un proveedor premium), fuera
+del alcance de un proyecto que corre enteramente sobre APIs gratuitas.
+Para que la limitación sea visible donde importa, no solo en este
+documento, `app/streamlit_app.py` ahora muestra una nota junto al precio
+implícito indicando que las acciones diluidas usan el recuento básico
+reportado, no Treasury Stock Method (ver el propio código para el texto
+exacto).
 
 ### I3. Riesgos de excepción no controlados en modo "cualquier ticker" — ✅ CORREGIDO (sesión 15)
 
@@ -232,7 +249,7 @@ datos sintéticos que fuerzan cada caso.
 6 tests de regresión nuevos (2 de DataFrame vacío en los proveedores +
 verificación manual de las 4 ramas de guarda). 111 tests en total.
 
-### I4. Universo de comparables pequeño y no siempre homogéneo
+### I4. Universo de comparables pequeño y no siempre homogéneo — ✅ DECISIÓN EXPLÍCITA (sesión 16): aceptado como limitación, no se corrige
 
 Ya identificado y documentado en la sesión 14 (`docs/METHODOLOGY.md`
 sección 16): con solo 3-5 comparables por grupo, un ticker con un
@@ -242,6 +259,20 @@ recibe un múltiplo de salida poco representativo. Se incluye aquí
 formalmente como hallazgo de auditoría, no solo nota de sesión — está
 verificado con el impacto cuantitativo real ya medido (AAPL empeoró de
 -56.1% a -63.0% de desviación tras el fix del múltiplo de peers).
+
+**Decisión explícita (sesión 16):** se acepta como limitación del
+alcance actual. Motivo: ampliar y segmentar bien un universo de
+comparables por sector/subsector exige una taxonomía de industria de
+calidad (GICS o similar) y suficientes tickers líquidos con datos
+completos por subsector — ninguna de las dos cosas está disponible de
+forma gratuita y fiable con Alpha Vantage/yfinance más allá de una
+lista curada a mano como la actual. Ampliar la lista a mano (p. ej. de
+5 a 15 tickers por grupo) no resolvería la heterogeneidad de fondo
+(seguiría mezclando hardware con software "porque están en el mismo
+índice popular"), así que no se persigue como arreglo de esta sesión.
+Ya está señalado en la propia UI (`app/streamlit_app.py`, tabla de
+comparables) que el múltiplo es la mediana de un grupo concreto, no de
+un universo exhaustivo.
 
 ---
 
@@ -273,7 +304,7 @@ satisfied" en las 10 líneas y en todas sus transitivas). Suite completa
 re-ejecutada tras el cambio: 118 tests, todos en verde — el pin no
 cambia ningún comportamiento, solo fija lo que ya estaba en uso.
 
-### M2. `gordon_weight` por defecto (0.8) es una constante heredada, no justificada para el caso general
+### M2. `gordon_weight` por defecto (0.8) es una constante heredada, no justificada para el caso general — ✅ DECISIÓN EXPLÍCITA E INVESTIGADA (sesión 16): se mantiene 0.8, con motivo
 
 El Excel usa 80% Gordon / 20% múltiplo específicamente para el segmento
 North America (maduro, bajo crecimiento) — un peso pensado para ESE
@@ -282,9 +313,55 @@ como valor por defecto para cualquier compañía, en cualquier sector,
 sin ninguna justificación propia más allá de "es lo que traía el
 Excel". No es necesariamente incorrecto, pero sí es una constante sin
 razonar explícitamente, cuando el proyecto se ha esforzado en razonar
-cada supuesto (ver secciones 5-16 de `docs/METHODOLOGY.md`). Al menos
-merece una nota explícita de que es una elección arbitraria heredada,
-no derivada.
+cada supuesto (ver secciones 5-16 de `docs/METHODOLOGY.md`).
+
+**Investigado con datos reales antes de decidir, no se cambió el número
+a ciegas.** La hipótesis inicial era cambiar el default a `1.0` (Gordon
+Growth puro), que es de hecho el default ya documentado a nivel de
+motor (`engine/valuation.py::DCFInputs.gordon_weight = 1.0`,
+`engine/scenarios.py::run_scenarios(gordon_weight=1.0)`) — la capa de
+orquestación (`value_ticker()`, el slider de la app, el script de
+validación) es la única que usa 0.8. Antes de "corregir" esa
+inconsistencia aparente, se probó con datos reales de hoy qué pasaría:
+
+| Ticker | Precio (gw=0.8) | Precio (gw=1.0) | Efecto |
+|---|---|---|---|
+| AMZN | $112.74 | $75.71 | empeora -14.3pp |
+| MSFT | $330.28 | $281.66 | empeora -9.7pp |
+| GOOGL | $336.56 | $274.96 | empeora -8.7pp |
+| META | $525.54 | $352.93 | empeora -24.3pp |
+| AAPL | $109.18 | $106.03 | empeora -1.0pp |
+| KO | $70.11 | $70.92 | ~neutro |
+| PG | $218.82 | $218.63 | ~neutro |
+| JNJ | $357.78 | $371.62 | **empeora +5.0pp de sobrevaloración** |
+
+**Hallazgo real, no anticipado:** pasar a Gordon puro (1.0) empeora la
+desviación agregada en Big Tech de forma sustancial, y en JNJ concreto
+*amplifica* la sobrevaloración ya documentada (sección 9 de
+`docs/METHODOLOGY.md`) causada por la inestabilidad numérica de Gordon
+Growth cuando el spread WACC-g es estrecho. El motivo mecánico:
+blendear con un múltiplo de comparables ancla una parte del valor
+terminal a una referencia de mercado que NO sufre esa inestabilidad,
+amortiguando el efecto. Gordon puro expone el 100% del valor terminal a
+esa fragilidad, en vez del 20% actual.
+
+**Decisión:** se mantiene `gordon_weight=0.8` como default de la capa
+de orquestación (app, `value_ticker()`, script de validación) —
+**no** porque 0.8 en concreto esté derivado de primeros principios (no
+lo está: no hay una forma de calcular el blend "óptimo" sin análisis
+específico por compañía, para eso está el slider), sino porque hay una
+razón real para preferir un blend por defecto frente a cualquiera de
+los dos extremos: `0.0` dependería por completo de un universo de
+comparables ya señalado como pequeño/heterogéneo (I4); `1.0` expone el
+100% del valor terminal a una fragilidad numérica ya documentada y
+verificada esta sesión que empeora el resultado. `0.8`, heredado del
+Excel, cae en un punto razonable de ese rango intermedio — se conserva
+en vez de sustituirlo por otro número igual de arbitrario.
+`DCFInputs.gordon_weight=1.0` en el motor NO es una inconsistencia: es
+el default correcto para la primitiva de bajo nivel, cuando no se sabe
+si habrá un múltiplo de comparables disponible ni si es de fiar — la
+capa de orquestación, que sí tiene esa información, decide distinto con
+motivo.
 
 ### M3. `DCFInputs` no valida `wacc > 0` ni `0 <= gordon_weight <= 1` — ✅ CORREGIDO (sesión 15)
 
@@ -354,7 +431,7 @@ por el fix): precio implícito idéntico, **$98.00**, confirmando que no
 cambia ningún resultado existente. 126 tests en total, todos en verde.
 Servidor Streamlit reiniciado y verificado arrancando limpio.
 
-### M5. Sin verificación de divisa de reporte
+### M5. Sin verificación de divisa de reporte — ✅ CORREGIDO (sesión 16)
 
 Ninguna función comprueba `reportedCurrency` (Alpha Vantage) o el
 equivalente en yfinance. Si un ticker reportara en una divisa distinta
@@ -363,6 +440,31 @@ compañías extranjeras con reporte local), se mezclarían cifras en esa
 divisa con un risk-free rate y una prima de riesgo en USD sin ningún
 aviso — un error silencioso de escala completo, no solo un sesgo
 pequeño.
+
+**Cómo se corrigió:** `market_snapshot()` en ambos proveedores expone
+ahora un campo `currency` — `overview.get("Currency")` en
+`data_provider.py` (Alpha Vantage), `info.get("financialCurrency") or
+info.get("currency")` en `yfinance_provider.py` (se prioriza la divisa
+de los ESTADOS FINANCIEROS sobre la de cotización, porque un ADR puede
+cotizar en USD con estados financieros en otra divisa — exactamente el
+caso que hace falta detectar). `app/streamlit_app.py` bloquea la
+valoración con un error explícito (`st.error` + `st.stop()`) si
+`currency` viene informada y no es `"USD"` — deliberadamente un bloqueo,
+no solo un aviso, porque el error resultante de no bloquear sería un
+error de escala completo (WACC y precio implícito mal por un factor
+arbitrario), no un matiz a comunicar. `currency=None` (dato no
+reportado por el proveedor) NO bloquea, porque no hay evidencia de
+problema, solo ausencia de dato. En modo "cualquier ticker", la
+comprobación se hace ANTES de calcular el WACC (no después), para no
+mostrar brevemente un WACC "válido" y su aviso habitual justo antes de
+bloquear — una secuencia confusa detectada y corregida durante la
+propia verificación de este arreglo.
+
+**Verificado con datos reales, no solo con fixtures:** `TM` (Toyota
+Motor, ADR que cotiza en USD) reporta `financialCurrency="JPY"` de
+verdad vía yfinance — probado en la app real, bloquea con el mensaje
+esperado y sin traceback. `AMZN` (USD) sigue funcionando exactamente
+igual que antes. 4 tests de regresión nuevos (2 por proveedor).
 
 ---
 
@@ -415,7 +517,7 @@ aviso en la interfaz.
 - **El múltiplo de salida se corrigió** de "propio de la empresa" a
   "mediana de comparables" (sesión 14), con el efecto mixto reportado
   con honestidad en vez de maquillado.
-- **126 tests, cero dependen de red** — toda la suite corre offline con
+- **148 tests, cero dependen de red** — toda la suite corre offline con
   fixtures fieles al formato real de las APIs.
 - **Capa generativa desacoplada del cálculo por diseño**, no como
   parche — el LLM nunca ve datos crudos, solo un paquete ya cerrado.
@@ -439,5 +541,20 @@ aviso en la interfaz.
 6. ~~**M4 (Gordon Growth se calcula/avisa aunque su peso sea 0)**~~ — ✅
    corregido en esta sesión (resultó más serio de lo previsto: podía
    bloquear con `ValueError` un DCF que `gordon_weight=0` debía esquivar).
-7. Resto, según interés — I2 y M5 son limitaciones más estructurales
-   (dependen de datos que no tenemos fácilmente) que bugs a corregir.
+7. ~~**M5 (verificación de divisa de reporte)**~~ — ✅ corregido (sesión
+   16) — bloquea explícitamente si la divisa de los estados financieros
+   no es USD, verificado con un ticker real (Toyota, JPY).
+8. ~~**M2 (`gordon_weight=0.8` sin justificar)**~~ — ✅ decisión explícita
+   (sesión 16) — investigado con datos reales, se mantiene 0.8 porque un
+   blend por defecto protege contra la inestabilidad ya documentada de
+   Gordon Growth puro; no se cambia por cambiar.
+9. ~~**I2 (Treasury Stock Method sin conectar)**~~ y ~~**I4 (universo de
+   comparables pequeño)**~~ — ✅ aceptados explícitamente como
+   limitaciones estructurales (sesión 16), sin fuente de datos gratuita
+   disponible para resolverlos de verdad — señalados ahora en la propia
+   UI, no solo en este documento.
+
+**Con esto, no quedan hallazgos abiertos de esta auditoría** (más allá
+de los informativos, que no requieren acción). Próximos pasos del
+proyecto en `docs/PROGRESS_REVIEW.md` — probar la capa generativa en
+vivo, Fase 9 (sentiment), o lo que el usuario priorice a continuación.

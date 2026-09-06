@@ -72,6 +72,8 @@ INFO = {
     "targetMeanPrice": 120.5,
     "totalCash": 10.0,
     "totalDebt": 60.0,
+    "financialCurrency": "USD",
+    "currency": "USD",
 }
 
 
@@ -138,11 +140,31 @@ def test_market_snapshot_matches_data_provider_schema():
         "symbol", "sector", "industry", "market_cap", "shares_outstanding",
         "price", "beta", "ev_to_ebitda", "ev_to_revenue", "pe_ratio",
         "price_to_sales", "price_to_book", "analyst_target_price", "cash", "total_debt",
+        "currency",
     }
     assert expected_keys.issubset(snapshot.keys())
     assert snapshot["price"] == pytest.approx(100.0)
     assert snapshot["beta"] == pytest.approx(1.2)
     assert snapshot["symbol"] == "TEST"
+    assert snapshot["currency"] == "USD"
+
+
+def test_market_snapshot_prefers_financial_currency_over_quote_currency():
+    """Auditoría sesión 15/16, hallazgo M5: un ADR puede cotizar en USD
+    ("currency") con estados financieros en otra divisa
+    ("financialCurrency") -- la relevante para comparar contra el USD de
+    risk_free_rate/market_risk_premium es la de los estados financieros."""
+    info = {**INFO, "financialCurrency": "JPY", "currency": "USD"}
+    ticker = FakeTicker(FINANCIALS, BALANCE_SHEET, CASHFLOW, info)
+    snapshot = market_snapshot(ticker)
+    assert snapshot["currency"] == "JPY"
+
+
+def test_market_snapshot_falls_back_to_quote_currency_when_financial_currency_missing():
+    info = {k: v for k, v in INFO.items() if k != "financialCurrency"}
+    ticker = FakeTicker(FINANCIALS, BALANCE_SHEET, CASHFLOW, info)
+    snapshot = market_snapshot(ticker)
+    assert snapshot["currency"] == "USD"
 
 
 def test_historical_financials_treats_zero_interest_expense_as_missing_when_debt_exists():

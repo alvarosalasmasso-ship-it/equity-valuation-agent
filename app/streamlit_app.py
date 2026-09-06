@@ -247,6 +247,20 @@ with st.sidebar:
                         "caps o IPOs recientes) — no se puede construir el WACC simplificado."
                     )
 
+                # Auditoría sesión 15/16, hallazgo M5: comprobar la divisa ANTES
+                # de calcular el WACC, no después -- si se calculara primero, la
+                # UI mostraría brevemente un WACC "válido" (y su caption de
+                # advertencia habitual) para acto seguido bloquear, una secuencia
+                # confusa que sugiere que el número llegó a ser utilizable.
+                reported_currency = snap.get("currency")
+                if reported_currency and reported_currency != "USD":
+                    raise ValueError(
+                        f"'{target}' reporta sus estados financieros en {reported_currency}, no en "
+                        "USD -- el risk-free rate y la prima de riesgo están calibrados en USD, "
+                        "mezclarlos sería un error de escala completo. Sin soporte de conversión "
+                        "de divisa todavía."
+                    )
+
                 interest_expense_series = hist["interest_expense"].dropna()
                 if interest_expense_series.empty:
                     raise ValueError(f"Sin dato de gasto financiero disponible para '{target}'.")
@@ -289,6 +303,27 @@ if not target:
 hist = hist_data[target]
 snap = snap_data[target]
 
+# --- Verificación de divisa de reporte (auditoría sesión 15/16, hallazgo M5) --
+#
+# risk_free_rate y market_risk_premium están calibrados en USD (Treasury
+# americano). Si los estados financieros del ticker vienen en otra divisa,
+# mezclarlos con esos inputs sin convertir sería un error de escala completo
+# (no un sesgo pequeño) -- el WACC y el precio implícito saldrían mal por un
+# factor arbitrario, sin ningún aviso visible. Se bloquea explícitamente en
+# vez de dejar pasar un número silenciosamente incorrecto; `currency=None`
+# (dato no reportado por el proveedor) NO bloquea, porque no hay evidencia de
+# que sea un problema -- solo un valor explícito distinto de USD lo hace.
+reported_currency = snap.get("currency")
+if reported_currency and reported_currency != "USD":
+    st.error(
+        f"'{target}' reporta sus estados financieros en **{reported_currency}**, no en USD. "
+        "El risk-free rate y la prima de riesgo de mercado de esta herramienta están calibrados "
+        "en USD (Treasury americano) — valorarlo tal cual mezclaría cifras de dos divisas "
+        "distintas, un error de escala completo, no un matiz. Esta herramienta no soporta "
+        "todavía conversión de divisa; prueba con un ticker que reporte en USD."
+    )
+    st.stop()
+
 # --- Múltiplo de salida: mediana de comparables, no el propio de la empresa ---
 
 from engine.comps import build_comps_table, peer_average_multiple
@@ -318,7 +353,10 @@ with st.container(border=True):
     col4.metric("Sector", snap.get("sector") or "n/d")
     st.caption(
         f"Stub period del primer año proyectado: **{stub_fraction:.3f}** "
-        f"(fracción del ejercicio fiscal que queda desde {valuation_date.isoformat()} hasta su cierre)."
+        f"(fracción del ejercicio fiscal que queda desde {valuation_date.isoformat()} hasta su cierre). "
+        "Acciones diluidas: recuento básico reportado por el proveedor de datos, no vía Treasury "
+        "Stock Method (construido y validado en `engine/valuation.py`, pero sin fuente gratuita de "
+        "tramos de opciones outstanding para conectarlo — ver hallazgo I2, `docs/AUDIT.md`)."
     )
 
 # --- Cómputo (sin renderizar todavía) ------------------------------------------
@@ -531,7 +569,9 @@ with tab_fundamentales:
         st.dataframe(comps_table, use_container_width=True)
         st.caption(
             f"Múltiplo EV/EBITDA de salida usado en el valor terminal: **{terminal_multiple:.2f}x** "
-            f"(mediana de los comparables, excluyendo {target} — no el múltiplo de la propia empresa)."
+            f"(mediana de {len(comps_table) - 1} comparables, excluyendo {target} — no el múltiplo de "
+            "la propia empresa). Grupo curado a mano, no un universo exhaustivo por subsector — "
+            "puede incluir compañías con perfiles de negocio distintos (ver hallazgo I4, `docs/AUDIT.md`)."
         )
     elif terminal_multiple:
         st.caption(

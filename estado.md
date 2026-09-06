@@ -1088,11 +1088,58 @@ sin tracebacks, gráficos renderizando con los datos correctos. `plotly`
 añadido y fijado en `requirements.txt` (7.0.0). 144 tests siguen en
 verde (el cambio es puramente de presentación, ninguna lógica tocada).
 
-## 11. Próximo paso inmediato
+## 11. Sesión 16 (continuación) — Cierre del rigor técnico restante (M2, M5, I2, I4)
 
-1. Hallazgos técnicos moderados que siguen abiertos, sin urgencia: M2
-   (`gordon_weight=0.8` sin justificación propia), M5 (sin verificación
-   de divisa de reporte), I2/I4 (estructurales).
-2. Fase 9 (sentiment en earnings calls) — extensión opcional, al final.
-3. Probar la capa generativa con una llamada real — aparcado por ahora
+El usuario pidió "que la herramienta sea perfecta"; ante la ambigüedad,
+se le preguntó en qué eje concreto priorizar. Eligió: **rigor técnico
+restante** (cerrar M2/M5, decidir I2/I4 explícitamente) frente a las
+otras opciones (universo de comps, seguir con UX, probar la capa
+generativa en vivo).
+
+- **M5 (divisa de reporte) — corregido de verdad.** `market_snapshot()`
+  en ambos proveedores expone `currency` (Alpha Vantage: `Currency` de
+  OVERVIEW; yfinance: `financialCurrency` con fallback a `currency` —
+  prioriza la divisa de los ESTADOS FINANCIEROS, no la de cotización,
+  porque un ADR puede cotizar en USD con financials en otra divisa).
+  `app/streamlit_app.py` bloquea (`st.error` + `st.stop()`, no solo
+  avisa) si la divisa no es USD. **Verificado con un ticker real**: Toyota
+  (`TM`) reporta `financialCurrency=JPY` de verdad — probado en la app,
+  bloquea limpio, sin traceback. Durante la verificación se encontró y
+  corrigió un problema de orden: el aviso de "WACC simplificado" se
+  mostraba ANTES del bloqueo (sugiriendo un número usable) — la
+  comprobación se movió a antes de calcular el WACC en modo "cualquier
+  ticker". 4 tests de regresión nuevos.
+- **M2 (`gordon_weight=0.8`) — investigado a fondo, se mantiene.** La
+  hipótesis inicial era cambiarlo a 1.0 (Gordon puro, que es de hecho
+  el default ya documentado a nivel de motor). Probado con datos reales
+  de los 8 tickers piloto antes de decidir: pasar a 1.0 empeora Big Tech
+  sustancialmente (AMZN -14.3pp, META -24.3pp) y **amplifica** la
+  sobrevaloración de JNJ ya documentada (30.0%→35.0%) — blendear con un
+  múltiplo de comparables amortigua la inestabilidad numérica de Gordon
+  Growth puro cuando el spread WACC-g es estrecho, un riesgo real y ya
+  verificado esta sesión. Se mantiene 0.8, con la razón documentada en
+  `docs/AUDIT.md` (no como constante arbitraria, sino como blend
+  deliberado entre dos riesgos: dependencia de comps de baja calidad
+  vs. fragilidad de Gordon puro).
+- **I2 e I4 — aceptados explícitamente como limitaciones**, no dejados
+  pendientes. Ninguno de los dos tiene una fuente de datos gratuita que
+  lo resuelva de verdad (tramos de opciones outstanding para TSM;
+  taxonomía de industria de calidad para comps). Señalados ahora
+  también en la propia UI (caption junto al stub period para I2,
+  caption de la tabla de comparables para I4), no solo en la
+  documentación.
+
+**Con esto, todos los hallazgos no informativos de la auditoría de
+sesión 15 tienen un estado cerrado** — corregidos con código o
+decididos y documentados explícitamente. 4 tests de regresión nuevos.
+**148 tests en total, todos en verde.** Verificado end-to-end con
+Playwright contra la app real (TM bloqueado, AMZN sigue funcionando).
+
+## 12. Próximo paso inmediato
+
+1. Fase 9 (sentiment en earnings calls) — extensión opcional.
+2. Probar la capa generativa con una llamada real — aparcado por ahora
    a petición del usuario, no es una prioridad activa.
+3. Universo de comparables más amplio/mejor segmentado — se evaluó como
+   opción de "rigor técnico" pero no se priorizó frente a M2/M5/I2/I4
+   esta sesión; sigue disponible como línea futura si se retoma.

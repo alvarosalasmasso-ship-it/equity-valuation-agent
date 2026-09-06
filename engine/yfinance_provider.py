@@ -185,4 +185,14 @@ def market_snapshot(ticker) -> dict:
         "analyst_target_price": _clean(info.get("targetMeanPrice")),
         "cash": _clean(info.get("totalCash")),
         "total_debt": _clean(info.get("totalDebt")),
+        # Auditoría sesión 15/16, hallazgo M5: divisa de reporte de los
+        # estados financieros -- ver el mismo campo en data_provider.py
+        # para la justificación completa. yfinance separa "currency"
+        # (divisa de cotización del precio) de "financialCurrency"
+        # (divisa de los propios estados financieros); esta última es la
+        # relevante aquí porque es la que hay que comparar contra el USD
+        # de risk_free_rate/market_risk_premium, no la de cotización (un
+        # ADR puede cotizar en USD con estados financieros en otra
+        # divisa). Cae a "currency" si "financialCurrency" no viene.
+        "currency": info.get("financialCurrency") or info.get("currency"),
     }
