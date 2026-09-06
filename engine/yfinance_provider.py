@@ -157,17 +157,45 @@ def historical_financials(ticker) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("fiscal_year").reset_index(drop=True)
 
 
+def _latest_balance_sheet_column(ticker) -> Optional[pd.Series]:
+    """Auditoría sesión 17: `ticker.info["totalDebt"]`/`["totalCash"]`
+    resultaron NO ser fiables -- verificado con datos reales de AMZN,
+    `info["totalDebt"]` daba $251.6bn frente a los $153.0bn de
+    `ticker.balance_sheet.loc["Total Debt"]` (que sí coincide exacto con
+    Alpha Vantage: deuda financiera + obligaciones de leasing). La
+    diferencia es grande en empresas con mucho leasing (AMZN) y pequeña
+    en las que no (KO/PG/JNJ, verificado -2.7%/0.0%/+2.3%), pero
+    `historical_financials()` de este mismo módulo YA usaba la fuente
+    fiable (`balance_sheet`) -- esto solo iguala `market_snapshot()` al
+    mismo estándar, en vez de tener dos fuentes distintas del mismo dato
+    dentro del propio código. Devuelve la columna (fecha) más reciente
+    del balance, o None si no hay ninguna disponible."""
+    balance = ticker.balance_sheet
+    if balance is None or balance.empty:
+        return None
+    return balance[sorted(balance.columns)[-1]]
+
+
 def market_snapshot(ticker) -> dict:
     """ticker: objeto con atributo .info (dict), .ticker o .symbol para
-    el propio símbolo."""
+    el propio símbolo, y .balance_sheet (DataFrame) para deuda/caja
+    fiables -- ver _latest_balance_sheet_column()."""
     info = ticker.info
     symbol = getattr(ticker, "ticker", None) or info.get("symbol") or ""
+    bs_latest = _latest_balance_sheet_column(ticker)
 
     market_cap = _clean(info.get("marketCap"))
     shares_outstanding = _clean(info.get("sharesOutstanding"))
     price = _clean(info.get("currentPrice")) or _clean(info.get("regularMarketPrice"))
     if price is None and market_cap and shares_outstanding:
         price = market_cap / shares_outstanding
+
+    cash = _clean(bs_latest.get("Cash And Cash Equivalents")) if bs_latest is not None else None
+    total_debt = _clean(bs_latest.get("Total Debt")) if bs_latest is not None else None
+    if cash is None:
+        cash = _clean(info.get("totalCash"))  # mejor esfuerzo si no hay balance sheet disponible
+    if total_debt is None:
+        total_debt = _clean(info.get("totalDebt"))
 
     return {
         "symbol": symbol.upper(),
@@ -183,8 +211,8 @@ def market_snapshot(ticker) -> dict:
         "price_to_sales": _clean(info.get("priceToSalesTrailing12Months")),
         "price_to_book": _clean(info.get("priceToBook")),
         "analyst_target_price": _clean(info.get("targetMeanPrice")),
-        "cash": _clean(info.get("totalCash")),
-        "total_debt": _clean(info.get("totalDebt")),
+        "cash": cash,
+        "total_debt": total_debt,
         # Sesión 17: rango de 52 semanas, para el football field bancario
         # (docs/METHODOLOGY.md sección 23) -- ya expuesto en .info, sin
         # coste de petición adicional.

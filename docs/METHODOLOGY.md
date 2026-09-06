@@ -1632,3 +1632,83 @@ que ya se evitó una vez con `gordon_weight` (M2). Detalle completo en
 de punta a punta de que el `ValueError` de `debt_to_ebitda()` sale
 limpio desde `latest_ratio_snapshot()`, no solo desde la función
 aislada).
+
+## 26. Investigación de SEC EDGAR como tercer proveedor: hallazgo real, distinto del esperado (sesión 17)
+
+Motivo: la cuota diaria de Alpha Vantage (25 peticiones/día,
+compartida entre todos los visitantes de la app) se agotó durante la
+sesión. El usuario preguntó por alternativas gratuitas, con una
+condición explícita por delante de todo: "es importante que sea todo
+datos fiables". Se investigó `data.sec.gov` (API `companyfacts`, XBRL)
+como posible tercer proveedor antes de comprometerse a construirlo —
+mismo criterio que cualquier otro cambio de esta sesión: verificar con
+datos reales antes de decidir, no estimar el esfuerzo de oídas.
+
+### Lo que SEC EDGAR sí resuelve bien
+
+Gratis, sin API key, sin cuota diaria (solo una guía de buen uso de
+~10 peticiones/segundo). Verificado con los 5 tickers de Big Tech:
+`revenue`, `ebit` (`OperatingIncomeLoss`), `net_income`
+(`NetIncomeLoss`), `total_assets` (`Assets`), `total_equity`
+(`StockholdersEquity`), `current_assets`/`current_liabilities`,
+`interest_expense` e `cash` reconstruyen con fidelidad muy alta o
+exacta frente a los datos ya usados. Un problema real y esperado: las
+etiquetas de la taxonomía US-GAAP cambian por empresa y por año (AMZN
+usa `RevenueFromContractWithCustomerExcludingAssessedTax` para
+ingresos, no el más simple `Revenues`) — requiere listas de fallback
+por concepto, no una etiqueta única.
+
+### Lo que NO se pudo verificar con la confianza necesaria
+
+`d_and_a`: algunas empresas (AMZN, META, AAPL) reportan una única línea
+combinada de D&A en el cash flow; otras (MSFT, GOOGL) la reportan
+partida en 3+ líneas separadas (`Depreciation`,
+`AmortizationOfIntangibleAssets`, `FinanceLeaseRightOfUseAssetAmortization`,
+posiblemente más), y sumarlas para MSFT dio un número que seguía sin
+cuadrar con Alpha Vantage (hasta 18% de diferencia, incluso probando
+distintas combinaciones). No se encontró una reconstrucción fiable
+antes de que la investigación tomara un giro más importante (ver
+abajo) — se dejó de intentar en vez de forzar una aproximación sin
+verificar, exactamente el mismo criterio que llevó a descartar la
+sustitución automática de outliers en la sección 21.
+
+### El giro: la investigación reveló un bug real en el pipeline YA existente, más urgente que el problema original
+
+Al intentar validar `total_debt` de AMZN vía SEC EDGAR contra Alpha
+Vantage y yfinance para decidir qué "definición de deuda" replicar,
+las tres fuentes dieron números muy distintos: SEC EDGAR (solo deuda
+financiera) $68.8bn, Alpha Vantage $153.0bn, yfinance (`.info`)
+$251.6bn. Investigado a fondo (no aceptado como "ambigüedad
+inevitable"): **Alpha Vantage's `shortLongTermDebtTotal` = `longTermDebt`
++ `capitalLeaseObligations`, exacto al dólar ($65.648bn + $87.339bn =
+$152.987bn)** — no es un error, incluye deliberadamente las
+obligaciones de leasing (post ASC 842) además de la deuda financiera
+pura. Y el propio `ticker.balance_sheet` de **yfinance** (su
+estado financiero detallado, no `.info`) da exactamente el mismo
+$152.987bn — coincide con Alpha Vantage al dólar. El campo
+`ticker.info["totalDebt"]` que SÍ usaba `market_snapshot()`
+(`engine/yfinance_provider.py`) es una fuente distinta, menos curada,
+que diverge del propio balance sheet de yfinance — un bug real dentro
+de nuestro propio código (I8, `docs/AUDIT.md`), no una diferencia de
+metodología entre proveedores. `historical_financials()` de ese mismo
+módulo ya usaba correctamente `.balance_sheet` — sólo `market_snapshot()`
+tenía el problema, nunca contrastado hasta ahora entre las dos rutas
+del mismo archivo.
+
+**Corregido** (ver I8): `market_snapshot()` ahora lee `cash`/`total_debt`
+de `ticker.balance_sheet`, con `.info` solo como último recurso. Efecto
+medido con datos reales sobre el universo piloto (`Consumo defensivo`,
+el único que usa yfinance en producción): pequeño (KO -20.4%→-22.3%,
+PG y JNJ casi sin cambio) porque ninguno de los tres tiene una carga de
+leasing tan grande como AMZN — pero el bug era real y, en modo
+"cualquier ticker" con una empresa intensiva en leasing (retail,
+aerolíneas, restauración), habría producido un WACC calculado sobre una
+cifra de deuda hasta un 65% más alta de la real.
+
+### Decisión: SEC EDGAR queda en pausa, no descartado
+
+El usuario decidió priorizar investigar y corregir esta inconsistencia
+(I8) antes de seguir con SEC EDGAR — la construcción del tercer
+proveedor no se ha retomado todavía. Queda documentado el trabajo real
+ya invertido (qué tags funcionan, cuáles no, y por qué) para no tener
+que rehacerlo si se retoma más adelante.

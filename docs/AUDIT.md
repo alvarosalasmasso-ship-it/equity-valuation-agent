@@ -30,14 +30,15 @@ reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
 y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
-**1 hallazgo crítico (✅ corregido), 7 importantes (5 ✅ corregidos —
-I6/I7 añadidos en sesión 17, dos crashes reales de división por cero
-encontrados en la auditoría técnica/matemática a fondo del motor—, 2 ✅
-aceptados como limitación documentada), 7 moderados (4 ✅ corregidos, 1
-✅ decisión explícita investigada y mantenida, 2 ⏳ abiertos — M6/M7,
-sesión 17, pendientes de investigar/decidir), 3 informativos (1 ✅
-corregido — N2, tests automatizados de la app —, 2 sin acción
-necesaria).**
+**1 hallazgo crítico (✅ corregido), 8 importantes (6 ✅ corregidos —
+I6/I7/I8 añadidos en sesión 17: dos crashes reales de división por cero
+y una inconsistencia real de datos (yfinance `.info` vs. `.balance_sheet`
+en desacuerdo hasta un 65% en deuda) encontrados en la auditoría
+técnica/matemática a fondo del motor—, 2 ✅ aceptados como limitación
+documentada), 7 moderados (4 ✅ corregidos, 1 ✅ decisión explícita
+investigada y mantenida, 2 ⏳ abiertos — M6/M7, sesión 17, pendientes de
+investigar/decidir), 3 informativos (1 ✅ corregido — N2, tests
+automatizados de la app —, 2 sin acción necesaria).**
 La sesión 17 añadió una auditoría explícita del rigor matemático y
 financiero del motor (`engine/valuation.py`, `wacc_builder.py`,
 `ratios.py`, `comps.py`) verificado fórmula a fórmula contra teoría
@@ -367,7 +368,7 @@ en vez de `snap["total_debt"]` sin guarda (protege además contra
 `None`, no solo contra `0`).
 
 **Verificado:** test de regresión en `tests/test_valuation.py`
-(`cost_of_debt(0.0, 0.0) == 0.0`); suite completa (180 tests) y
+(`cost_of_debt(0.0, 0.0) == 0.0`); suite completa (182 tests) y
 `tests/test_app.py` en verde tras el cambio.
 
 ---
@@ -408,6 +409,53 @@ captura.
 test de punta a punta vía `latest_ratio_snapshot()` con un año de
 EBITDA=0 real, confirmando que el `ValueError` sale limpio de todo el
 pipeline, no solo de la función aislada).
+
+---
+
+### I8. `market_snapshot()` de yfinance usaba `info["totalDebt"]`/`["totalCash"]`, campos no fiables — ✅ CORREGIDO (sesión 17)
+
+**Qué es:** al investigar la viabilidad de un tercer proveedor de datos
+(SEC EDGAR, a petición del usuario tras agotarse la cuota de Alpha
+Vantage), se necesitaba una fuente de verdad independiente contra la
+que contrastar "deuda total". Comparando SEC EDGAR, Alpha Vantage y
+yfinance para AMZN salió un desajuste enorme: `ticker.info["totalDebt"]`
+daba **$251.6bn**, frente a `ticker.balance_sheet.loc["Total Debt"]`
+(el propio balance detallado de yfinance) que daba **$153.0bn** — y
+este segundo número coincide EXACTO con Alpha Vantage (`longTermDebt` +
+`capitalLeaseObligations` = `shortLongTermDebtTotal`, verificado dólar
+a dólar). No es una diferencia de definición legítima entre proveedores
+— es una inconsistencia **dentro del propio yfinance**, entre dos
+campos que deberían decir lo mismo y no lo dicen. Mismo patrón en
+`totalCash` ($123.0bn en `.info` frente a $86.8bn en `.balance_sheet`,
+este último también exacto a Alpha Vantage).
+
+**Por qué importa — y por qué no se detectó antes:** `historical_financials()`
+de este mismo módulo YA usaba correctamente `ticker.balance_sheet` para
+la serie histórica de deuda/caja que alimenta el fade de proyección —
+pero `market_snapshot()` (el snapshot puntual que alimenta el WACC vía
+`wacc_builder.py`) usaba el campo `.info` menos fiable, sin que nadie lo
+hubiera contrastado nunca contra la otra ruta del mismo módulo. Con los
+8 tickers piloto el efecto medido es pequeño (KO -2.7%, PG -0.03%, JNJ
++2.3% — verificado con datos reales), porque ninguno tiene una carga de
+leasing tan grande como AMZN. Pero **en modo "cualquier ticker" (yfinance,
+sin restricción de qué empresa se puede valorar), cualquier compañía con
+mucho leasing —retail, aerolíneas, restauración— habría heredado un WACC
+calculado sobre una cifra de deuda hasta un 65% más alta de lo real**, un
+error de escala real, no un matiz.
+
+**Cómo se corrigió:** `market_snapshot()` ahora lee `cash`/`total_debt`
+de `ticker.balance_sheet` (la misma fuente que `historical_financials()`
+ya usaba, ahora consistente dentro del propio módulo), con `.info` como
+mejor esfuerzo únicamente si el balance sheet no está disponible.
+
+**Verificado:** 2 tests de regresión nuevos en `tests/test_yfinance_provider.py`
+(`.info` y `.balance_sheet` en desacuerdo deliberado — gana
+`balance_sheet`; `.balance_sheet` vacío — cae a `.info` sin crashear).
+Re-corrido `scripts/validate_universe.py` con datos reales: el efecto
+en KO/PG/JNJ es el esperado, pequeño y en la dirección medida
+(-20.4%→-22.3% KO, PG y JNJ casi sin cambio) — no una sorpresa, la
+magnitud coincide exactamente con la del desajuste `.info` vs.
+`.balance_sheet` encontrado por ticker.
 
 ---
 
@@ -738,7 +786,7 @@ aviso en la interfaz.
 - **El múltiplo de salida se corrigió** de "propio de la empresa" a
   "mediana de comparables" (sesión 14), con el efecto mixto reportado
   con honestidad en vez de maquillado.
-- **180 tests, cero dependen de red** — toda la suite corre offline con
+- **182 tests, cero dependen de red** — toda la suite corre offline con
   fixtures fieles al formato real de las APIs, incluidos 11 tests de la
   app en sí (`streamlit.testing.v1.AppTest`, sesión 16-17) y CI en
   GitHub Actions corriéndolos en cada push.
@@ -805,6 +853,17 @@ aviso en la interfaz.
 13. **M6 (tipo impositivo plano en el valor terminal)** y **M7
     (Debt/EBITDA bruto sin aclarar)** — ⏳ abiertos (sesión 17),
     pendientes de investigar/decidir con el mismo rigor que M2.
+14. ~~**I8 (`market_snapshot()` de yfinance usaba `info["totalDebt"]`/
+    `["totalCash"]`, no fiables)**~~ — ✅ corregido (sesión 17) —
+    encontrado investigando la viabilidad de un tercer proveedor (SEC
+    EDGAR): `.info["totalDebt"]` y `.balance_sheet.loc["Total Debt"]`
+    discrepaban hasta un 65% en AMZN (una inconsistencia real dentro de
+    la propia librería yfinance, no una diferencia de definición entre
+    proveedores) — `historical_financials()` ya usaba la fuente fiable,
+    `market_snapshot()` no. Efecto medido en el universo piloto real:
+    pequeño (KO/PG/JNJ no tienen mucho leasing), pero potencialmente
+    grave en modo "cualquier ticker" con una empresa con mucho leasing
+    (retail, aerolíneas).
 
 **Quedan dos hallazgos moderados abiertos a propósito** (M6, M7) —
 requieren investigación con datos reales antes de decidir, no una

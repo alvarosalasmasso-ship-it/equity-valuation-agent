@@ -1328,10 +1328,49 @@ cambiar por intuición.
 `docs/METHODOLOGY.md` sección 25 y `docs/AUDIT.md` (hallazgos I6, I7,
 M6, M7, resumen ejecutivo y prioridad recomendada actualizados).
 
-## 17. Próximo paso inmediato
+## 17. Sesión 17 (continuación) — Cuota de Alpha Vantage agotada: investigación de SEC EDGAR, y un bug real más urgente encontrado por el camino
+
+Se agotó la cuota diaria de Alpha Vantage. El usuario preguntó por
+alternativas gratuitas, con una condición explícita: "es importante que
+sea todo datos fiables". Investigado `data.sec.gov` (SEC EDGAR,
+`companyfacts`/XBRL) como tercer proveedor, verificando con datos
+reales antes de comprometerse a construirlo.
+
+**Funciona bien para**: revenue, EBIT, net income, activos, equity,
+activo/pasivo corriente, interés, caja — verificado con los 5 tickers
+Big Tech, fidelidad muy alta o exacta. **No se pudo verificar con
+confianza para D&A** (MSFT/GOOGL reportan D&A en 3+ líneas separadas
+que, sumadas, no cuadran con Alpha Vantage ni con ninguna combinación
+probada) — se dejó de intentar en vez de forzar una aproximación sin
+verificar.
+
+**El giro real**: al validar `total_debt` de AMZN entre SEC EDGAR, AV y
+yfinance para decidir qué definición de "deuda" replicar, se descubrió
+que **`yfinance_provider.py`'s `market_snapshot()` usaba
+`ticker.info["totalDebt"]`, un campo NO fiable** — para AMZN daba
+$251.6bn, frente a $153.0bn del propio `ticker.balance_sheet` de
+yfinance (que coincide EXACTO con Alpha Vantage: deuda financiera +
+obligaciones de leasing). `historical_financials()` del mismo módulo ya
+usaba correctamente `.balance_sheet` — solo `market_snapshot()` tenía
+el bug, nunca contrastado entre las dos rutas. **Corregido (I8,
+`docs/AUDIT.md`)**: ahora ambas funciones usan la misma fuente fiable.
+Efecto real medido en KO/PG/JNJ: pequeño (ninguno tiene tanto leasing
+como AMZN), pero en modo "cualquier ticker" con una empresa intensiva
+en leasing habría sido un error de hasta el 65% en la cifra de deuda
+usada para el WACC.
+
+**182 tests en total, todos en verde.** SEC EDGAR queda en pausa (no
+descartado) — el usuario priorizó corregir I8 antes de retomarlo.
+Documentado en `docs/METHODOLOGY.md` sección 26 y `docs/AUDIT.md`
+hallazgo I8.
+
+## 18. Próximo paso inmediato
 
 0. M6/M7 (recién abiertos) — investigar el tipo impositivo a largo
    plazo y añadir/aclarar Net Debt/EBITDA, con el mismo rigor que M2.
+0.5. SEC EDGAR — retomar si se quiere reducir la dependencia de la
+   cuota de Alpha Vantage: falta D&A fiable (sin resolver) y construir
+   el módulo completo con lo ya validado para el resto de campos.
 1. C — Monte Carlo: bandas de confianza probabilísticas (P10/P50/P90)
    sobre el precio implícito, muestreando WACC/margen/CapEx desde su
    propia varianza histórica. La palanca de mayor rigor que queda de las

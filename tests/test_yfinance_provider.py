@@ -165,6 +165,31 @@ def test_market_snapshot_matches_data_provider_schema():
     assert snapshot["analyst_target_price_high"] == pytest.approx(150.0)
 
 
+def test_market_snapshot_prefers_balance_sheet_over_info_for_cash_and_debt():
+    """Auditoría sesión 17: `info["totalDebt"]`/`["totalCash"]` resultaron
+    NO ser fiables -- verificado con datos reales de AMZN, donde
+    `info["totalDebt"]` daba $251.6bn frente a los $153.0bn de
+    `balance_sheet.loc["Total Debt"]` (que sí coincide exacto con Alpha
+    Vantage). Reproduce ese caso: `.info` y `.balance_sheet` en
+    desacuerdo deliberado -- debe ganar `.balance_sheet`, la misma
+    fuente que ya usa (y siempre usó, sin este bug) historical_financials()."""
+    ticker = FakeTicker(FINANCIALS, BALANCE_SHEET, CASHFLOW,
+                         {**INFO, "totalDebt": 999.0, "totalCash": 999.0}, ticker="TEST")
+    snapshot = market_snapshot(ticker)
+    assert snapshot["total_debt"] == pytest.approx(60.0)  # de BALANCE_SHEET, no de info
+    assert snapshot["cash"] == pytest.approx(10.0)
+
+
+def test_market_snapshot_falls_back_to_info_when_balance_sheet_unavailable():
+    """Si `.balance_sheet` viene vacío (yfinance a veces lo devuelve así
+    para tickers con datos incompletos), cae a `.info` como mejor
+    esfuerzo en vez de fallar -- degradación, no un crash."""
+    ticker = FakeTicker(FINANCIALS, pd.DataFrame(), CASHFLOW, INFO, ticker="TEST")
+    snapshot = market_snapshot(ticker)
+    assert snapshot["total_debt"] == pytest.approx(60.0)  # de info, único disponible
+    assert snapshot["cash"] == pytest.approx(10.0)
+
+
 def test_market_snapshot_prefers_financial_currency_over_quote_currency():
     """Auditoría sesión 15/16, hallazgo M5: un ADR puede cotizar en USD
     ("currency") con estados financieros en otra divisa

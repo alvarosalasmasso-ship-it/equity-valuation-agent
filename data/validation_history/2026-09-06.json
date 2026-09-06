@@ -189,12 +189,12 @@
       "tickers": [
         {
           "ticker": "KO",
-          "wacc": 0.05728783954122538,
-          "implied_price": 70.10614020792431,
+          "wacc": 0.05728990543066095,
+          "implied_price": 68.39786554131842,
           "market_price": 88.07,
           "analyst_target_price": 94.69565,
-          "deviation_vs_market": -0.2039725194967149,
-          "deviation_vs_consensus": -0.2596688421493034,
+          "deviation_vs_market": -0.223369302358142,
+          "deviation_vs_consensus": -0.2777084740289715,
           "peer_ev_ebitda_multiple": 17.317999999999998,
           "implied_expectations": [
             {
@@ -202,8 +202,8 @@
               "target_price": 88.07,
               "assumed_revenue_growth": 0.03689014114187783,
               "assumed_terminal_growth": 0.025,
-              "implied_revenue_growth": 0.08254394531249998,
-              "implied_terminal_growth": 0.03260805164421491,
+              "implied_revenue_growth": 0.08649902343749999,
+              "implied_terminal_growth": 0.0331518617260393,
               "terminal_growth_fragile": true
             },
             {
@@ -211,20 +211,20 @@
               "target_price": 94.69565,
               "assumed_revenue_growth": 0.03689014114187783,
               "assumed_terminal_growth": 0.025,
-              "implied_revenue_growth": 0.09759521484375,
-              "implied_terminal_growth": 0.03458441241969662,
+              "implied_revenue_growth": 0.101385498046875,
+              "implied_terminal_growth": 0.03504190148249928,
               "terminal_growth_fragile": true
             }
           ]
         },
         {
           "ticker": "PG",
-          "wacc": 0.05593085588678773,
-          "implied_price": 218.8178013914004,
+          "wacc": 0.05583827261202483,
+          "implied_price": 219.37573077704505,
           "market_price": 146.44,
           "analyst_target_price": 160.6087,
-          "deviation_vs_market": 0.49424884861650087,
-          "deviation_vs_consensus": 0.362428071402112,
+          "deviation_vs_market": 0.4980588007173248,
+          "deviation_vs_consensus": 0.365901914261463,
           "peer_ev_ebitda_multiple": 21.945999999999998,
           "implied_expectations": [
             {
@@ -232,8 +232,8 @@
               "target_price": 146.44,
               "assumed_revenue_growth": 0.020025694093399382,
               "assumed_terminal_growth": 0.025,
-              "implied_revenue_growth": -0.0589324951171875,
-              "implied_terminal_growth": 0.00044736749391877036,
+              "implied_revenue_growth": -0.059399414062499996,
+              "implied_terminal_growth": 0.0003306559704542234,
               "terminal_growth_fragile": false
             },
             {
@@ -241,20 +241,20 @@
               "target_price": 160.6087,
               "assumed_revenue_growth": 0.020025694093399382,
               "assumed_terminal_growth": 0.025,
-              "implied_revenue_growth": -0.041395568847656244,
-              "implied_terminal_growth": 0.007913628594451508,
+              "implied_revenue_growth": -0.041876220703124994,
+              "implied_terminal_growth": 0.007792481165793548,
               "terminal_growth_fragile": false
             }
           ]
         },
         {
           "ticker": "JNJ",
-          "wacc": 0.05894719358948439,
-          "implied_price": 357.7821391213728,
+          "wacc": 0.058944448638876684,
+          "implied_price": 357.8295474468724,
           "market_price": 275.23,
           "analyst_target_price": 275.63635,
-          "deviation_vs_market": 0.29993873895059675,
-          "deviation_vs_consensus": 0.2980223367541066,
+          "deviation_vs_market": 0.3001109887979958,
+          "deviation_vs_consensus": 0.2981943326664731,
           "peer_ev_ebitda_multiple": 19.433,
           "implied_expectations": [
             {
@@ -262,8 +262,8 @@
               "target_price": 275.23,
               "assumed_revenue_growth": 0.05599284954178807,
               "assumed_terminal_growth": 0.025,
-              "implied_revenue_growth": 0.00125885009765625,
-              "implied_terminal_growth": 0.01047267745088988,
+              "implied_revenue_growth": 0.0012313842773437498,
+              "implied_terminal_growth": 0.010465920885703178,
               "terminal_growth_fragile": false
             },
             {
@@ -271,8 +271,8 @@
               "target_price": 275.63635,
               "assumed_revenue_growth": 0.05599284954178807,
               "assumed_terminal_growth": 0.025,
-              "implied_revenue_growth": 0.0015609741210937502,
-              "implied_terminal_growth": 0.010574477715336265,
+              "implied_revenue_growth": 0.00153350830078125,
+              "implied_terminal_growth": 0.010567719390995427,
               "terminal_growth_fragile": false
             }
           ]
@@ -291,18 +291,18 @@
       },
       "summary": {
         "n": 3,
-        "mean_abs_deviation_vs_market": 0.3327200356879375,
-        "median_abs_deviation_vs_market": 0.29993873895059675,
-        "mean_abs_deviation_vs_consensus": 0.30670641676850735,
-        "median_abs_deviation_vs_consensus": 0.2980223367541066
+        "mean_abs_deviation_vs_market": 0.3405130306244875,
+        "median_abs_deviation_vs_market": 0.3001109887979958,
+        "mean_abs_deviation_vs_consensus": 0.31393490698563586,
+        "median_abs_deviation_vs_consensus": 0.2981943326664731
       }
     }
   },
   "combined_summary": {
     "n": 8,
-    "mean_abs_deviation_vs_market": 0.41815528081088293,
-    "median_abs_deviation_vs_market": 0.4166493901312459,
-    "mean_abs_deviation_vs_consensus": 0.3975543297878838,
-    "median_abs_deviation_vs_consensus": 0.33307076823574205
+    "mean_abs_deviation_vs_market": 0.4210776539120892,
+    "median_abs_deviation_vs_market": 0.41855436618165787,
+    "mean_abs_deviation_vs_consensus": 0.400265013619307,
+    "median_abs_deviation_vs_consensus": 0.3348076896654176
   }
 }
