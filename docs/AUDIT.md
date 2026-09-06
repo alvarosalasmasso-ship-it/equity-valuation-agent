@@ -30,7 +30,7 @@ reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
 y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
-**1 hallazgo crítico (✅ corregido), 14 importantes (10 ✅ corregidos —
+**1 hallazgo crítico (✅ corregido), 15 importantes (10 ✅ corregidos —
 I6/I7/I8 de la auditoría matemática/financiera a fondo, I9/I10 de una
 prueba de estrés con 11 tickers reales ("como si un banco fuese a
 usarla"), I12 (aviso de hiper-crecimiento extremo, corrección parcial:
@@ -40,15 +40,21 @@ mal para GOOGL/META, corrige la desviación media del universo piloto de
 I4 (con nueva evidencia real de contaminación de WACC entre
 comparables heterogéneos, grupo de semiconductores), I11 (DCF FCFF no
 encaja con bancos/REITs), I14 (reverse DCF solo resuelve crecimiento,
-no margen — hallazgo real con AMD)), 8 moderados (**todos
+no margen — hallazgo real con AMD)), **1 abierto — I15** (`tax_rate`
+proyectado sin detección de outliers, a diferencia de margen/CapEx/
+D&A/ΔNWC — hallazgo real con VRTX, precio implícito negativo pese a
+ROIC=25.4%>>WACC), 8 moderados (**todos
 cerrados**: 7 ✅ corregidos incluido M7 en el Lote A y M8 (evaluación
 del sector Utilities: yfinance no reportaba D&A para D bajo la etiqueta
 estándar), 1 ✅ decisión explícita investigada — M2 (con nueva evidencia
 de fragilidad sistemática de Gordon Growth en todo el sector Utilities,
 no solo un caso puntual), y M6 recién investigado con evidencia
 directa del Excel de referencia y también cerrado), 3 informativos (1
-✅ corregido — N2 —, 2 sin acción necesaria). Con esto, **no queda
-ningún hallazgo moderado o importante abierto** — I12 se corrigió
+✅ corregido — N2 —, 2 sin acción necesaria). Con esto, **queda un
+único hallazgo importante abierto (I15)** — candidato concreto para la
+próxima sesión, dejado sin corregir a propósito por falta de evidencia
+suficiente sobre qué hacer con un outlier de `tax_rate` cuando el
+propio supuesto se mantiene plano por diseño (M6). I12 se corrigió
 parcialmente (aviso, sin umbral de ajuste automático por falta de
 evidencia objetiva, mismo criterio que el resto del proyecto).**
 La sesión 17 añadió una auditoría explícita del rigor matemático y
@@ -729,6 +735,68 @@ ya dada por `engine.sensitivity` — mezclar ambas herramientas sin
 pensarlo bien podría confundir más de lo que aclara). Queda como
 candidato concreto para una futura sesión, no como pendiente indefinido
 sin dueño.
+
+---
+
+### I15. `tax_rate` proyectado se calcula como media histórica SIN detección de outliers — a diferencia de margen/CapEx/D&A/ΔNWC — hallazgo abierto (sesión 17)
+
+**Qué es:** evaluando un grupo real de biotech/farma (REGN, VRTX,
+MRNA, BIIB, vía yfinance), **VRTX** — una compañía que crea valor de
+forma clara (ROIC=25.4% vs WACC=6.7%) y con un crecimiento de ingresos
+razonable asumido (10.4%/año) — dio un precio implícito conservador
+**NEGATIVO de -$133.78** frente a un precio de mercado de $546.12.
+Investigado con el desglose de la proyección: el `tax_rate` que
+alimenta los 5 años del horizonte explícito sale **115.9%** — un tipo
+impositivo matemáticamente imposible (más del 100% del beneficio antes
+de impuestos). La causa raíz: `default_assumptions_from_history()`
+(línea 375, `engine/projections.py`) calcula `tax_rate` como
+`margin_window["tax_rate"].dropna().mean()` — una media aritmética
+simple del histórico, **sin ningún guard de outliers**, a diferencia
+de margen EBIT/CapEx/D&A/ΔNWC, que sí pasan por
+`_margin_fade_from_recent_to_average()` con detección Iglewicz &
+Hoaglin (z modificado, umbral 3.5). El histórico real de VRTX:
+tax_rate = 21.5% (2022), 17.4% (2023), **315.5% (2024)**, 14.9% (2025)
+— el año 2024 es un outlier severo causado por un EBIT que colapsó a
+$279M (cargo de I+D en proceso por la adquisición de Alpine Immune
+Sciences, ~$4.9bn, un evento real y no recurrente, no un error de
+datos), mientras el tax_provision no colapsó proporcionalmente. Con
+`lookback_years=3`, ese único año arrastra la media a 115.9%.
+
+**Por qué es un hallazgo distinto de I10:** I10 (ya corregido) avisa
+cuando el FCF proyectado sale negativo, sea cual sea la causa — y ese
+aviso SÍ dispara aquí. Pero la causa concreta en este caso no es
+consumo de NWC ni reversión de margen a una media con pérdidas reales
+(los dos mecanismos ya documentados en I10): es un tercer mecanismo no
+cubierto hasta ahora — **`tax_rate` es un ratio inherentemente
+inestable cuando su denominador (`pretax_income`) se acerca a cero**,
+a diferencia de los ratios de margen/CapEx/D&A/ΔNWC, que dividen entre
+ingresos (un denominador que nunca es cercano a cero para una empresa
+operativa real). Un solo año con `pretax_income` casi nulo puede
+producir un `tax_rate` de cientos o miles por ciento sin que el propio
+dato esté "mal" — es aritméticamente correcto, solo inutilizable como
+insumo de una media plana a 5 años.
+
+**Por qué se deja abierto, no se corrige en esta sesión:** aplicar el
+mismo detector de outliers (Iglewicz & Hoaglin) que ya usan
+margen/CapEx/D&A/ΔNWC sería mecánicamente directo, pero `tax_rate` se
+mantiene deliberadamente PLANO (sin fade, decisión M6 ya investigada y
+cerrada con evidencia del Excel de referencia) — a diferencia de esos
+otros supuestos, que si son outliers se mantienen como año 1 pero
+SÍ revierten hacia la media histórica el resto del horizonte,
+amortiguando el efecto. Con `tax_rate` plano, marcar 2024 como outlier
+y qué hacer después (¿excluirlo de la media? ¿usar el tipo estatutario
+como fallback igual que se rechazó para el caso general en M6?) no
+tiene una respuesta obvia sin investigarlo con más casos reales
+primero — mismo criterio que I12/I14: no ajustar un número sin
+evidencia que lo justifique. Candidato concreto para una futura sesión.
+
+**Verificado:** reproducido con datos reales de yfinance (VRTX,
+histórico completo mostrado arriba); confirmado que el mecanismo es
+`margin_window["tax_rate"].dropna().mean()` sin guard, línea 375 de
+`engine/projections.py`. El aviso de FCF negativo de I10 sí se
+dispara para este caso (`gordon_growth_terminal_value()`), pero no
+explica la causa raíz al usuario -- solo dice que el FCF es negativo,
+no que el `tax_rate` proyectado es imposible.
 
 ---
 

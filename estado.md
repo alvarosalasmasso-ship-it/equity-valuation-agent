@@ -1574,14 +1574,45 @@ cualquier sector regulado de bajo riesgo**, no una excepción aislada.
 
 **227 tests en total, todos en verde.**
 
-## 26. Próximo paso inmediato
+## 26. Sesión 17 (continuación) — Grupo biotech/farma (REGN/VRTX/MRNA/BIIB), vía yfinance: hallazgo real sobre `tax_rate`
 
-0. Commitear los hallazgos pendientes de esta sesión (M8, addenda a
-   M2/I4, I14) con confirmación explícita del usuario.
-1. Seguir analizando más empresas/sectores (petición explícita y
-   activa del usuario) — siguientes candidatos naturales: un sector
-   de alto crecimiento no-tech (p.ej. biotech/farma) o small-caps para
-   probar el límite inferior de cobertura de datos.
+Sector elegido por contraste: alto I+D, márgenes volátiles año a año
+por cargos de adquisición/impairment, un caso con EBIT negativo real
+(MRNA, colapso de ingresos post-COVID).
+
+**I15 (nuevo, hallazgo abierto)**: **VRTX** — compañía que crea valor
+de forma clara (ROIC=25.4% vs WACC=6.7%), con un crecimiento asumido
+razonable (10.4%/año) — dio un precio implícito conservador **NEGATIVO
+de -$133.78** frente a mercado $546.12. Causa raíz: el `tax_rate`
+proyectado sale **115.9%** (imposible) porque `default_assumptions_
+from_history()` calcula `tax_rate` como media histórica simple, SIN
+ningún guard de outliers (a diferencia de margen/CapEx/D&A/ΔNWC, que
+sí pasan por detección Iglewicz & Hoaglin). El histórico real de VRTX:
+21.5%/17.4%/**315.5%**/14.9% — 2024 es un outlier severo por un cargo
+real de I+D en proceso (adquisición de Alpine Immune Sciences, ~$4.9bn)
+que colapsó el EBIT a $279M sin que el tax_provision colapsara
+proporcionalmente. Mecanismo nuevo, distinto de I10: `tax_rate` divide
+entre `pretax_income` (puede acercarse a cero), no entre ingresos como
+el resto de ratios — inestabilidad estructural del propio ratio, no
+solo de la empresa. Se deja **abierto a propósito**: aplicar el mismo
+detector de outliers no es obvio cuando `tax_rate` se mantiene plano
+por diseño (M6) — qué hacer con el año marcado como outlier necesita
+más casos reales antes de decidir. Único hallazgo importante que queda
+abierto en todo `docs/AUDIT.md` tras esta sesión.
+
+**227 tests en total** (sin cambios de código en esta sección — I15 es
+un hallazgo documentado, no corregido).
+
+## 27. Próximo paso inmediato
+
+0. Commitear la documentación de I15 (biotech/farma) con confirmación
+   explícita del usuario.
+1. Investigar/corregir I15 con más casos reales antes de decidir el
+   guard correcto para `tax_rate` — candidato concreto para la próxima
+   sesión.
+2. Seguir analizando más empresas/sectores si el usuario lo pide —
+   candidato natural: small-caps para probar el límite inferior de
+   cobertura de datos.
 0.5. SEC EDGAR — retomar si se quiere reducir la dependencia de la
    cuota de Alpha Vantage: falta D&A fiable (sin resolver) y construir
    el módulo completo con lo ya validado para el resto de campos.
