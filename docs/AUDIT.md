@@ -28,7 +28,7 @@ y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
 **1 hallazgo crítico (✅ corregido), 4 importantes (2 ✅ corregidos), 5
-moderados (2 ✅ corregidos), 3 informativos.** Se está corrigiendo uno
+moderados (3 ✅ corregidos), 3 informativos.** Se está corrigiendo uno
 por uno, en el orden de prioridad de la sección final — este documento
 se actualiza a medida que cada uno se cierra.
 
@@ -314,7 +314,7 @@ estos rangos — el cambio es puramente defensivo, no modifica ningún
 resultado existente. 122 tests en total, todos en verde. Servidor
 Streamlit reiniciado y verificado arrancando limpio tras el cambio.
 
-### M4. `gordon_growth_terminal_value()` se calcula siempre, incluso con `gordon_weight=0`
+### M4. `gordon_growth_terminal_value()` se calcula siempre, incluso con `gordon_weight=0` — ✅ CORREGIDO (sesión 15)
 
 Visto en `run_dcf()`: el cálculo y el aviso de spread WACC-g estrecho
 se disparan aunque el resultado de Gordon Growth no vaya a usarse en
@@ -324,6 +324,35 @@ ponderada da el número correcto), pero si un usuario pone
 Gordon Growth en un caso con spread estrecho, seguirá viendo el aviso
 —que en ese caso concreto ya no es relevante para su resultado— y
 gastando cómputo en un valor que se descarta.
+
+**Hallazgo más serio de lo que parecía al auditar solo el aviso:**
+`gordon_growth_terminal_value()` también lanza `ValueError` si
+`wacc <= terminal_growth_rate`. Antes del fix, poner `gordon_weight=0`
+precisamente para esquivar un caso patológico de Gordon Growth (WACC
+por debajo de g, o un spread demasiado estrecho) **no lo esquivaba en
+absoluto** — `run_dcf()` seguía llamando a la función y el DCF entero
+fallaba con una excepción, pese a que el resultado de Gordon iba a
+descartarse por completo en el blend. El "peso 0" no protegía nada.
+
+**Cómo se corrigió:** `run_dcf()` ahora calcula `gordon_tv` solo cuando
+puede llegar a contar para el resultado: si hay un múltiplo de salida
+disponible Y `gordon_weight > 0`, o si no hay múltiplo de salida (caso
+en el que Gordon es la única fuente de valor terminal posible, sin
+importar el peso). Con `gordon_weight=0` y múltiplo disponible,
+`gordon_terminal_value` queda en `0.0` y ni se calcula ni se avisa.
+
+**Verificado:** 4 tests de regresión nuevos — confirman que (1) un caso
+que antes lanzaba `ValueError` con `gordon_weight=0` ahora funciona sin
+error y usa el múltiplo de salida puro; (2) un caso con spread estrecho
+y `gordon_weight=0` ya no emite el aviso (verificado forzando
+`warnings.simplefilter("error")` para que cualquier aviso residual
+falle el test); (3) sin múltiplo de salida, Gordon sigue calculándose
+pese a `gordon_weight=0` (es la única fuente posible); (4) con
+`gordon_weight>0`, Gordon se sigue calculando y contribuyendo al blend
+normalmente. Revalorado AMZN (`gordon_weight=0.8`, camino no afectado
+por el fix): precio implícito idéntico, **$98.00**, confirmando que no
+cambia ningún resultado existente. 126 tests en total, todos en verde.
+Servidor Streamlit reiniciado y verificado arrancando limpio.
 
 ### M5. Sin verificación de divisa de reporte
 
@@ -386,7 +415,7 @@ aviso en la interfaz.
 - **El múltiplo de salida se corrigió** de "propio de la empresa" a
   "mediana de comparables" (sesión 14), con el efecto mixto reportado
   con honestidad en vez de maquillado.
-- **122 tests, cero dependen de red** — toda la suite corre offline con
+- **126 tests, cero dependen de red** — toda la suite corre offline con
   fixtures fieles al formato real de las APIs.
 - **Capa generativa desacoplada del cálculo por diseño**, no como
   parche — el LLM nunca ve datos crudos, solo un paquete ya cerrado.
@@ -407,5 +436,8 @@ aviso en la interfaz.
 5. ~~**M3 (validación de `wacc`/`gordon_weight` en `DCFInputs`)**~~ — ✅
    corregido en esta sesión (arreglo mecánico y defensivo, no cambia
    ningún resultado del pipeline real).
-6. Resto, según interés — I2 y M5 son limitaciones más estructurales
+6. ~~**M4 (Gordon Growth se calcula/avisa aunque su peso sea 0)**~~ — ✅
+   corregido en esta sesión (resultó más serio de lo previsto: podía
+   bloquear con `ValueError` un DCF que `gordon_weight=0` debía esquivar).
+7. Resto, según interés — I2 y M5 son limitaciones más estructurales
    (dependen de datos que no tenemos fácilmente) que bugs a corregir.

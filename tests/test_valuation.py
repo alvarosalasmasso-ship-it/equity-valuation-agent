@@ -282,6 +282,68 @@ def test_gordon_growth_requires_wacc_above_terminal_growth():
         run_dcf(inputs)
 
 
+def test_run_dcf_skips_gordon_growth_when_weight_is_zero_and_exit_multiple_present():
+    """Auditoría sesión 15, hallazgo M4: con gordon_weight=0 y un múltiplo
+    de salida disponible, Gordon Growth es irrelevante para el resultado
+    -- antes se calculaba igual de todos modos. Aquí wacc<=terminal_growth_rate
+    haría que gordon_growth_terminal_value() lance ValueError si se
+    llamara; con el fix, run_dcf() no debe siquiera intentarlo."""
+    inputs = DCFInputs(
+        ebit=[100], tax_rate=[0.2], d_and_a=[10], capex=[10], change_in_nwc=[0],
+        wacc=0.02, terminal_growth_rate=0.03, diluted_shares=1,
+        terminal_ev_ebitda_multiple=10.0, gordon_weight=0.0,
+    )
+    result = run_dcf(inputs)
+    assert result.gordon_terminal_value == 0.0
+    assert result.terminal_value == pytest.approx(result.exit_multiple_terminal_value)
+
+
+def test_run_dcf_skips_gordon_growth_warning_when_weight_is_zero():
+    """Mismo hallazgo M4, pero para el caso de aviso (no error): con
+    gordon_weight=0, el margen WACC-g estrecho de Gordon es irrelevante
+    -- no debe emitirse el aviso de 'margen prudente' para un componente
+    que no cuenta en el resultado."""
+    import warnings as warnings_module
+
+    inputs = DCFInputs(
+        ebit=[100], tax_rate=[0.2], d_and_a=[10], capex=[10], change_in_nwc=[0],
+        wacc=0.045, terminal_growth_rate=0.025, diluted_shares=1,
+        terminal_ev_ebitda_multiple=10.0, gordon_weight=0.0,
+    )
+    with warnings_module.catch_warnings():
+        warnings_module.simplefilter("error")
+        run_dcf(inputs)  # no debe lanzar (ni avisar)
+
+
+def test_run_dcf_still_computes_gordon_growth_when_no_exit_multiple_even_with_zero_weight():
+    """Si no hay múltiplo de salida, Gordon Growth es la única fuente de
+    valor terminal posible -- debe calcularse sin importar gordon_weight
+    (que en ese caso no tiene ningún múltiplo con el que ponderar)."""
+    inputs = DCFInputs(
+        ebit=[100], tax_rate=[0.2], d_and_a=[10], capex=[10], change_in_nwc=[0],
+        wacc=0.08, terminal_growth_rate=0.02, diluted_shares=1,
+        terminal_ev_ebitda_multiple=None, gordon_weight=0.0,
+    )
+    result = run_dcf(inputs)
+    assert result.gordon_terminal_value > 0.0
+    assert result.terminal_value == pytest.approx(result.gordon_terminal_value)
+
+
+def test_run_dcf_still_computes_gordon_growth_when_weight_is_positive():
+    """Con gordon_weight>0 y múltiplo de salida presente, Gordon SÍ debe
+    calcularse y contribuir al blend -- no solo se desactivó por error."""
+    inputs = DCFInputs(
+        ebit=[100], tax_rate=[0.2], d_and_a=[10], capex=[10], change_in_nwc=[0],
+        wacc=0.08, terminal_growth_rate=0.02, diluted_shares=1,
+        terminal_ev_ebitda_multiple=10.0, gordon_weight=0.5,
+    )
+    result = run_dcf(inputs)
+    assert result.gordon_terminal_value > 0.0
+    assert result.terminal_value == pytest.approx(
+        0.5 * result.gordon_terminal_value + 0.5 * result.exit_multiple_terminal_value
+    )
+
+
 def test_gordon_growth_warns_on_thin_wacc_growth_spread():
     """WACC-g = 2% < MIN_PRUDENT_WACC_GROWTH_SPREAD (3%) -- caso real
     encontrado con PG/JNJ (beta bajo -> WACC bajo, g fijo en 2.5%)."""

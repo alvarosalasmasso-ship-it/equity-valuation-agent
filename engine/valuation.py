@@ -294,12 +294,28 @@ def run_dcf(inputs: DCFInputs) -> DCFResult:
     periods = discount_periods(len(ufcf), inputs.stub_fraction)
     pv_ufcf = pv_of_cash_flows(ufcf, inputs.wacc, periods, inputs.stub_fraction)
 
-    gordon_tv = gordon_growth_terminal_value(ufcf[-1], inputs.wacc, inputs.terminal_growth_rate)
-
     exit_tv = None
     if inputs.terminal_ev_ebitda_multiple is not None:
         terminal_ebitda = inputs.ebit[-1] + inputs.d_and_a[-1]
         exit_tv = exit_multiple_terminal_value(terminal_ebitda, inputs.terminal_ev_ebitda_multiple)
+
+    # Auditoría sesión 15, hallazgo M4: solo calcular Gordon Growth cuando
+    # su resultado puede llegar a contar para el valor terminal. Si hay un
+    # múltiplo de salida disponible Y gordon_weight=0, el componente
+    # Gordon es completamente irrelevante -- calcularlo igual (como se
+    # hacía antes) no solo emitía un aviso sin sentido sobre un resultado
+    # descartado, sino que podía bloquear con un ValueError un DCF válido
+    # (wacc<=terminal_growth_rate) que el usuario decidió deliberadamente
+    # esquivar bajando el peso a 0. Si no hay múltiplo de salida, Gordon
+    # es la única fuente de valor terminal posible, así que sí hace falta
+    # sin importar el peso configurado.
+    needs_gordon = exit_tv is None or inputs.gordon_weight > 0.0
+    gordon_tv = (
+        gordon_growth_terminal_value(ufcf[-1], inputs.wacc, inputs.terminal_growth_rate)
+        if needs_gordon else 0.0
+    )
+
+    if exit_tv is not None:
         terminal_value = blended_terminal_value(gordon_tv, exit_tv, inputs.gordon_weight)
     else:
         terminal_value = gordon_tv

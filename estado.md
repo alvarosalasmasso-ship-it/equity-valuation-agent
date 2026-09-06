@@ -836,6 +836,32 @@ resultado existente. 4 tests de regresión nuevos. **122 tests en total,
 todos en verde.** Servidor Streamlit reiniciado y verificado arrancando
 limpio.
 
+### Detalle — M4 corregido: Gordon Growth ya no se calcula ni avisa con peso 0
+
+Resultó más serio de lo que parecía al leer solo la descripción del
+hallazgo: `run_dcf()` llamaba siempre a `gordon_growth_terminal_value()`,
+que puede lanzar `ValueError` si `wacc<=terminal_growth_rate`. Con
+`gordon_weight=0` puesto precisamente para esquivar un caso patológico
+de Gordon, el DCF **igualmente fallaba** — el peso 0 no protegía nada,
+porque la función se llamaba y podía reventar antes de que su resultado
+se descartara en el blend.
+
+**Corregido:** `run_dcf()` ahora calcula `gordon_tv` solo si puede
+llegar a contar — múltiplo de salida disponible y `gordon_weight>0`, o
+sin múltiplo de salida (Gordon es entonces la única fuente posible, sin
+importar el peso). Con `gordon_weight=0` y múltiplo presente,
+`gordon_terminal_value` queda en `0.0`, sin calcularse ni avisar.
+
+**Verificado:** 4 tests de regresión nuevos (caso que antes lanzaba
+`ValueError` ahora funciona; aviso de spread estrecho ya no se emite
+con peso 0, verificado forzando que cualquier aviso falle el test;
+Gordon se sigue calculando sin múltiplo de salida pese a peso 0; Gordon
+se sigue calculando y contribuyendo con peso>0). Revalorado AMZN
+(`gordon_weight=0.8`, camino no afectado): precio idéntico, **$98.00**
+— confirma que no cambia ningún resultado existente. **126 tests en
+total, todos en verde.** Servidor Streamlit reiniciado y verificado
+arrancando limpio.
+
 ## 5. Próximo paso inmediato
 
 Seguir corrigiendo uno por uno, en el orden de `docs/AUDIT.md`:
@@ -845,10 +871,10 @@ Seguir corrigiendo uno por uno, en el orden de `docs/AUDIT.md`:
 3. ~~I1 — Risk-free rate en vivo.~~ ✅ Corregido sesión 15 (continuación).
 4. ~~M1 — Fijar versiones en `requirements.txt`.~~ ✅ Corregido sesión 15 (continuación).
 5. ~~M3 — Validación de `wacc`/`gordon_weight` en `DCFInputs`.~~ ✅ Corregido sesión 15 (continuación).
-6. Resto según interés — I2 y M5 son limitaciones estructurales, no
+6. ~~M4 — Gordon Growth se calcula/avisa aunque su peso sea 0.~~ ✅ Corregido sesión 15 (continuación).
+7. Resto según interés — I2 y M5 son limitaciones estructurales, no
    arreglos rápidos. Quedan pendientes: M2 (`gordon_weight=0.8` sin
-   justificación propia), M4 (Gordon Growth se calcula y avisa aunque
-   su peso sea 0), M5 (sin verificación de divisa de reporte), I2
+   justificación propia), M5 (sin verificación de divisa de reporte), I2
    (Treasury Stock Method construido pero no usado — estructural), I4
    (universo de comparables pequeño — estructural).
 
