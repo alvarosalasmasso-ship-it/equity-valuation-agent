@@ -30,20 +30,21 @@ reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
 y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
-**1 hallazgo crítico (✅ corregido), 15 importantes (10 ✅ corregidos —
+**1 hallazgo crítico (✅ corregido), 15 importantes (11 ✅ corregidos —
 I6/I7/I8 de la auditoría matemática/financiera a fondo, I9/I10 de una
 prueba de estrés con 11 tickers reales ("como si un banco fuese a
 usarla"), I12 (aviso de hiper-crecimiento extremo, corrección parcial:
 avisa, no ajusta el número), I13 (precio de mercado de Alpha Vantage
 mal para GOOGL/META, corrige la desviación media del universo piloto de
-41.82% a 34.21%) —, 4 ✅ aceptados/documentados como limitación — I2,
-I4 (con nueva evidencia real de contaminación de WACC entre
-comparables heterogéneos, grupo de semiconductores), I11 (DCF FCFF no
-encaja con bancos/REITs), I14 (reverse DCF solo resuelve crecimiento,
-no margen — hallazgo real con AMD)), **1 abierto — I15** (`tax_rate`
-proyectado sin detección de outliers, a diferencia de margen/CapEx/
-D&A/ΔNWC — hallazgo real con VRTX, precio implícito negativo pese a
-ROIC=25.4%>>WACC), 9 moderados (**todos
+41.82% a 34.21%), I15 (tax_rate proyectado sin detección de outliers,
+corrección parcial: avisa cuando el resultado final cae fuera de una
+banda plausible, sin ajustar el número — la exclusión automática se
+probó y se rechazó, dispara falsos positivos en 9 de 24 tickers reales)
+—, 4 ✅ aceptados/documentados como limitación — I2, I4 (con nueva
+evidencia real de contaminación de WACC entre comparables heterogéneos,
+grupo de semiconductores), I11 (DCF FCFF no encaja con bancos/REITs),
+I14 (reverse DCF solo resuelve crecimiento, no margen — hallazgo real
+con AMD)), 9 moderados (**todos
 cerrados**: 8 ✅ corregidos incluido M7 en el Lote A, M8 (evaluación
 del sector Utilities: yfinance no reportaba D&A para D bajo la etiqueta
 estándar) y M9 (grupo small/mid-cap: `build_peer_wacc()` sin el mismo
@@ -53,13 +54,11 @@ evidencia de fragilidad sistemática de Gordon Growth en todo el sector
 Utilities, no solo un caso puntual), y M6 recién investigado con
 evidencia directa del Excel de referencia y también cerrado), 3
 informativos (1
-✅ corregido — N2 —, 2 sin acción necesaria). Con esto, **queda un
-único hallazgo importante abierto (I15)** — candidato concreto para la
-próxima sesión, dejado sin corregir a propósito por falta de evidencia
-suficiente sobre qué hacer con un outlier de `tax_rate` cuando el
-propio supuesto se mantiene plano por diseño (M6). I12 se corrigió
-parcialmente (aviso, sin umbral de ajuste automático por falta de
-evidencia objetiva, mismo criterio que el resto del proyecto).**
+✅ corregido — N2 —, 2 sin acción necesaria). Con esto, **no queda
+ningún hallazgo moderado o importante abierto** — I12 e I15 se
+corrigieron parcialmente (avisan, sin ajuste automático por falta de
+evidencia objetiva suficiente para justificarlo, mismo criterio en
+ambos casos).**
 La sesión 17 añadió una auditoría explícita del rigor matemático y
 financiero del motor (`engine/valuation.py`, `wacc_builder.py`,
 `ratios.py`, `comps.py`) verificado fórmula a fórmula contra teoría
@@ -741,7 +740,7 @@ sin dueño.
 
 ---
 
-### I15. `tax_rate` proyectado se calcula como media histórica SIN detección de outliers — a diferencia de margen/CapEx/D&A/ΔNWC — hallazgo abierto (sesión 17)
+### I15. `tax_rate` proyectado se calcula como media histórica SIN detección de outliers — a diferencia de margen/CapEx/D&A/ΔNWC — ✅ CORREGIDO parcialmente (sesión 17, continuación): aviso añadido, sin ajuste automático del número
 
 **Qué es:** evaluando un grupo real de biotech/farma (REGN, VRTX,
 MRNA, BIIB, vía yfinance), **VRTX** — una compañía que crea valor de
@@ -779,27 +778,62 @@ producir un `tax_rate` de cientos o miles por ciento sin que el propio
 dato esté "mal" — es aritméticamente correcto, solo inutilizable como
 insumo de una media plana a 5 años.
 
-**Por qué se deja abierto, no se corrige en esta sesión:** aplicar el
-mismo detector de outliers (Iglewicz & Hoaglin) que ya usan
-margen/CapEx/D&A/ΔNWC sería mecánicamente directo, pero `tax_rate` se
-mantiene deliberadamente PLANO (sin fade, decisión M6 ya investigada y
-cerrada con evidencia del Excel de referencia) — a diferencia de esos
-otros supuestos, que si son outliers se mantienen como año 1 pero
-SÍ revierten hacia la media histórica el resto del horizonte,
-amortiguando el efecto. Con `tax_rate` plano, marcar 2024 como outlier
-y qué hacer después (¿excluirlo de la media? ¿usar el tipo estatutario
-como fallback igual que se rechazó para el caso general en M6?) no
-tiene una respuesta obvia sin investigarlo con más casos reales
-primero — mismo criterio que I12/I14: no ajustar un número sin
-evidencia que lo justifique. Candidato concreto para una futura sesión.
+**Investigado con más casos reales antes de decidir el fix, no solo
+VRTX.** Se escaneó `tax_rate` histórico de los 24 tickers reales ya
+usados en la auditoría de esta sesión (5 sectores distintos): **5 de
+24 (20.8%)** tienen al menos un año individual fuera de un rango sano
+(AMD, INTC, NEE, VRTX, MRNA) — no es un caso aislado, es un patrón que
+aparece en 1 de cada 5 compañías reales, sobre todo en sectores con
+beneficio antes de impuestos cerca de cero (turnarounds, reestructuración,
+biotechs con pérdidas).
 
-**Verificado:** reproducido con datos reales de yfinance (VRTX,
-histórico completo mostrado arriba); confirmado que el mecanismo es
-`margin_window["tax_rate"].dropna().mean()` sin guard, línea 375 de
-`engine/projections.py`. El aviso de FCF negativo de I10 sí se
-dispara para este caso (`gordon_growth_terminal_value()`), pero no
-explica la causa raíz al usuario -- solo dice que el FCF es negativo,
-no que el `tax_rate` proyectado es imposible.
+**Primera hipótesis probada y RECHAZADA con datos reales:** excluir de
+la media el año detectado como outlier (mismo detector Iglewicz &
+Hoaglin, umbral 3.5, ya usado en `_detect_anchor_outlier`), aplicado a
+CUALQUIER año de la ventana (no solo el último, ya que el outlier de
+`tax_rate` no tiene por qué ser el año más reciente). Funciona bien
+para VRTX (115.9%→16.1%, coincide casi exacto con la banda real del
+propio Excel de referencia para AMZN, 15-18%, ver M6) y mejora MRNA
+levemente. Pero probado contra los 24 tickers completos, **dispara
+falsos positivos en 9 de 24** — casos de variación normal amplificada
+por el tamaño de muestra pequeño (n=3), no ítems no recurrentes reales.
+El caso más claro: **QCOM**, cuyo único año alto (56.2%) se excluye,
+dejando una media de **1.8%** — un número igual de irreal que el
+115.9% original, solo que menos obvio. Este es literalmente el mismo
+error, ya investigado y rechazado una vez, que motivó que
+`_margin_fade_from_recent_to_average()` NUNCA sustituya
+automáticamente el ancla de un fade (ver su docstring, sesión 17,
+Lote B) — con muestras de 2-3 años, un z-score no puede distinguir
+fiablemente "ítem no recurrente" de "variación normal amplificada por
+poca muestra". Repetir ese error para `tax_rate` habría sido ignorar
+una lección ya aprendida y documentada en el propio proyecto.
+
+**Corrección aplicada:** en vez de excluir/sustituir, se avisa cuando
+el `tax_rate` proyectado (la media ya calculada, sin tocar) cae fuera
+de una banda plausible de referencia (`TAX_RATE_PLAUSIBLE_RANGE =
+(-10%, 60%)`, regla de pulgar documentada en el código, mismo espíritu
+que `EXTREME_FLAT_GROWTH_WARNING_THRESHOLD` — no un tipo estatutario,
+M6 ya investigó y rechazó anclar a eso). Verificado contra los mismos
+24 tickers: la banda captura exactamente los 3 casos donde la MEDIA
+FINAL (no un año individual) resulta implausible — AMD (-17.9%), INTC
+(-31.0%), VRTX (115.9%) — con **cero falsos positivos** en los 21
+restantes (NEE y MRNA, pese a tener años individuales extremos, ya
+tienen una media final dentro de la banda y no disparan). El número
+NO se toca en ningún caso — mismo principio "avisar, no maquillar" que
+I10/I12/M2: el mensaje explica el mecanismo (año con beneficio antes
+de impuestos cerca de cero dentro de la ventana) y sugiere revisión
+manual o ampliar `lookback_years`, sin fabricar una sustitución sin
+evidencia suficiente para justificarla.
+
+**Verificado:** 2 tests de regresión nuevos en `test_projections.py`
+(caso VRTX con datos reales dispara el aviso sin alterar el número;
+25% plano no dispara nada). Re-verificado con el pipeline completo
+real (yfinance, sin llamadas a Alpha Vantage): VRTX sigue dando
+-$133.78 (sin cambios, correcto — el precio no se maquilla), pero
+ahora el aviso "tax_rate proyectado (115.9%) está muy fuera de un
+rango plausible..." aparece junto al resto de diagnósticos técnicos,
+dando al usuario la causa raíz real en vez de solo el síntoma (FCF
+negativo, ya cubierto por I10). 230 tests en total, todos en verde.
 
 ---
 

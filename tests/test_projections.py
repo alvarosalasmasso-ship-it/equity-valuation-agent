@@ -274,6 +274,48 @@ def test_default_assumptions_warns_on_extreme_flat_growth():
     assert assumptions.revenue_growth.start == pytest.approx(1.0, rel=1e-3)
 
 
+def test_default_assumptions_warns_on_implausible_tax_rate():
+    """Auditoría sesión 17, hallazgo I15: caso real encontrado con VRTX
+    -- un año con beneficio antes de impuestos casi nulo (cargo real de
+    I+D en proceso por una adquisición) produce un tax_rate anual de
+    315.5%, que arrastra la media de la ventana a 115.9% -- fuera de
+    cualquier rango plausible. Debe avisar, NUNCA sustituir el número
+    (mismo criterio que _margin_fade_from_recent_to_average, ya
+    investigado y rechazado para sustitución automática por exceso de
+    falsos positivos con muestras de 3 años)."""
+    revenue = [8930.7, 9869.2, 11020.1, 12001.3]
+    history = pd.DataFrame({
+        "fiscal_year": [2022, 2023, 2024, 2025],
+        "revenue": revenue,
+        "ebit": [r * 0.40 for r in revenue],
+        "d_and_a": [r * 0.02 for r in revenue],
+        "capex": [r * 0.04 for r in revenue],
+        "change_in_nwc": [None] + [r * 0.02 for r in revenue[1:]],
+        "tax_rate": [0.215, 0.174, 3.155, 0.149],
+    })
+    with pytest.warns(UserWarning, match="tax_rate proyectado"):
+        assumptions = default_assumptions_from_history(history, lookback_years=3)
+    assert assumptions.tax_rate == pytest.approx((0.174 + 3.155 + 0.149) / 3, rel=1e-6)
+
+
+def test_default_assumptions_does_not_warn_on_plausible_tax_rate():
+    """25% plano, dentro de la banda -- no debe disparar el aviso de I15."""
+    import warnings as warnings_module
+    revenue = [1000.0, 1100.0, 1210.0, 1331.0]
+    history = pd.DataFrame({
+        "fiscal_year": [2020, 2021, 2022, 2023],
+        "revenue": revenue,
+        "ebit": [r * 0.20 for r in revenue],
+        "d_and_a": [r * 0.05 for r in revenue],
+        "capex": [r * 0.08 for r in revenue],
+        "change_in_nwc": [None] + [r * 0.02 for r in revenue[1:]],
+        "tax_rate": [0.25] * 4,
+    })
+    with warnings_module.catch_warnings():
+        warnings_module.simplefilter("error")
+        default_assumptions_from_history(history, lookback_years=3)
+
+
 def test_default_assumptions_fades_margin_from_recent_actual_to_historical_average():
     """Histórico con tendencia de margen: 0.05, 0.05, 0.10, 0.20 (últimos
     3 años usados: 0.05, 0.10, 0.20 -> media = 0.1166...).

@@ -114,6 +114,31 @@ OUTLIER_MODIFIED_Z_THRESHOLD = 3.5
 # avisar, nunca para bloquear ni ajustar el número.
 EXTREME_FLAT_GROWTH_WARNING_THRESHOLD = 0.50
 
+# Sesión 17 (hallazgo I15, evaluación del grupo biotech/farma): a
+# diferencia de margen EBIT/D&A/CapEx/ΔNWC (que dividen entre ingresos,
+# un denominador que nunca se acerca a cero para una empresa operativa),
+# `tax_rate` divide entre `pretax_income`, que SÍ puede acercarse a cero
+# en un año de reestructuración/pérdidas/cargo no recurrente -- un solo
+# año así puede disparar un ratio de cientos por ciento (VRTX 2024:
+# 315.5%, tras un cargo real de I+D en proceso de una adquisición). Se
+# evaluó excluir el año outlier de la media (mismo mecanismo Iglewicz &
+# Hoaglin que ya usa `_detect_anchor_outlier`), pero probado contra los
+# 24 tickers reales ya usados en la auditoría de esta sesión, disparaba
+# en 9 de 24 -- muchos casos de variación normal amplificada por el
+# tamaño de muestra pequeño (p.ej. QCOM: excluir su único año alto
+# (56.2%) deja una media de 1.8%, igual de irreal que el original) --
+# el mismo error, ya investigado y rechazado, que motivó que
+# `_margin_fade_from_recent_to_average` NUNCA sustituya automáticamente
+# (ver su docstring). En vez de repetir ese error, se avisa sobre el
+# RESULTADO final si cae fuera de una banda plausible, sin tocar el
+# número -- verificado contra los mismos 24 tickers: solo 3 (AMD, INTC,
+# VRTX) caen fuera de esta banda, cero falsos positivos. Regla de
+# pulgar (no una ley exacta, mismo espíritu que
+# EXTREME_FLAT_GROWTH_WARNING_THRESHOLD): la banda no es un tipo
+# estatutario (M6 ya investigó y rechazó anclar a eso), es un rango
+# amplio informado por tipos efectivos reales observados esta sesión.
+TAX_RATE_PLAUSIBLE_RANGE = (-0.10, 0.60)
+
 
 def _detect_anchor_outlier(chronological_ratios: Sequence[float]) -> tuple[bool, float]:
     """Compara el último valor de la serie (candidato a ancla `start` del
@@ -375,6 +400,18 @@ def default_assumptions_from_history(history: pd.DataFrame, n_years: int = 5,
     tax_rate = margin_window["tax_rate"].dropna().mean()
     if pd.isna(tax_rate):
         raise ValueError("No hay tax_rate histórico disponible")
+    if not (TAX_RATE_PLAUSIBLE_RANGE[0] <= tax_rate <= TAX_RATE_PLAUSIBLE_RANGE[1]):
+        warnings.warn(
+            f"tax_rate proyectado ({tax_rate:.1%}) está muy fuera de un rango plausible "
+            f"({TAX_RATE_PLAUSIBLE_RANGE[0]:.0%} a {TAX_RATE_PLAUSIBLE_RANGE[1]:.0%}) -- se "
+            "mantiene sin ajustar (hallazgo I15, docs/AUDIT.md), pero probablemente refleja un "
+            "año con beneficio antes de impuestos cercano a cero dentro de la ventana histórica "
+            "(reestructuración, cargo no recurrente, pérdidas), donde el ratio tax_provision/"
+            "pretax_income se vuelve numéricamente inestable. Se proyecta PLANO (sin fade, "
+            "decisión M6) durante todo el horizonte y el valor terminal -- revisa manualmente "
+            "si conviene ajustar el escenario o ampliar `lookback_years`.",
+            stacklevel=2,
+        )
 
     return ProjectionAssumptions(
         n_years=n_years,

@@ -1625,13 +1625,47 @@ explícito ya usado en el otro modo. 1 test de regresión nuevo.
 
 **228 tests en total, todos en verde.**
 
-## 28. Próximo paso inmediato
+## 28. Sesión 17 (continuación) — I15 cerrado: banda de plausibilidad para `tax_rate`, sin exclusión automática
 
-0. Commitear M9 + el grupo small/mid-cap con confirmación explícita del
-   usuario.
-1. Investigar/corregir I15 con más casos reales antes de decidir el
-   guard correcto para `tax_rate` — candidato concreto para la próxima
-   sesión.
+Investigado con más casos reales antes de decidir el fix, no solo
+VRTX. Escaneado `tax_rate` histórico de los 24 tickers ya usados en la
+auditoría de esta sesión (5 sectores): **5 de 24 (20.8%)** tienen al
+menos un año fuera de un rango sano (AMD, INTC, NEE, VRTX, MRNA) — no
+es un caso aislado.
+
+**Primera hipótesis probada y rechazada**: excluir de la media el año
+detectado como outlier (mismo detector Iglewicz & Hoaglin ya usado en
+`_detect_anchor_outlier`, aplicado a cualquier año de la ventana).
+Funciona bien para VRTX (115.9%→16.1%, casi exacto a la banda real del
+Excel de referencia) pero, probado contra los 24 tickers completos,
+**dispara falsos positivos en 9 de 24** — el caso QCOM es el más
+claro: excluir su único año alto (56.2%) deja una media de 1.8%, igual
+de irreal que el original. Es el mismo error, ya investigado y
+rechazado una vez, que motivó que `_margin_fade_from_recent_to_average()`
+nunca sustituya automáticamente su ancla (ver Lote B, sesión 17)
+-- repetirlo para `tax_rate` habría ignorado una lección ya aprendida.
+
+**Fix aplicado**: avisar cuando el `tax_rate` proyectado (sin tocar)
+cae fuera de una banda plausible (`TAX_RATE_PLAUSIBLE_RANGE = -10% a
+60%`, regla de pulgar documentada, mismo espíritu que
+`EXTREME_FLAT_GROWTH_WARNING_THRESHOLD`). Verificado contra los 24
+tickers: captura exactamente los 3 casos donde la MEDIA FINAL resulta
+implausible (AMD, INTC, VRTX), cero falsos positivos en los 21
+restantes. El número nunca se toca — mismo principio "avisar, no
+maquillar" que I10/I12/M2. Verificado de punta a punta con el pipeline
+real: VRTX sigue dando -$133.78 (sin cambios), pero ahora el aviso
+explica la causa raíz.
+
+**230 tests en total, todos en verde** (2 nuevos). Con esto, **no
+queda ningún hallazgo importante ni moderado abierto** en
+`docs/AUDIT.md`.
+
+## 29. Próximo paso inmediato
+
+0. Commitear el cierre de I15 con confirmación explícita del usuario.
+1. E — Intervalo de confianza (bootstrap) sobre la desviación agregada
+   del universo piloto (n=8) — la única pieza del lote de rigor
+   matemático que queda sin construir; bajo esfuerzo.
 2. Seguir analizando más empresas/sectores si el usuario lo pide —
    sectores ya cubiertos: Big Tech (MSFT dogfooding), semiconductores,
    utilities reguladas, biotech/farma, small/mid-cap consumo.
@@ -1640,9 +1674,6 @@ explícito ya usado en el otro modo. 1 test de regresión nuevo.
 0.5. SEC EDGAR — retomar si se quiere reducir la dependencia de la
    cuota de Alpha Vantage: falta D&A fiable (sin resolver) y construir
    el módulo completo con lo ya validado para el resto de campos.
-2. E — Intervalo de confianza (bootstrap) sobre la desviación agregada
-   del universo piloto (n=8) — la única pieza del lote de rigor
-   matemático que queda sin construir; bajo esfuerzo.
 4. Fase 9 (sentiment en earnings calls) — extensión opcional.
 5. Probar la capa generativa con una llamada real — aparcado por ahora
    a petición del usuario, no es una prioridad activa.

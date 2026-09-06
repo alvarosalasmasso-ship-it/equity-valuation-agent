@@ -2060,3 +2060,103 @@ de precio. **225 tests en total, todos en verde.** Verificado de punta
 a punta con datos reales: `scripts/run_backtest.py` sobre Big Tech
 completo, y `AppTest` confirmando que GOOGL en modo "Big Tech" ahora
 muestra el precio de mercado correcto ($338.46) en la app real.
+
+## 31. Dogfooding sectorial completo (5 grupos vía yfinance) y el cierre de I15: por qué NO se corrige `tax_rate` excluyendo outliers
+
+Tras cerrar el lote de rigor matemático, se evaluó la herramienta de
+punta a punta con 5 grupos de comparables reales, todos vía yfinance
+(sin gastar la cuota compartida de Alpha Vantage, a petición explícita
+del usuario a mitad de sesión): Big Tech (MSFT, dogfooding con memo
+completo), semiconductores (NVDA/AMD/AVGO/QCOM/INTC), utilities
+reguladas (NEE/DUK/SO/D), biotech/farma (REGN/VRTX/MRNA/BIIB) y
+small/mid-cap de consumo (MCRI/SHOO/BOOT/FIZZ) — 24 tickers reales en
+total, ninguno del universo piloto original. Encontró 2 bugs reales
+(M8: etiqueta de D&A no reconocida para utilities con depleción; M9:
+guard de `interest_expense` inconsistente entre los dos modos de la
+app) y 2 hallazgos de metodología (addendum a M2: fragilidad de Gordon
+Growth confirmada como sistemática en sectores de bajo beta/bajo WACC,
+no un caso aislado como JNJ; I15, desarrollado abajo).
+
+### El hallazgo: `tax_rate` es un ratio estructuralmente distinto de margen/CapEx/D&A/ΔNWC
+
+VRTX (biotech, crea valor con claridad: ROIC=25.4% vs WACC=6.7%) dio un
+precio implícito **negativo** (-$133.78 vs mercado $546.12). Causa: un
+único año (2024) con beneficio antes de impuestos casi nulo — cargo
+real de I+D en proceso por la adquisición de Alpine Immune Sciences,
+~$4.9bn, no un error de datos — produce un `tax_rate` anual de 315.5%,
+que arrastra la media de la ventana de 3 años a **115.9%**, un tipo
+impositivo matemáticamente imposible que se proyecta PLANO (sin fade,
+decisión M6) durante los 5 años del horizonte y el valor terminal.
+
+La causa raíz es estructural, no un caso puntual de VRTX: `tax_rate =
+tax_provision / pretax_income` es el ÚNICO ratio del pipeline cuyo
+denominador puede acercarse a cero para una empresa operativa real
+(margen/CapEx/D&A/ΔNWC dividen entre ingresos, que nunca se acerca a
+cero). Escaneando los 24 tickers reales de esta ronda: **5 de 24
+(20.8%)** tienen al menos un año con `tax_rate` fuera de un rango sano
+— AMD, INTC, NEE, VRTX, MRNA, todos con beneficio antes de impuestos
+cerca de cero en al menos un ejercicio reciente (turnarounds,
+reestructuración, pérdidas).
+
+### Hipótesis probada y rechazada: exclusión automática del año outlier
+
+La corrección "obvia" es reutilizar el detector de outliers ya
+existente (Iglewicz & Hoaglin, z modificado, umbral 3.5, el mismo que
+usa `_detect_anchor_outlier` para margen/CapEx/D&A/ΔNWC) y EXCLUIR de
+la media cualquier año que lo dispare — no solo el último año, ya que
+el outlier de `tax_rate` puede caer en cualquier posición de la
+ventana. Para VRTX funciona muy bien: 115.9%→16.1%, un número que
+coincide casi exacto con la banda real del propio Excel de referencia
+para AMZN (15-18%, sección 28/M6).
+
+Pero probado contra los 24 tickers completos, no solo VRTX, **dispara
+falsos positivos en 9 de 24** — más de un tercio. El caso más
+revelador es **QCOM**: su único año alto (56.2%, de 4: 13.4%/1.4%/
+2.2%/56.2%) se excluye correctamente como outlier, pero la media
+resultante (1.8%) es **igual de irreal** que el 19.9% original, solo
+que menos obviamente absurda — probablemente los dos años "normales"
+que quedan tampoco son representativos de un tipo impositivo
+sostenible. GOOGL y AAPL muestran el mismo patrón con exclusiones más
+sutiles.
+
+Esto es, literalmente, el mismo error que el proyecto ya investigó y
+rechazó una vez: `_margin_fade_from_recent_to_average()` documenta en
+su propio docstring (Lote B, este mismo día de sesión) que se probó la
+sustitución automática del ancla del fade y, con datos reales del
+universo piloto completo, "dispara en 7 de 8 tickers, incluido el
+CapEx de MSFT/META... que es precisamente el supercycle de inversión
+en IA ya verificado como real — no ruido". Con muestras de 2-3 años, un
+z-score no tiene la potencia estadística para distinguir de forma
+fiable "ítem no recurrente" de "variación normal amplificada por poca
+muestra". Repetir la sustitución automática para `tax_rate` habría
+ignorado una lección que este mismo proyecto ya pagó por aprender.
+
+### La corrección aplicada: avisar sobre el resultado final, no sobre el año individual
+
+En vez de intentar identificar y excluir el año "culpable" (el paso que
+falla), se comprueba el RESULTADO final — el `tax_rate` ya promediado,
+sin tocar — contra una banda de plausibilidad (`TAX_RATE_PLAUSIBLE_
+RANGE = (-10%, 60%)`, regla de pulgar documentada en el código, mismo
+espíritu que `EXTREME_FLAT_GROWTH_WARNING_THRESHOLD`: no es un tipo
+estatutario, M6 ya investigó y rechazó anclar a eso). Verificado contra
+los mismos 24 tickers: la banda captura exactamente los 3 casos donde
+la MEDIA FINAL (no un año suelto) resulta implausible — AMD (-17.9%),
+INTC (-31.0%), VRTX (115.9%) — con **cero falsos positivos** en los 21
+restantes, incluidos NEE y MRNA, que tienen años individuales extremos
+pero cuya media final ya cae dentro de la banda sin ayuda. El número
+nunca se ajusta — el mismo principio "avisar, no maquillar" que I10/
+I12/M2 — el mensaje explica el mecanismo concreto (año con beneficio
+antes de impuestos cerca de cero dentro de la ventana) y sugiere
+revisión manual o ampliar `lookback_years`.
+
+### Verificación
+
+2 tests nuevos en `test_projections.py` (VRTX real dispara el aviso
+sin alterar el número; 25% plano no dispara nada). Verificado de punta
+a punta con el pipeline completo real (yfinance): VRTX sigue dando
+-$133.78 (sin cambios, correcto), pero el aviso "tax_rate proyectado
+(115.9%) está muy fuera de un rango plausible..." aparece ahora junto
+al resto de diagnósticos técnicos, dando la causa raíz real en vez de
+solo el síntoma (FCF negativo, ya cubierto por I10). **230 tests en
+total, todos en verde.** Con esto, `docs/AUDIT.md` no tiene ningún
+hallazgo importante ni moderado abierto.
