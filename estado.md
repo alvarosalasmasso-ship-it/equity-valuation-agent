@@ -4,7 +4,7 @@
 > avanzado, las decisiones tomadas y el siguiente paso concreto. Es la
 > primera lectura al retomar el proyecto.
 
-**Última actualización:** 2026-09-06 (sesión 15, continuación)
+**Última actualización:** 2026-09-06 (sesión 16)
 
 ---
 
@@ -862,26 +862,74 @@ se sigue calculando y contribuyendo con peso>0). Revalorado AMZN
 total, todos en verde.** Servidor Streamlit reiniciado y verificado
 arrancando limpio.
 
-## 5. Próximo paso inmediato
+## 5. Sesión 16 — Auditoría de progreso (visión global, no solo hallazgos puntuales)
 
-Seguir corrigiendo uno por uno, en el orden de `docs/AUDIT.md`:
+El usuario pidió una segunda auditoría, esta vez de progreso general:
+qué hace la herramienta, qué no hace, qué hace bien/mal, y cómo seguir.
+Informe completo en **`docs/PROGRESS_REVIEW.md`** (nuevo documento,
+distinto de `docs/AUDIT.md` que sigue siendo el catálogo de hallazgos
+puntuales). Resumen de lo más importante:
 
-1. ~~C1 — Stub period.~~ ✅ Corregido sesión 15.
-2. ~~I3 — Excepciones no controladas.~~ ✅ Corregido sesión 15 (continuación).
-3. ~~I1 — Risk-free rate en vivo.~~ ✅ Corregido sesión 15 (continuación).
-4. ~~M1 — Fijar versiones en `requirements.txt`.~~ ✅ Corregido sesión 15 (continuación).
-5. ~~M3 — Validación de `wacc`/`gordon_weight` en `DCFInputs`.~~ ✅ Corregido sesión 15 (continuación).
-6. ~~M4 — Gordon Growth se calcula/avisa aunque su peso sea 0.~~ ✅ Corregido sesión 15 (continuación).
-7. Resto según interés — I2 y M5 son limitaciones estructurales, no
-   arreglos rápidos. Quedan pendientes: M2 (`gordon_weight=0.8` sin
-   justificación propia), M5 (sin verificación de divisa de reporte), I2
-   (Treasury Stock Method construido pero no usado — estructural), I4
-   (universo de comparables pequeño — estructural).
+- **Estado de fases del blueprint:** Fases 0-4 y 6 completas; Fase 5
+  (capa generativa) construida pero **nunca probada con la API real de
+  Anthropic** (sin `ANTHROPIC_API_KEY`, 0 llamadas reales en la vida del
+  proyecto); Fase 7 (validación) hecha pero con una conclusión que hay
+  que decir con más claridad (ver abajo); **Fase 8 (despliegue)
+  completamente sin empezar** — sin repo remoto en GitHub siquiera; Fase
+  9 (sentiment) no iniciada (extensión opcional).
+- **Se repitió la medición de precisión (Fase 7) con el código actual y
+  el risk-free rate en vivo de hoy — cifra fresca, no recordada:**
+  desviación media absoluta vs. mercado en los 8 tickers piloto pasa de
+  **46.5% (línea base pre-sesión-15) a 41.8% (hoy)** — una mejora real,
+  pero **no uniforme**: Big Tech empeora (43.4%→46.9%, el risk-free rate
+  más alto baja más el precio de compañías ya infravaloradas) mientras
+  Consumo defensivo mejora mucho (51.6%→33.3%, el WACC más alto
+  estabiliza la fórmula de Gordon Growth en compañías con spread
+  WACC-g estrecho). Ambos efectos son mecánicamente correctos y
+  esperados, no bugs.
+- **Conclusión honesta que hay que hacer más visible:** el motor es
+  técnicamente exacto (Excel al céntimo) pero como predictor del precio
+  de mercado se equivoca ~42% de media — no por un error, sino porque
+  "reversión a la media" y "lo que paga el mercado hoy por crecimiento
+  futuro" son cosas distintas por diseño. Esto ya estaba documentado en
+  sesiones anteriores, pero no es suficientemente visible en la propia
+  interfaz de la app.
+- **Roadmap recomendado (por impacto, no por dificultad técnica):**
+  1) desplegar (GitHub + Streamlit Cloud, Fase 8 — máxima prioridad,
+  nada es demostrable sin esto); 2) probar la capa generativa con una
+  llamada real antes de desplegar; 3) hacer explícita en la UI la
+  limitación de precisión; 4) crear `scripts/validate_universe.py`
+  reproducible en vez de reconstruir la cifra a mano cada sesión;
+  5) decidir M2 (`gordon_weight=0.8`) como decisión de producto, no
+  dejarlo pendiente indefinidamente; 6) Fase 9, solo después.
+
+## 6. Próximo paso inmediato
+
+En orden de impacto (ver `docs/PROGRESS_REVIEW.md` sección 5 para el
+razonamiento completo):
+
+1. **Desplegar (Fase 8):** repo en GitHub + Streamlit Community Cloud.
+2. **Probar la capa generativa con una llamada real** a la API de
+   Anthropic antes de desplegar.
+3. **Hacer explícita en la UI** la limitación de precisión vs. mercado
+   (texto fijo, no generado por IA).
+4. **Crear `scripts/validate_universe.py`** reproducible, con historial
+   fechado de la desviación media.
+5. Hallazgos técnicos moderados que siguen abiertos, sin urgencia:
+   M2 (`gordon_weight=0.8` sin justificación propia), M5 (sin
+   verificación de divisa de reporte), I2 (Treasury Stock Method
+   construido pero no usado — estructural), I4 (universo de
+   comparables pequeño — estructural).
+6. Fase 9 (sentiment en earnings calls) — extensión opcional, al final.
 
 **Principio de fondo que sigue aplicando:** cualquier UI debe mostrar el
 número junto a su explicación, nunca el número solo. No revertir un
 cambio metodológicamente correcto solo porque el resultado agregado no
-mejora. Auditar la orquestación, no solo las fórmulas. Y ahora también:
-**cada arreglo de la auditoría se valida con datos reales y una cifra de
-impacto concreta antes de darlo por cerrado** — no basta con que los
-tests sintéticos pasen.
+mejora (ni ajustar supuestos para acercarse al precio de mercado).
+Auditar la orquestación, no solo las fórmulas. Cada arreglo se valida
+con datos reales y una cifra de impacto concreta antes de darlo por
+cerrado — no basta con que los tests sintéticos pasen. Y ahora también:
+**re-medir el agregado completo tras varios arreglos combinados, no
+solo el impacto de cada uno por separado** — la sesión 16 mostró que la
+suma de mejoras individuales puede no sumar limpiamente en el número
+agregado (mejora en un grupo, empeora en otro).
