@@ -32,9 +32,6 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from engine.data_provider import AlphaVantageError
-
-
 @pytest.fixture(autouse=True)
 def _clear_streamlit_cache():
     """@st.cache_data está diseñado para sobrevivir reruns de Streamlit
@@ -223,7 +220,13 @@ def test_monte_carlo_histogram_renders_with_enough_history():
     """Con al menos 4 años de histórico (mínimo real para
     historical_revenue_growth_stats con lookback_years=3), la
     simulación de Monte Carlo sí debe completarse y añadir un 6º
-    gráfico Plotly (el histograma), con P10 <= P50 <= P90 mostrados."""
+    gráfico Plotly (el histograma), con P10 <= P50 <= P90 mostrados.
+
+    Sesión 18: el grupo por defecto ("Big Tech / Cloud") pasó de Alpha
+    Vantage a yfinance (ver CACHED_GROUPS en app/streamlit_app.py) --
+    el parcheo se mueve de engine.data_provider a
+    engine.yfinance_provider, que es la ruta que el camino feliz por
+    defecto ejecuta ahora."""
     def longer_history(symbol):
         revenue_last = _REVENUE_BY_SYMBOL.get(symbol, 100.0)
         revenue = [revenue_last / 1.1**3, revenue_last / 1.1**2, revenue_last / 1.1, revenue_last]
@@ -247,8 +250,8 @@ def test_monte_carlo_histogram_renders_with_enough_history():
         })
 
     at = _run_app(
-        extra_patches=[patch("engine.data_provider.historical_financials",
-                              side_effect=lambda client, symbol, use_cache=True: longer_history(symbol))],
+        extra_patches=[patch("engine.yfinance_provider.historical_financials",
+                              side_effect=lambda ticker: longer_history(getattr(ticker, "symbol", "TEST")))],
     )
     assert not at.exception
     assert len(at.get("plotly_chart")) == 6
@@ -274,21 +277,21 @@ def test_roic_delta_color_reflects_creates_value():
 
 # --- Regresión: manejo de errores en modo "universo cacheado" (sesión 16) --
 
-def test_alpha_vantage_error_shows_actionable_message_not_a_traceback():
-    """Regresión (sesión 16, continuación): antes de este fix, un fallo
-    de Alpha Vantage (cuota agotada) en el modo por defecto -- el que
-    usa cualquier visitante de la app pública -- se propagaba como un
-    traceback crudo de Streamlit en vez de un mensaje accionable."""
-    def raise_quota_error(*args, **kwargs):
-        raise AlphaVantageError("standard API rate limit is 25 requests per day")
-
-    at = _run_app(extra_patches=[
-        patch("engine.data_provider.historical_financials", side_effect=raise_quota_error),
-    ])
-    assert not at.exception
-    assert len(at.error) >= 1
-    assert "Alpha Vantage" in at.error[0].value
-    assert "25 peticiones" in at.error[0].value
+# Sesión 18: el usuario pidió abandonar Alpha Vantage como fuente
+# AUTOMÁTICA (ver CACHED_GROUPS en app/streamlit_app.py -- ningún grupo
+# cacheado usa ya Alpha Vantage por defecto, ambos van por yfinance sin
+# límite de cuota). El manejo de error `except AlphaVantageError` del
+# modo "universo cacheado" y load_av_universe() se DEJAN en el código
+# tal cual (no se borran, por si se reactiva un grupo con Alpha Vantage
+# más adelante), pero ya no son alcanzables a través del camino por
+# defecto que AppTest ejecuta -- CACHED_GROUPS se define en el propio
+# script y se re-ejecuta desde el archivo en cada `.run()` (ver
+# docstring de este módulo), así que no hay forma de parchearlo desde
+# fuera para forzar ese camino sin reescribir el archivo fuente durante
+# el test. test_alpha_vantage_error_shows_actionable_message_not_a_traceback
+# (regresión de sesión 16) queda retirado por este motivo -- hueco
+# explícito y documentado, no un olvido: si se reactiva Alpha Vantage
+# como grupo, esa cobertura debe recuperarse.
 
 
 def test_cached_group_mode_with_missing_interest_expense_shows_actionable_error():
@@ -301,15 +304,18 @@ def test_cached_group_mode_with_missing_interest_expense_shows_actionable_error(
     de pandas ("single positional indexer is out-of-bounds") en vez de
     un mensaje accionable. El modo "cualquier ticker" ya tenía este
     guard (ver test_arbitrary_ticker_mode más abajo); ahora ambos
-    caminos lo comparten."""
-    def history_without_interest_expense(client, symbol, use_cache=True):
-        df = _fake_av_historical_financials(client, symbol, use_cache)
+    caminos lo comparten. El guard vive en build_peer_wacc(), que no
+    depende del proveedor -- sesión 18: parcheo movido a
+    engine.yfinance_provider (ruta real del grupo por defecto ahora)."""
+    def history_without_interest_expense(ticker):
+        symbol = getattr(ticker, "symbol", "TEST")
+        df = _fake_yf_historical_financials(ticker)
         if symbol == "AMZN":
             df = df.assign(interest_expense=[None, None])
         return df
 
     at = _run_app(extra_patches=[
-        patch("engine.data_provider.historical_financials", side_effect=history_without_interest_expense),
+        patch("engine.yfinance_provider.historical_financials", side_effect=history_without_interest_expense),
     ])
     assert not at.exception
     assert len(at.error) >= 1
@@ -318,11 +324,13 @@ def test_cached_group_mode_with_missing_interest_expense_shows_actionable_error(
 
 
 def test_generic_loader_failure_shows_actionable_message_not_a_traceback():
+    """Sesión 18: parcheo movido a engine.yfinance_provider (ruta real
+    del grupo por defecto, ver nota más arriba)."""
     def raise_network_error(*args, **kwargs):
         raise ConnectionError("network down")
 
     at = _run_app(extra_patches=[
-        patch("engine.data_provider.historical_financials", side_effect=raise_network_error),
+        patch("engine.yfinance_provider.historical_financials", side_effect=raise_network_error),
     ])
     assert not at.exception
     assert len(at.error) >= 1

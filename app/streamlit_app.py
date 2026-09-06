@@ -100,8 +100,21 @@ def _inject_custom_css() -> None:
 # Universos con comparables ya validados en sesiones anteriores (ver estado.md)
 # ---------------------------------------------------------------------------
 
+# Sesión 18: a petición del usuario, se abandona Alpha Vantage como fuente
+# AUTOMÁTICA de momento -- cualquiera que abra la app y no toque nada
+# empezaba a gastar su cuota de 25 peticiones/día (compartida entre TODOS
+# los visitantes de la app pública) sin saberlo, solo por el orden de este
+# dict (el primer grupo es el que selecciona por defecto st.selectbox).
+# Ningún nombre de grupo aquí contiene ya "Alpha Vantage", así que
+# `loader = load_av_universe if "Alpha Vantage" in group_name else
+# load_yf_universe` (más abajo) elige yfinance para los dos -- sin límite
+# de cuota, ya verificado con estos mismos 5 tickers en el dogfooding de
+# esta sesión. load_av_universe()/AlphaVantageClient siguen intactos en el
+# código (no se borra la capacidad, solo se deja de invocar
+# automáticamente) para poder reactivarlos añadiendo un grupo con ese
+# nombre si hace falta más adelante.
 CACHED_GROUPS = {
-    "Big Tech / Cloud (Alpha Vantage)": ["AMZN", "MSFT", "GOOGL", "META", "AAPL"],
+    "Big Tech / Cloud (yfinance)": ["AMZN", "MSFT", "GOOGL", "META", "AAPL"],
     "Consumo defensivo (yfinance)": ["KO", "PG", "JNJ"],
 }
 

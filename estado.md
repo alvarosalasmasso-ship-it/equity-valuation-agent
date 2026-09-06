@@ -1834,4 +1834,30 @@ motivó el cambio, ahora cuantificable dentro de la propia herramienta.
 14 tests nuevos, **276 tests en total, todos en verde**. App Streamlit
 lanzada y verificada sin tracebacks.
 
-**Pendiente:** commitear con confirmación explícita del usuario.
+**Pendiente:** commitear con confirmación explícita del usuario. ✅ hecho
+(commit `5100c35`).
+
+## 34. Sesión 18 (continuación) — Limpieza de procesos Streamlit huérfanos, push a GitHub, y abandono de Alpha Vantage como fuente automática
+
+Tras el commit anterior, el usuario reportó que la app no reflejaba los
+cambios pese a "hacer reboot". Diagnosticado: 9 procesos de Streamlit
+acumulados de sesiones distintas (algunos desde el día anterior),
+escuchando en puertos distintos (8501-8514, 8532) — el usuario abría
+una pestaña/URL vieja que apuntaba a un proceso con código congelado de
+hace varias sesiones. Corregido matando todos los procesos huérfanos y
+dejando uno único y fresco.
+
+El usuario preguntó también si estaba hecho el deploy. Sí (sesión 16,
+`https://equity-valuation-agent.streamlit.app/`), pero **desactualizado**:
+8 commits locales sin subir a GitHub (I16, C2, SEC EDGAR, supuestos del
+analista) — Streamlit Cloud solo redespliega tras un `git push`.
+Confirmado con el usuario, se hizo push de los 8 commits.
+
+El usuario notó además que seleccionar el grupo por defecto ("Big Tech
+/ Cloud") consumía cuota de Alpha Vantage automáticamente. Pidió
+explícitamente abandonar Alpha Vantage como fuente automática, en favor
+de yfinance (sin límite de cuota) — ver hallazgo N5 de `docs/AUDIT.md`
+para el detalle completo (qué se cambió, el trade-off aceptado en el
+tooltip de cobertura de analistas, y el ajuste de 4 tests de
+`tests/test_app.py`, uno de ellos retirado con justificación
+documentada). **275 tests en total, todos en verde** tras el cambio.

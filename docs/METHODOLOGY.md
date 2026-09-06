@@ -2616,3 +2616,28 @@ directamente, no sobre el dict de escenarios. Solo se puede anular el
 año N, nunca el año 1. Solo un escenario de analista a la vez, no una
 lista de alternativas. 14 tests nuevos, **276 tests en total, todos en
 verde.**
+
+## 37. Alpha Vantage retirado como fuente automática por defecto (sesión 18)
+
+Al probar la app tras el commit de la sección 36, el usuario notó que
+el grupo por defecto ("Big Tech / Cloud") gastaba cuota de Alpha
+Vantage sin haber elegido nada explícito -- `st.selectbox` toma siempre
+el primer elemento de `CACHED_GROUPS` como valor por defecto, y ese
+primer grupo tenía "Alpha Vantage" en el nombre, lo que disparaba
+`load_av_universe()` para cualquier visitante que no tocara la UI.
+Pidió explícitamente abandonar Alpha Vantage como ruta automática, en
+favor de yfinance (sin límite de cuota diaria), ya usado exhaustivamente
+en el dogfooding de toda la sesión para estos mismos 5 tickers.
+
+Corregido renombrando el grupo a "Big Tech / Cloud (yfinance)" -- la
+selección de proveedor en `app/streamlit_app.py` ya era puramente por
+el nombre del grupo (`"Alpha Vantage" in group_name`), así que el
+cambio no tocó ninguna lógica de carga, solo el nombre. Deliberadamente
+**no se borra** `load_av_universe()`/`AlphaVantageClient`/el manejo de
+`AlphaVantageError` -- quedan listos para reactivarse añadiendo de
+nuevo un grupo con ese nombre, en vez de desaparecer con la decisión de
+hoy. Detalle completo, incluido el trade-off aceptado (Alpha Vantage da
+desglose de recomendaciones por tramo; yfinance solo consenso + media,
+ya con manejo gracioso desde sesión 17) y el ajuste de 4 tests de
+`tests/test_app.py` (uno retirado, con justificación documentada), en
+`docs/AUDIT.md` hallazgo N5. **275 tests en total, todos en verde.**

@@ -59,10 +59,13 @@ evidencia de fragilidad sistemática de Gordon Growth en todo el sector
 Utilities, no solo un caso puntual), y M6 recién investigado con
 evidencia directa del Excel de referencia y también cerrado), 3
 informativos (1
-✅ corregido — N2 —, 2 sin acción necesaria), más una capa nueva no
-correctiva — N3 (sesión 18): supuestos del analista, un 4º escenario
-opcional construido a mano por el usuario, al lado de los 3 objetivos,
-nunca mezclado en silencio con ellos. Con esto, **no queda
+✅ corregido — N2 —, 2 sin acción necesaria), más dos entradas nuevas no
+correctivas de la sesión 18 — N4: supuestos del analista, un 4º
+escenario opcional construido a mano por el usuario, al lado de los 3
+objetivos, nunca mezclado en silencio con ellos; N5: Alpha Vantage
+retirado como fuente automática por defecto de la app, a petición
+explícita del usuario, en favor de yfinance (sin límite de cuota). Con
+esto, **no queda
 ningún hallazgo moderado o importante abierto** — I12 e I15 se
 corrigieron parcialmente (avisan, sin ajuste automático por falta de
 evidencia objetiva suficiente para justificarlo); I16 se corrigió
@@ -1086,7 +1089,7 @@ renombrado. **262 tests en total, todos en verde.**
 
 ---
 
-### N3. Capa de supuestos del analista: un 4º escenario, construido a mano por el usuario, al lado de los 3 objetivos — ✅ AÑADIDO (sesión 18)
+### N4. Capa de supuestos del analista: un 4º escenario, construido a mano por el usuario, al lado de los 3 objetivos — ✅ AÑADIDO (sesión 18)
 
 **Qué es:** tras cerrar I16 y evaluar el grupo Big Tech, el usuario
 preguntó si la herramienta ya funciona "a nivel profesional". La
@@ -1165,6 +1168,62 @@ Solo un escenario de analista a la vez.
 `tests/test_memo_generator.py`) + verificación manual con la app real
 (Streamlit lanzada, sin tracebacks) y con datos reales de AMZN vía
 script de dogfooding. **276 tests en total, todos en verde.**
+
+---
+
+### N5. Alpha Vantage retirado como fuente automática por defecto de la app — ✅ CAMBIADO (sesión 18)
+
+**Qué es:** el usuario, al probar la app tras el commit de N4, notó que
+seleccionar el grupo por defecto ("Big Tech / Cloud") consumía cuota de
+Alpha Vantage automáticamente sin haber elegido nada explícito. Causa:
+`CACHED_GROUPS` (`app/streamlit_app.py`) tenía como primer grupo del
+diccionario "Big Tech / Cloud (Alpha Vantage)" — `st.selectbox` toma
+siempre el primer elemento como valor por defecto, así que cualquier
+visitante de la app pública que no tocara nada ya gastaba parte de la
+cuota compartida de 25 peticiones/día, solo por el orden del dict.
+
+**Decisión del usuario, explícita:** "abandonemos alpha de momento" —
+usar los medios gratuitos ya desarrollados (yfinance, sin límite de
+cuota) en vez de Alpha Vantage de forma automática.
+
+**Corregido:** el grupo se renombró a "Big Tech / Cloud (yfinance)"
+(mismos 5 tickers, AMZN/MSFT/GOOGL/META/AAPL, ya verificados
+exhaustivamente vía yfinance en el dogfooding de esta sesión) —
+`loader = load_av_universe if "Alpha Vantage" in group_name else
+load_yf_universe` ya seleccionaba el proveedor por el nombre del grupo,
+así que ningún grupo de `CACHED_GROUPS` usa ya Alpha Vantage. **No se
+borra la capacidad**: `load_av_universe()`, `AlphaVantageClient` y el
+manejo de `AlphaVantageError` siguen intactos en el código — solo
+dejan de invocarse automáticamente. Reactivarlos en el futuro es tan
+simple como añadir de nuevo un grupo con "Alpha Vantage" en el nombre.
+
+**Trade-off conocido y aceptado, no oculto:** Alpha Vantage da el
+desglose de recomendaciones de analistas por tramo (Strong Buy/Buy/
+Hold/Sell/Strong Sell); yfinance solo da una recomendación consenso +
+media 1-5 + nº de analistas. La app ya tenía manejo gracioso para esto
+desde la sesión 17 (`app/streamlit_app.py`, tooltip de "Consenso
+analistas" con rama alternativa si faltan los campos de tramo) — el
+grupo por defecto pasa a usar esa rama alternativa en vez de la
+detallada, sin ningún crash ni dato faltante sin explicar.
+
+**Impacto en tests:** `tests/test_app.py` tenía 4 tests que parcheaban
+`engine.data_provider.*` (Alpha Vantage) asumiendo que era la ruta real
+del camino feliz por defecto — 3 se corrigieron parcheando
+`engine.yfinance_provider.*` en su lugar (el guard de
+`interest_expense` vacío y el manejo de excepción genérica no dependen
+del proveedor, solo cambia qué módulo hay que parchear).
+`test_alpha_vantage_error_shows_actionable_message_not_a_traceback`
+(regresión de sesión 16) se retiró explícitamente: el camino que
+prueba (fallo de cuota de Alpha Vantage en el modo por defecto) ya no
+es alcanzable desde la UI sin editar el archivo fuente durante el test
+(`CACHED_GROUPS` se define dentro del propio script y `AppTest` lo
+re-ejecuta desde el archivo en cada `.run()`, así que no se puede
+parchear desde fuera). Hueco explícito y documentado: si se reactiva
+un grupo con Alpha Vantage, esa cobertura debe recuperarse.
+
+**Verificado:** suite completa, 275 tests (276 − 1 test retirado, todos
+en verde). App Streamlit relanzada limpia y verificada sin tracebacks
+tras el cambio.
 
 ---
 
