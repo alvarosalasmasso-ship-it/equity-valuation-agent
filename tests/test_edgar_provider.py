@@ -106,6 +106,35 @@ def test_get_concept_value_merges_fallback_tags_across_years():
     assert get_concept_value(facts, "interest_expense", date(2026, 6, 30)) == 3_051_000_000
 
 
+def test_get_concept_value_merges_capex_tag_migration():
+    """Regresión (sesión 17, repaso de punta a punta con AMZN): capex
+    migra de "PaymentsToAcquirePropertyPlantAndEquipment" (hasta ~2016)
+    a "PaymentsToAcquireProductiveAssets" (2023+, coincide exacto con el
+    CapEx real que ya usa el pipeline)."""
+    facts = _company_facts({
+        "PaymentsToAcquirePropertyPlantAndEquipment": {"units": {"USD": [
+            _fact("2015-01-01", "2015-12-31", 4_589_000_000),
+        ]}},
+        "PaymentsToAcquireProductiveAssets": {"units": {"USD": [
+            _fact("2025-01-01", "2025-12-31", 131_819_000_000),
+        ]}},
+    })
+    assert get_concept_value(facts, "capex", date(2015, 12, 31)) == 4_589_000_000
+    assert get_concept_value(facts, "capex", date(2025, 12, 31)) == 131_819_000_000
+
+
+def test_get_concept_value_d_and_a_missing_for_companies_without_combined_tag():
+    """MSFT/GOOGL reportan D&A en 3+ tags separados que no suman al
+    mismo total que el proveedor (sección 26) -- sin tag combinado, debe
+    devolver None (se omite la comparación), no un valor parcial/erróneo
+    reconstruido a partir de componentes."""
+    facts = _company_facts({
+        "Depreciation": {"units": {"USD": [_fact("2025-07-01", "2026-06-30", 34_300_000_000)]}},
+        "AmortizationOfIntangibleAssets": {"units": {"USD": [_fact("2025-07-01", "2026-06-30", 4_700_000_000)]}},
+    })
+    assert get_concept_value(facts, "d_and_a", date(2026, 6, 30)) is None
+
+
 def test_get_concept_value_prefers_higher_priority_tag_on_conflict():
     """Si dos tags de fallback reportan el MISMO periodo, gana el de
     mayor prioridad (el primero en CONCEPT_TAGS), no el último leído."""
@@ -122,7 +151,7 @@ def _history_row(**overrides) -> pd.Series:
         "revenue": 331_839_000_000.0, "ebit": 155_237_000_000.0, "net_income": 133_749_000_000.0,
         "total_assets": 758_376_000_000.0, "total_equity": 442_387_000_000.0,
         "current_assets": 207_710_000_000.0, "current_liabilities": 168_825_000_000.0,
-        "cash": 20_935_000_000.0, "interest_expense": 3_051_000_000.0,
+        "cash": 20_935_000_000.0, "interest_expense": 3_051_000_000.0, "capex": 115_948_000_000.0,
     }
     base.update(overrides)
     return pd.Series(base)
@@ -141,12 +170,13 @@ def _msft_like_facts() -> dict:
         "LiabilitiesCurrent": {"units": {"USD": [_fact(None, end, 168_825_000_000)]}},
         "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [_fact(None, end, 20_935_000_000)]}},
         "InterestExpenseNonoperating": {"units": {"USD": [_fact(start, end, 3_051_000_000)]}},
+        "PaymentsToAcquireProductiveAssets": {"units": {"USD": [_fact(start, end, 115_948_000_000)]}},
     })
 
 
 def test_cross_validate_latest_year_all_match():
     comparisons = cross_validate_latest_year(_msft_like_facts(), _history_row())
-    assert len(comparisons) == 9
+    assert len(comparisons) == 10
     assert all(c.relative_diff == pytest.approx(0.0, abs=1e-9) for c in comparisons)
     assert all(not c.is_mismatch for c in comparisons)
 
@@ -188,9 +218,8 @@ def test_cross_validate_latest_year_skips_concept_edgar_does_not_cover():
     assert comparisons == []
 
 
-def test_cross_validate_latest_year_never_compares_total_debt_or_d_and_a():
-    """C2/sección 26: total_debt (diferencia de metodología conocida --
-    EDGAR excluye leasing) y d_and_a (reconstrucción no fiable) quedan
-    deliberadamente fuera de CONCEPT_TAGS."""
+def test_cross_validate_latest_year_never_compares_total_debt():
+    """Sección 26: total_debt (EDGAR excluye leasing, diferencia de
+    metodología ya conocida) queda deliberadamente fuera de CONCEPT_TAGS
+    -- compararlo generaría falsos positivos sistemáticos."""
     assert "total_debt" not in CONCEPT_TAGS
-    assert "d_and_a" not in CONCEPT_TAGS

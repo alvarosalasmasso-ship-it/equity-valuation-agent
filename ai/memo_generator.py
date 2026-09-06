@@ -19,7 +19,7 @@ from typing import Optional
 
 from engine.ratios import RatioSnapshot
 from engine.reverse_dcf import ImpliedExpectations
-from engine.scenarios import run_scenarios
+from engine.scenarios import BASE_SCENARIO_NAME, run_scenarios
 from engine.sensitivity import DriverSensitivity
 from engine.valuation import DCFResult
 
@@ -57,9 +57,6 @@ class MemoInput:
     sensitivities: Optional[list[dict]] = None
 
 
-CONSERVATIVE_SCENARIO_NAME = "Conservador (reversión a la media)"
-
-
 def run_scenarios_capturing_warnings(history, **kwargs) -> tuple[dict[str, DCFResult], list[str]]:
     """Envuelve engine.scenarios.run_scenarios capturando cualquier
     warnings.warn emitido durante el cálculo (p.ej. spread WACC-g
@@ -92,7 +89,7 @@ def build_memo_input(ticker: str, wacc: float, terminal_growth_rate: float,
     engine.reverse_dcf.compute_implied_expectations() -- qué crecimiento
     de ingresos y qué tasa de crecimiento terminal tendrían que cumplirse
     para justificar el precio de mercado/consenso, comparado contra lo
-    que asume el propio escenario conservador. Es lo que le permite al
+    que asume el propio escenario base. Es lo que le permite al
     memo explicar el mecanismo detrás de una desviación grande en vez de
     solo reportar el porcentaje (ver la regla 6 del prompt de sistema).
 
@@ -101,7 +98,7 @@ def build_memo_input(ticker: str, wacc: float, terminal_growth_rate: float,
     (WACC, g terminal, margen, D&A, CapEx, crecimiento), de mayor a menor
     impacto. Le da al memo la palanca que domina la valoración de esta
     empresa en concreto, en vez de una lista genérica de supuestos."""
-    base_result = scenario_results.get(CONSERVATIVE_SCENARIO_NAME)
+    base_result = scenario_results.get(BASE_SCENARIO_NAME)
     base_price = base_result.implied_share_price if base_result else None
 
     dev_market = (base_price / market_price - 1) if (base_price and market_price) else None

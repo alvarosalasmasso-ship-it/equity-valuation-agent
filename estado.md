@@ -1728,13 +1728,65 @@ cifras quedan como referencia histórica, no vigentes. No se rehicieron
 esos análisis completos por alcance. Documentado en
 `docs/METHODOLOGY.md` sección 33 y `docs/AUDIT.md` hallazgo C2.
 
-## 31. Próximo paso inmediato
+## 31. Sesión 17 (continuación) — Vuelta al núcleo: detección objetiva de tendencia estructural en la selección de supuestos (I16)
 
-0. Commitear el hallazgo C2 (SEC EDGAR + fix de EBIT) con confirmación
-   explícita del usuario.
+El usuario pidió parar de dispersarse y volver al objetivo original:
+la matemática del DCF ya está validada, pero la selección de supuestos
+no se adapta a la situación real de cada empresa. Pidió tratar esto
+como un analista de élite — supuestos objetivos y matemáticamente
+rigurosos por caso, no la misma receta para todas.
+
+**Repaso de punta a punta con AMZN** (la misma empresa del Excel de
+referencia): margen EBIT real mejorando 4 ejercicios seguidos
+(2.4%→11.2%), CapEx real en supercycle de IA (12.4%→18.4%) — pero el
+motor proyectaba ambos BAJANDO, en el escenario de cabecera de cada
+memo. Se descartó el modelado por segmentos (SEC EDGAR solo expone
+cifras consolidadas, confirmado; coste de ingeniería desproporcionado
+para lo que el usuario necesita).
+
+**Investigado con evidencia objetiva antes de decidir**: R² de un
+ajuste lineal sobre la ventana histórica, verificado contra los 25
+tickers reales de esta sesión — separa limpio tendencia real de ruido
+(mejor criterio que monotonicidad simple, caso GOOGL). Se descartó
+extrapolar la tendencia (mismo motivo que cerró I12) — la corrección
+mantiene el nivel actual sin apostar a que la tendencia continúe.
+
+**Un agente de planificación revisó el diseño antes de escribir
+código** y encontró 3 problemas reales resueltos en el mismo cambio:
+un test existente que asumía justo lo contrario (reescrito), el
+colapso silencioso de `bullish_scenario()` en un duplicado de
+"mantener nivel actual" (corregido separando la media histórica real),
+y un acoplamiento oculto en `ai/memo_generator.py` que habría roto el
+memo en silencio al renombrar el escenario (corregido).
+
+**Renombrado**: `"Conservador (reversión a la media)"` →
+`BASE_SCENARIO_NAME = "Base (histórico)"`, descripción generada
+dinámicamente driver por driver.
+
+**Efecto real medido** (WACC vía comparables real, sin gastar cuota):
+AMZN +43.5%, MSFT -27.4%, GOOGL -36.4%, META +15.4% — no uniformemente
+alcista ni bajista, depende de qué driver concreto tiene tendencia
+real en cada empresa (margen sube el precio, CapEx elevado lo baja) —
+evidencia de que responde a datos reales, no a un sesgo inventado.
+22 de 25 tickers disparan en al menos un driver; INTC/NEE/VRTX no
+disparan en ninguno (consistente con ser los casos ya documentados
+como genuinamente volátiles).
+
+**262 tests en total, todos en verde** (10 nuevos). Documentado en
+`docs/AUDIT.md` hallazgo I16 y `docs/METHODOLOGY.md` secciones 34-35
+(incluye también un hallazgo menor encontrado en el propio repaso:
+`tax_rate` de AMZN salía `None` en yfinance por falta de la línea "Tax
+Provision" — corregido derivándolo de `pretax_income - net_income`,
+una identidad contable siempre válida).
+
+## 32. Próximo paso inmediato
+
+0. Commitear el hallazgo I16 (detección de tendencia + fix de tax_rate
+   de AMZN) con confirmación explícita del usuario.
 1. Decidir si se rehacen los análisis sectoriales de esta sesión con
-   el EBIT corregido, o se dejan como referencia histórica — pendiente
-   de indicación del usuario.
+   el EBIT corregido (C2) y la detección de tendencia (I16), o se
+   dejan como referencia histórica — pendiente de indicación del
+   usuario.
 2. Seguir analizando más empresas/sectores si el usuario lo pide —
    sectores ya cubiertos: Big Tech (MSFT dogfooding), semiconductores,
    utilities reguladas, biotech/farma, small/mid-cap consumo.

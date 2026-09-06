@@ -2342,3 +2342,161 @@ de I+D en proceso de VRTX, contabilidad regulatoria de D) -- residuo
 menor, informativo, no un nuevo bug: el fix resuelve la inflación
 sistemática de doble dígito, no garantiza una reconciliación perfecta
 al céntimo en todos los casos.
+
+## 34. Vuelta al núcleo: detección objetiva de tendencia estructural en la selección de supuestos (sesión 17, hallazgo I16)
+
+Tras C2, el usuario pidió parar de dispersarse (DAFO, lotes, dogfooding
+de 5 sectores, SEC EDGAR) y volver al objetivo original: la matemática
+del DCF ya está validada al céntimo contra `Advanced DCF.xlsx`, pero la
+**selección de supuestos** no se adapta a la situación real de cada
+empresa -- aplica siempre la misma receta mecánica a cualquier
+compañía. Pidió tratar esto como lo haría un analista financiero de
+élite: asignar los supuestos más adecuados a cada caso de forma
+objetiva y matemáticamente rigurosa, no suponer lo mismo para todas.
+
+### El repaso de punta a punta con AMZN
+
+Se recorrió el ciclo completo del DCF con AMZN -- la misma empresa del
+Excel de referencia, lo que permite comparar no solo "¿el número
+parece razonable?" sino "¿el proceso coincide con las decisiones reales
+del analista de JPM?". La Etapa 1 (extracción de datos) salió limpia
+tras el fix de C2 -- 9/9 conceptos coinciden exactos con SEC EDGAR,
+incluido `tax_rate`, que resultó estar en `None` para las 4 años de
+AMZN por un hueco real de yfinance (ver sección 35). La Etapa 2
+(selección de supuestos) reveló el problema: el margen EBIT real de
+AMZN lleva 4 ejercicios seguidos mejorando (2.4%→6.4%→10.8%→11.2%) y
+el CapEx real lleva subiendo por el supercycle de IA
+(12.4%→9.2%→13.0%→18.4%) -- pero `default_assumptions_from_history()`
+proyectaba ambos **bajando**, en el escenario usado como cifra de
+cabecera de cada memo.
+
+Se descartó explícitamente el modelado por segmentos (como hace el
+propio Excel para AMZN, North America/International/AWS) tras
+verificar que la API simple de `companyfacts` de SEC EDGAR solo expone
+cifras consolidadas -- los datos por segmento requerirían parsear
+datasets masivos de la SEC o el XBRL crudo de cada 10-K, un coste de
+ingeniería que el usuario decidió no perseguir ("no me importa que se
+haga a nivel agregado, para evaluar empresas no pido ese nivel de
+especificación").
+
+### Investigación empírica del criterio objetivo, antes de escribir código
+
+Se probó R² de un ajuste lineal por mínimos cuadrados sobre la ventana
+histórica de cada driver (margen EBIT, D&A%, CapEx%, ΔNWC%), verificado
+contra los 25 tickers reales ya usados en la auditoría de esta sesión
+(Big Tech, semiconductores, utilities, biotech, small-caps) -- ver la
+tabla completa en `docs/AUDIT.md` hallazgo I16. Separa limpio tendencia
+real de ruido (casos altos >0.85 vs. casos bajos <0.30), y es mejor
+criterio que la monotonicidad simple: GOOGL margen (26.5%/27.4%/32.1%/
+32.0%) tiene R²=0.86 pese a fallar monotonicidad estricta por un
+último paso casi plano.
+
+Se consideró y descartó extrapolar la tendencia detectada más allá del
+nivel actual -- mismo motivo que ya cerró I12 (NVDA, flat CAGR
+compuesto → $21.7 billones): no hay forma objetiva de saber CUÁNTO
+extrapolar sin precisión falsa. La corrección aplicada es
+deliberadamente conservadora: cuando hay evidencia de tendencia, el
+motor deja de apostar CONTRA ella, pero tampoco apuesta a que continúe.
+
+### Un agente de planificación revisó el diseño antes de escribir código, no después
+
+Antes de implementar, se usó un agente de planificación con contexto
+completo del código real (`engine/projections.py`, `engine/scenarios.py`,
+`engine/monte_carlo.py`, `engine/sensitivity.py`, `engine/reverse_dcf.py`,
+`ai/memo_generator.py`, `app/streamlit_app.py`) para pressure-testear
+el diseño. Encontró 3 problemas reales, resueltos como parte del mismo
+cambio en vez de descubrirse después:
+
+1. **Un test existente asumía justo lo contrario** -- reescrito, no
+   roto, con la misma fixture (R²≈0.964 verificado a mano).
+2. **`bullish_scenario()` colapsaba en un duplicado silencioso de
+   "mantener nivel actual"** -- extrapolaba "la distancia ya recorrida
+   frente a `fade.end`", pero `fade.end` puede ahora ser el nivel
+   actual (no la media) cuando el override dispara, dando
+   `already_moved=0` justo para las empresas que motivan el cambio.
+   Corregido separando la media histórica real en `DriverTrendInfo.
+   historical_mean`, que `bullish_scenario()` usa explícitamente.
+3. **`ai/memo_generator.py` tenía el nombre del escenario duplicado a
+   mano como literal** (`CONSERVATIVE_SCENARIO_NAME`) -- se habría roto
+   en silencio (memo sin desviación vs. mercado, sin excepción) en
+   cuanto se renombrara el escenario sin corregir también esto.
+
+Verificación propia adicional, no del agente: con `lookback_years=3`
+(el valor por defecto real en TODOS los call sites del pipeline), la
+ventana de margen tiene exactamente 3 puntos -- insuficiente para un
+R² fiable (1 grado de libertad residual). Se desacopló la ventana del
+test de tendencia de `lookback_years` (`max(lookback_years,
+MIN_TREND_DATA_POINTS=4)`) para que la corrección funcione con los
+valores por defecto reales de la app, no solo si el usuario descubre y
+sube un slider no relacionado con esto.
+
+### Renombrado del escenario, no solo corrección numérica
+
+`"Conservador (reversión a la media)"` ya no describe con precisión lo
+que hace cuando el override dispara -- renombrado a `BASE_SCENARIO_NAME
+= "Base (histórico)"`, con una descripción generada dinámicamente
+driver por driver (qué revierte, qué se mantiene, y por qué) en vez de
+un texto fijo que puede quedar desactualizado frente a lo que el
+escenario realmente calcula.
+
+### Efecto real, verificado con datos reales (WACC vía comparables real, sin gastar cuota de Alpha Vantage)
+
+Comparando el precio del escenario base con la corrección aplicada
+frente a la reversión pura forzada a mano sobre los mismos datos:
+
+| Ticker | Antes (reversión pura) | Después (I16) | Cambio | Qué domina |
+|---|---|---|---|---|
+| AMZN | $47.51 | $68.20 | +43.5% | margen (único driver con tendencia real) |
+| MSFT | $269.05 | $195.23 | -27.4% | CapEx elevado domina sobre la mejora de margen |
+| GOOGL | $212.17 | $134.95 | -36.4% | CapEx elevado domina sobre la mejora de margen |
+| META | $333.11 | $384.34 | +15.4% | margen + D&A, sin CapEx disparando |
+
+El efecto no es uniformemente alcista ni bajista -- depende de qué
+driver concreto tiene tendencia real en cada empresa y de si es un
+ingreso (margen) o un gasto (CapEx). Esto es en sí mismo la evidencia
+de que la corrección responde a datos reales por empresa, no a un
+sesgo direccional inventado -- mismo tipo de verificación de
+anti-sobreajuste que ya confirmó C2.
+
+Escaneado el conjunto completo de 25 tickers: **22 de 25 disparan el
+override** en al menos un driver; INTC, NEE y VRTX no disparan en
+ninguno -- consistente con ser, precisamente, los tres casos ya
+documentados como genuinamente volátiles o con outliers reales (I15,
+reestructuración de INTC, créditos fiscales de NEE).
+
+### Verificación
+
+6 tests nuevos en `test_projections.py` (AMZN real margen dispara/CapEx
+no -- caso conocido no resuelto a propósito; GOOGL vs. monotonicidad;
+gate de `MIN_TREND_DATA_POINTS` con historia total insuficiente;
+outlier+tendencia co-disparando sin contradicción; reescritura del test
+que antes afirmaba reversión pura) + 4 en `test_scenarios.py`
+(incluida la regresión directa del colapso de `bullish_scenario()`) +
+ajustes de import/nombre en `test_memo_generator.py` y
+`app/streamlit_app.py`. **262 tests en total, todos en verde.**
+
+## 35. `tax_rate` de AMZN salía `None` en yfinance: derivación desde una identidad contable siempre válida (sesión 17, mismo repaso de punta a punta)
+
+Encontrado durante la Etapa 1 del repaso con AMZN (sección 34): SEC
+EDGAR validó 9/9 conceptos exactos salvo uno que ni siquiera llegó a
+compararse -- `tax_rate` salía `None` en el histórico completo de
+yfinance para AMZN, un hueco que habría bloqueado por completo el DCF
+de la propia empresa usada como referencia del proyecto.
+
+**Causa:** `engine/yfinance_provider.py` calculaba `tax_rate =
+tax_provision / pretax_income`, leyendo `"Tax Provision"` directamente
+del income statement de yfinance -- que para AMZN, verificado con datos
+reales, **no reporta esa línea en absoluto** (ausente, no solo un año
+con dato faltante), pese a tener `"Pretax Income"` y `"Net Income"`
+completos los 4 años.
+
+**Corregido:** `tax_provision = pretax_income - net_income` es una
+identidad contable siempre válida (no una aproximación: por definición
+`Net Income = Pretax Income - Tax Expense`) -- se deriva como fallback
+cuando `"Tax Provision"` falta, en ambos proveedores (mismo guard
+añadido a `engine/data_provider.py` por consistencia y robustez futura,
+aunque Alpha Vantage sí tenía el campo para AMZN). Verificado: el
+tax_rate de AMZN pasa de 100% `None` a 54.1%/19.0%/13.7%/20.2% -- cifras
+que coinciden EXACTAS con las ya documentadas en M6 meses atrás
+("AMZN 54.2%/19.0%/13.5%/19.7%"), confirmando consistencia con
+trabajo previo. 2 tests de regresión nuevos (uno por proveedor).

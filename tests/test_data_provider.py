@@ -109,6 +109,29 @@ def test_historical_financials_normalizes_and_sorts_ascending():
     assert list(df["ebit"]) == [15.0, 20.0]
 
 
+def test_historical_financials_derives_tax_expense_when_missing():
+    """Mismo hallazgo que en yfinance (sesión 17, repaso con AMZN):
+    tax_expense = pretax - net_income es una identidad contable siempre
+    válida, se deriva si "incomeTaxExpense" no está presente."""
+    fixture = {
+        "annualReports": [{
+            "fiscalDateEnding": "2022-12-31",
+            "totalRevenue": "100",
+            "operatingIncome": "20",
+            "incomeBeforeTax": "18",
+            "netIncome": "14.4",  # tax implícito: 3.6 -> tax_rate 0.20
+            "depreciationAndAmortization": "5",
+        }]
+    }
+    client = AlphaVantageClient(api_key="test-key")
+    client.income_statement = MagicMock(return_value=fixture)
+    client.balance_sheet = MagicMock(return_value=BALANCE_FIXTURE)
+    client.cash_flow = MagicMock(return_value=CASH_FLOW_FIXTURE)
+    client.company_overview = MagicMock(return_value=OVERVIEW_FIXTURE)
+    df = historical_financials(client, "TEST")
+    assert df["tax_rate"].iloc[0] == pytest.approx(0.20)
+
+
 def test_historical_financials_prefers_operating_income_over_ebit():
     """Auditoría sesión 17 (validación cruzada con SEC EDGAR): "ebit" de
     Alpha Vantage es incomeBeforeTax + interestExpense, no Operating

@@ -9,7 +9,6 @@ import pandas as pd
 import pytest
 
 from ai.memo_generator import (
-    CONSERVATIVE_SCENARIO_NAME,
     MemoInput,
     ScenarioSummary,
     build_memo_input,
@@ -17,6 +16,7 @@ from ai.memo_generator import (
     generate_memo,
     run_scenarios_capturing_warnings,
 )
+from engine.scenarios import BASE_SCENARIO_NAME
 
 # Histórico con tendencia de margen (igual que tests/test_scenarios.py)
 HISTORY = pd.DataFrame({
@@ -58,15 +58,20 @@ def test_run_scenarios_capturing_warnings_captures_thin_spread_warning():
         terminal_growth_rate=0.025,
     )
     assert any("margen prudente" in w for w in warnings_text)
-    assert CONSERVATIVE_SCENARIO_NAME in results
+    assert BASE_SCENARIO_NAME in results
 
 
 def test_run_scenarios_capturing_warnings_no_warning_on_healthy_spread():
+    """El fixture HISTORY tiene una tendencia de margen real (I16, ver
+    tests/test_scenarios.py) que dispara su propio aviso, sin relación
+    con el spread WACC-g -- este test verifica específicamente que NO
+    hay aviso de spread estrecho con un WACC saludable, no que no haya
+    avisos de ningún tipo."""
     results, warnings_text = run_scenarios_capturing_warnings(
         HISTORY, wacc=0.09, cash=100, total_debt=50, diluted_shares=100,
         terminal_growth_rate=0.025,
     )
-    assert warnings_text == []
+    assert not any("margen prudente" in w for w in warnings_text)
 
 
 # --- build_memo_input --------------------------------------------------------
@@ -74,7 +79,7 @@ def test_run_scenarios_capturing_warnings_no_warning_on_healthy_spread():
 def _sample_scenario_results():
     from engine.valuation import DCFResult
     return {
-        CONSERVATIVE_SCENARIO_NAME: DCFResult(
+        BASE_SCENARIO_NAME: DCFResult(
             unlevered_fcf=[10], pv_unlevered_fcf=[9], discount_periods=[1],
             gordon_terminal_value=100, exit_multiple_terminal_value=None,
             terminal_value=100, pv_terminal_value=90, enterprise_value=99,
@@ -275,7 +280,7 @@ def _sample_memo_input() -> MemoInput:
     return MemoInput(
         ticker="AMZN", company_name="Amazon.com Inc",
         wacc=0.0827, terminal_growth_rate=0.025,
-        scenarios=[ScenarioSummary("Conservador (reversión a la media)", 84.82),
+        scenarios=[ScenarioSummary(BASE_SCENARIO_NAME, 84.82),
                    ScenarioSummary("Alcista (continúa la tendencia reciente)", 107.09)],
         key_assumptions={"ebit_margin_start": 0.139, "ebit_margin_end": 0.105},
         market_price=258.51, analyst_target_price=328.17,

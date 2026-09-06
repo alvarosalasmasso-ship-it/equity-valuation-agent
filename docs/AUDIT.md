@@ -30,7 +30,7 @@ reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
 y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
-**2 hallazgos críticos (✅ ambos corregidos — C2, sesión 17, es el hallazgo de mayor impacto de todo el proyecto: "EBIT" de ambos proveedores incluía partidas no operativas, sobrevalorando el input central de cada DCF desde el inicio), 15 importantes (11 ✅ corregidos —
+**2 hallazgos críticos (✅ ambos corregidos — C2, sesión 17, es el hallazgo de mayor impacto de todo el proyecto: "EBIT" de ambos proveedores incluía partidas no operativas, sobrevalorando el input central de cada DCF desde el inicio), 16 importantes (11 ✅ corregidos —
 I6/I7/I8 de la auditoría matemática/financiera a fondo, I9/I10 de una
 prueba de estrés con 11 tickers reales ("como si un banco fuese a
 usarla"), I12 (aviso de hiper-crecimiento extremo, corrección parcial:
@@ -40,11 +40,16 @@ mal para GOOGL/META, corrige la desviación media del universo piloto de
 corrección parcial: avisa cuando el resultado final cae fuera de una
 banda plausible, sin ajustar el número — la exclusión automática se
 probó y se rechazó, dispara falsos positivos en 9 de 24 tickers reales)
-—, 4 ✅ aceptados/documentados como limitación — I2, I4 (con nueva
-evidencia real de contaminación de WACC entre comparables heterogéneos,
-grupo de semiconductores), I11 (DCF FCFF no encaja con bancos/REITs),
-I14 (reverse DCF solo resuelve crecimiento, no margen — hallazgo real
-con AMD)), 9 moderados (**todos
+—, 1 ✅ corregido parcialmente con detección objetiva — I16 (el motor
+revertía SIEMPRE a la media histórica, incluso contra una tendencia
+estructural real y sostenida; ahora la mantiene cuando hay evidencia
+objetiva, R²≥0.70 verificado contra 25 tickers reales, sin extrapolar
+más allá — mismo criterio "avisar/ajustar solo con evidencia, nunca
+extrapolar sin límite" que I12/I15), 4 ✅ aceptados/documentados como
+limitación — I2, I4 (con nueva evidencia real de contaminación de WACC
+entre comparables heterogéneos, grupo de semiconductores), I11 (DCF
+FCFF no encaja con bancos/REITs), I14 (reverse DCF solo resuelve
+crecimiento, no margen — hallazgo real con AMD)), 9 moderados (**todos
 cerrados**: 8 ✅ corregidos incluido M7 en el Lote A, M8 (evaluación
 del sector Utilities: yfinance no reportaba D&A para D bajo la etiqueta
 estándar) y M9 (grupo small/mid-cap: `build_peer_wacc()` sin el mismo
@@ -57,7 +62,9 @@ informativos (1
 ✅ corregido — N2 —, 2 sin acción necesaria). Con esto, **no queda
 ningún hallazgo moderado o importante abierto** — I12 e I15 se
 corrigieron parcialmente (avisan, sin ajuste automático por falta de
-evidencia objetiva suficiente para justificarlo, mismo criterio en
+evidencia objetiva suficiente para justificarlo); I16 se corrigió
+parcialmente con ajuste objetivo (mantiene el nivel actual con
+evidencia de tendencia, sin extrapolar), mismo criterio en
 ambos casos).**
 La sesión 17 añadió una auditoría explícita del rigor matemático y
 financiero del motor (`engine/valuation.py`, `wacc_builder.py`,
@@ -933,6 +940,146 @@ ahora el aviso "tax_rate proyectado (115.9%) está muy fuera de un
 rango plausible..." aparece junto al resto de diagnósticos técnicos,
 dando al usuario la causa raíz real en vez de solo el síntoma (FCF
 negativo, ya cubierto por I10). 230 tests en total, todos en verde.
+
+---
+
+### I16. `default_assumptions_from_history()` revertía SIEMPRE hacia la media histórica, aunque la empresa mostrara una tendencia estructural real y sostenida — ✅ CORREGIDO parcialmente (sesión 17): detección objetiva (R²), sin extrapolar más allá de mantener el nivel actual
+
+**Qué es:** el usuario pidió parar de dispersarse (DAFO/lotes/dogfooding/
+SEC EDGAR) y volver al núcleo: la matemática del DCF ya está validada
+al céntimo, pero la selección de supuestos no se adapta a la situación
+real de cada empresa — trata a cualquier compañía con la misma receta
+mecánica ("año 1 = dato real, año 5 = media de los últimos N años").
+Un repaso de punta a punta con **AMZN** (la misma empresa del Excel de
+referencia) lo expuso con un caso concreto: el margen EBIT real lleva
+**4 ejercicios seguidos mejorando** (2.4%→6.4%→10.8%→11.2%) y el CapEx
+real lleva **subiendo por el supercycle de IA** (12.4%→9.2%→13.0%→
+18.4%, mismo patrón ya confirmado esta sesión para MSFT/META/GOOGL/
+NVDA). El motor, en el escenario que se usaba como cifra de cabecera
+de cada memo, proyectaba **ambos bajando** — la dirección contraria a
+4 años de evidencia real. Revertir CONTRA una tendencia real y sostenida
+no es "conservador", es la asunción equivocada.
+
+**Investigado con evidencia objetiva antes de decidir el criterio, no
+solo con AMZN.** Se probó R² de un ajuste lineal por mínimos cuadrados
+sobre la ventana histórica de margen/CapEx/D&A/ΔNWC, verificado contra
+los 25 tickers reales ya usados en la auditoría de esta sesión (Big
+Tech, semiconductores, utilities, biotech, small-caps) — separa limpio
+tendencia real de ruido:
+
+| Casos con R² alto (>0.85, tendencia real) | Casos con R² bajo (<0.30, ruido) |
+|---|---|
+| AMZN margen 0.92, MSFT margen 0.93, MSFT CapEx 0.94, KO margen 0.98, PG CapEx 0.96, DUK margen 0.94, D margen 0.95, MRNA margen 0.94 | JNJ margen 0.01, PG margen 0.10, BOOT margen 0.05, VRTX margen 0.16 (el mismo año outlier de I15), QCOM/INTC/NEE margen 0.24-0.30 |
+
+La monotonicidad simple resultó ser un criterio peor: **GOOGL** margen
+(26.5%/27.4%/32.1%/32.0%) tiene R²=0.86 (tendencia real clara) pero
+falla monotonicidad estricta por un último paso casi plano — R² lo
+captura correctamente, monotonicidad lo habría rechazado mal.
+
+**Hipótesis de diseño alternativa considerada y descartada:** extrapolar
+la tendencia detectada más allá del nivel actual (en vez de solo
+mantenerlo). Se rechazó por el mismo motivo que ya cerró I12 (NVDA,
+flat CAGR compuesto 5 años → $21.7 billones): extrapolar una tendencia
+fuerte varios años seguidos puede producir valores implausibles sin que
+haya una forma objetiva de saber CUÁNTO extrapolar. La corrección
+aplicada es deliberadamente conservadora: cuando hay evidencia de
+tendencia, el motor deja de apostar CONTRA ella (revertir a la media),
+pero tampoco apuesta a que continúe — se mantiene en el nivel actual.
+
+**Cómo se corrigió:** `_detect_structural_trend()` (nueva,
+`engine/projections.py`) calcula R² de un ajuste lineal por mínimos
+cuadrados, Python puro sin numpy. `TREND_R_SQUARED_THRESHOLD = 0.70`
+(regla de pulgar documentada, mismo espíritu que
+`EXTREME_FLAT_GROWTH_WARNING_THRESHOLD`/`TAX_RATE_PLAUSIBLE_RANGE`) —
+caso conocido y deliberadamente NO resuelto: el CapEx real de AMZN
+(R²=0.545) cae bajo el umbral y sigue revirtiendo a la media; se
+prefiere dejar pasar un caso real antes que repetir el error ya
+investigado y rechazado en I15 (excluir outliers de `tax_rate` disparaba
+falsos positivos en 9/24 tickers reales). Cuando el test dispara,
+`end` pasa a ser el nivel actual en vez de la media histórica, con un
+`warnings.warn()` explícito — nunca un ajuste silencioso.
+
+**Detalle no obvio, encontrado en la implementación:** con
+`lookback_years=3` (el valor por defecto real en TODOS los call sites
+del pipeline — `run_scenarios`, `driver_sensitivities`,
+`run_monte_carlo`, el slider de la app), la ventana de margen tiene
+exactamente 3 puntos — insuficiente para un R² fiable (1 grado de
+libertad residual, degenerado). La ventana del TEST de tendencia se
+desacopló de `lookback_years` (`max(lookback_years,
+MIN_TREND_DATA_POINTS=4)`, sin tocar la ventana de la media histórica)
+para que la corrección funcione con los valores por defecto reales de
+la app, no solo si el usuario descubre y sube un slider no relacionado.
+
+**Interacción con `engine/scenarios.py`, encontrada por un agente de
+planificación antes de escribir código, no después:** `bullish_scenario()`
+extrapolaba "la misma magnitud que el margen ya se movió frente a
+`fade.end`" — pero `fade.end` puede estar ahora sobrescrito al nivel
+actual cuando el override dispara, lo que habría colapsado
+silenciosamente el escenario "Alcista" en un duplicado exacto de
+"Mantener nivel actual" justo para las empresas que motivan este
+cambio (AMZN, MSFT...). Corregido separando la media histórica real en
+un campo nuevo (`DriverTrendInfo.historical_mean`) que `bullish_scenario()`
+usa explícitamente en vez de `fade.end`. Verificado con test de
+regresión dedicado.
+
+**Renombrado, no solo corregido:** el escenario `"Conservador
+(reversión a la media)"` ya no describe con precisión lo que hace
+cuando el override dispara — renombrado a `"Base (histórico)"`
+(`BASE_SCENARIO_NAME`, `engine/scenarios.py`), con una descripción
+generada dinámicamente driver por driver (qué revierte, qué se
+mantiene, y por qué) en vez de un texto fijo que puede quedar
+desactualizado. `ai/memo_generator.py` tenía el nombre anterior
+duplicado a mano como literal (`CONSERVATIVE_SCENARIO_NAME`) en vez de
+importarlo — se habría roto en silencio (`base_result = None`, sin
+excepción, memo sin desviación vs. mercado) en cuanto se renombrara el
+escenario sin corregir también esto.
+
+**Efecto real medido (sin gastar cuota nueva de Alpha Vantage, WACC vía
+comparables real), comparando precio con la corrección vs. reversión
+pura forzada a mano sobre los mismos datos:**
+
+| Ticker | Antes (reversión pura) | Después (I16) | Cambio | Qué domina |
+|---|---|---|---|---|
+| AMZN | $47.51 | $68.20 | **+43.5%** | margen (único driver con tendencia real) |
+| MSFT | $269.05 | $195.23 | **-27.4%** | CapEx elevado (R²=0.94) domina sobre la mejora de margen |
+| GOOGL | $212.17 | $134.95 | **-36.4%** | CapEx elevado (R²=0.81) domina sobre la mejora de margen |
+| META | $333.11 | $384.34 | **+15.4%** | margen + D&A, sin CapEx disparando |
+
+El efecto no es uniformemente alcista ni bajista — depende de qué
+driver concreto tiene tendencia real en cada empresa, y de si ese
+driver es un ingreso (margen: sube el precio si se mantiene alto) o un
+gasto (CapEx: baja el precio si se mantiene alto). Esto confirma que la
+corrección responde a evidencia por empresa, no a un sesgo direccional
+inventado — mismo tipo de verificación de anti-sobreajuste que ya
+confirmó C2 (la desviación agregada del universo piloto empeoró tras
+ese fix, no mejoró).
+
+**Escaneado el conjunto completo de 25 tickers**: 22 de 25 disparan el
+override en al menos un driver (AMZN, MSFT, GOOGL, META, AAPL, KO, PG,
+JNJ, NVDA, AMD, AVGO, QCOM, DUK, SO, D, REGN, MRNA, BIIB, MCRI, SHOO,
+BOOT, FIZZ); INTC, NEE y VRTX no disparan en ningún driver —
+consistente con ser, precisamente, los tres casos ya documentados como
+genuinamente volátiles/con outliers reales (I15, restructuración de
+INTC, créditos fiscales de NEE).
+
+**Alcance, documentado sin ocultar el hueco:** el test se aplica
+genéricamente a los 4 drivers con fade (margen EBIT, D&A%, CapEx%,
+ΔNWC%) — limitarlo a solo margen/CapEx habría sido una asimetría
+arbitraria no documentada. D&A/ΔNWC reciben el mismo tratamiento "por
+extensión del principio general", sin verificación caso a caso tan
+exhaustiva como margen/CapEx (mismo estado que M6/M7 antes de
+cerrarse). `revenue_growth`/`tax_rate` NO se tocan — crecimiento ya es
+plano por diseño (sección 14), tax_rate ya es plano por decisión
+investigada (M6).
+
+**Verificado:** 6 tests de regresión nuevos en `test_projections.py`
+(AMZN real margen dispara/CapEx no, GOOGL vs. monotonicidad, gate de
+`MIN_TREND_DATA_POINTS` con historia total insuficiente, outlier+
+tendencia co-disparando sin contradicción, reescritura del test que
+antes afirmaba justo lo contrario) + 4 en `test_scenarios.py`
+(incluida la regresión directa del colapso de `bullish_scenario()`) +
+ajustes en `test_memo_generator.py`/`app/streamlit_app.py` para el
+renombrado. **262 tests en total, todos en verde.**
 
 ---
 

@@ -162,6 +162,18 @@ def historical_financials(ticker) -> pd.DataFrame:
             ebit = _clean(inc.get("EBIT"))
         pretax_income = _clean(inc.get("Pretax Income"))
         tax_provision = _clean(inc.get("Tax Provision"))
+        if tax_provision is None:
+            # Repaso de punta a punta con AMZN (sesión 17, la propia
+            # empresa del Excel de referencia): yfinance NO reporta "Tax
+            # Provision" para AMZN en ningún año -- ausente del todo, no
+            # solo un año outlier -- pese a tener "Pretax Income" y "Net
+            # Income" completos. tax_provision = pretax_income -
+            # net_income es una identidad contable siempre válida (no una
+            # aproximación), así que se deriva en vez de dejar tax_rate
+            # en None para toda la empresa.
+            net_income_for_tax = _clean(inc.get("Net Income"))
+            if pretax_income is not None and net_income_for_tax is not None:
+                tax_provision = pretax_income - net_income_for_tax
         tax_rate = (tax_provision / pretax_income) if (tax_provision is not None
                     and pretax_income not in (None, 0)) else None
 

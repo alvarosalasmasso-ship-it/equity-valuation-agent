@@ -112,6 +112,24 @@ def test_historical_financials_takes_absolute_value_of_capex():
     assert list(df["capex"]) == [10.0, 12.0]
 
 
+def test_historical_financials_derives_tax_provision_when_missing():
+    """Repaso de punta a punta con AMZN (sesión 17): yfinance no reporta
+    "Tax Provision" para AMZN en NINGÚN año (ausente del todo, no un
+    outlier puntual), pese a tener "Pretax Income" y "Net Income"
+    completos -- tax_provision = pretax - net_income es una identidad
+    contable siempre válida, se deriva en vez de dejar tax_rate en None."""
+    financials_without_tax_provision = _make_frame({
+        "Total Revenue": [100.0, 90.0],
+        "Operating Income": [20.0, 18.0],
+        "Pretax Income": [18.0, 16.0],
+        "Net Income": [14.4, 13.2],  # tax implícito: 3.6 y 2.8 -> tax_rate 0.20 y 0.175
+        "Interest Expense": [1.0, 0.9],
+    }, DATES)
+    ticker = FakeTicker(financials_without_tax_provision, BALANCE_SHEET, CASHFLOW, INFO, ticker="TEST")
+    df = historical_financials(ticker)
+    assert list(df["tax_rate"]) == pytest.approx([0.175, 0.20])
+
+
 def test_historical_financials_prefers_operating_income_over_ebit():
     """Auditoría sesión 17 (validación cruzada con SEC EDGAR): "EBIT" de
     yfinance es Pretax Income + Interest Expense, no Operating Income --

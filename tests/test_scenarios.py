@@ -1,6 +1,13 @@
 """Tests de engine/scenarios.py con un histórico sintético donde el
 margen EBIT tiene una tendencia clara (0.05, 0.05, 0.10, 0.20), para
-poder afirmar a mano el resultado exacto de cada escenario."""
+poder afirmar a mano el resultado exacto de cada escenario.
+
+Sesión 17 (hallazgo I16): esta misma tendencia (R²=0.83, por encima del
+umbral TREND_R_SQUARED_THRESHOLD=0.70) hace que el escenario base ya NO
+revierta el margen a la media histórica -- lo mantiene en el nivel
+actual. D&A/CapEx/ΔNWC son planos en este histórico (sin tendencia real
+que detectar en ellos), así que su comportamiento no cambia. Ver
+docstring de cada test para el efecto concreto sobre cada escenario."""
 
 from datetime import date
 
@@ -9,8 +16,9 @@ import pytest
 
 from engine.projections import default_assumptions_from_history
 from engine.scenarios import (
+    BASE_SCENARIO_NAME,
+    base_scenario,
     bullish_scenario,
-    conservative_scenario,
     hold_current_scenario,
     run_scenarios,
 )
@@ -33,12 +41,21 @@ def _base_assumptions():
     return default_assumptions_from_history(HISTORY, n_years=5, lookback_years=3)
 
 
-def test_conservative_scenario_is_the_unmodified_default():
+def test_base_scenario_holds_margin_at_current_level_when_trend_detected():
+    """Con la tendencia real de este histórico (R²=0.83, por encima del
+    umbral), el escenario base ya no revierte el margen a la media
+    (I16) -- lo mantiene en el nivel actual. D&A/CapEx/ΔNWC son planos
+    en este histórico (sin variación real que detectar como tendencia),
+    así que su end == start de cualquier forma."""
     base = _base_assumptions()
-    scenario = conservative_scenario(base)
+    scenario = base_scenario(base)
     assert scenario.assumptions is base
     assert scenario.assumptions.ebit_margin.start == pytest.approx(0.20)
-    assert scenario.assumptions.ebit_margin.end == pytest.approx((0.05 + 0.10 + 0.20) / 3)
+    assert scenario.assumptions.ebit_margin.end == pytest.approx(0.20)
+    trend = base.driver_trend_info["ebit_margin"]
+    assert trend.is_override
+    assert trend.r_squared == pytest.approx(0.8333, abs=1e-3)
+    assert trend.historical_mean == pytest.approx((0.05 + 0.10 + 0.20) / 3)
 
 
 def test_hold_current_scenario_freezes_every_driver_at_year_one_value():
@@ -53,29 +70,46 @@ def test_hold_current_scenario_freezes_every_driver_at_year_one_value():
     assert scenario.assumptions.revenue_growth == base.revenue_growth
 
 
-def test_bullish_scenario_extrapolates_same_magnitude_of_margin_move():
+def test_bullish_scenario_extrapolates_from_true_historical_mean_not_overridden_end():
+    """Regresión (sesión 17, hallazgo I16): antes de separar
+    driver_trend_info del FadeAssumption ya sobrescrito, bullish_scenario()
+    leía base.ebit_margin.end para calcular cuánto extrapolar -- pero
+    end ya NO es la media real cuando el trend override está activo (es
+    igual a start, 0.20). Sin el fix, "already_moved" saldría 0 y
+    bullish colapsaría en un duplicado exacto de "mantener nivel
+    actual". Con el fix (leer driver_trend_info[...].historical_mean),
+    sigue extrapolando la distancia real a la media histórica (0.1167),
+    dando un resultado estrictamente mayor que hold."""
     base = _base_assumptions()
     scenario = bullish_scenario(base)
-    already_moved = base.ebit_margin.start - base.ebit_margin.end  # 0.20 - 0.1167 = 0.0833
+    historical_mean = base.driver_trend_info["ebit_margin"].historical_mean
+    already_moved = base.ebit_margin.start - historical_mean  # 0.20 - 0.1167 = 0.0833
     assert scenario.assumptions.ebit_margin.start == pytest.approx(0.20)
     assert scenario.assumptions.ebit_margin.end == pytest.approx(0.20 + already_moved)
-    assert scenario.assumptions.ebit_margin.end > 0.20  # sigue mejorando, no revierte
+    assert scenario.assumptions.ebit_margin.end > 0.20  # sigue mejorando, no colapsa en "mantener"
     # CapEx/D&A/NWC se mantienen (hold), no se extrapolan también
     assert scenario.assumptions.capex_pct_revenue.end == scenario.assumptions.capex_pct_revenue.start
 
 
-def test_bullish_price_above_hold_above_conservative_when_margin_rising():
-    """Con una tendencia de margen alcista, el orden de precios implícitos
-    debe ser: conservador < mantener actual < alcista (invariante, no un
-    valor exacto -- lo exacto ya se cubre en los tests de arriba)."""
+def test_bullish_price_above_hold_which_equals_base_when_only_margin_trends():
+    """Con este histórico, solo el margen EBIT tiene tendencia real
+    (D&A/CapEx/ΔNWC son planos, sin variación que detectar) -- el
+    escenario base ya no revierte el margen (I16), así que su path de
+    margen coincide EXACTO con "mantener nivel actual": base == hold en
+    precio para este caso concreto. No es un error, es la consecuencia
+    correcta de que ambos mecanismos dan el mismo `end` para el único
+    driver que varía en este histórico. Alcista sigue siendo
+    estrictamente mayor, porque es el único que extrapola más allá del
+    nivel actual."""
     results = run_scenarios(
         HISTORY, wacc=0.09, cash=100, total_debt=50, diluted_shares=100,
         n_years=5, terminal_growth_rate=0.025, lookback_years=3,
     )
-    conservative = results["Conservador (reversión a la media)"].implied_share_price
+    base_price = results[BASE_SCENARIO_NAME].implied_share_price
     hold = results["Mantener nivel actual"].implied_share_price
     bullish = results["Alcista (continúa la tendencia reciente)"].implied_share_price
-    assert conservative < hold < bullish
+    assert base_price == pytest.approx(hold)
+    assert hold < bullish
 
 
 def test_run_scenarios_returns_all_three_named_scenarios():
@@ -83,16 +117,18 @@ def test_run_scenarios_returns_all_three_named_scenarios():
         HISTORY, wacc=0.09, cash=100, total_debt=50, diluted_shares=100,
     )
     assert set(results.keys()) == {
-        "Conservador (reversión a la media)",
+        BASE_SCENARIO_NAME,
         "Mantener nivel actual",
         "Alcista (continúa la tendencia reciente)",
     }
     assert all(r.implied_share_price > 0 for r in results.values())
 
 
-def test_hold_scenario_equals_conservative_when_history_is_flat():
-    """Si el histórico no tiene tendencia (margen constante), año1 == mediaN,
-    así que conservador y mantener-actual deben coincidir exactamente."""
+def test_hold_scenario_equals_base_when_history_is_flat():
+    """Si el histórico no tiene tendencia (margen constante), año1 ==
+    mediaN y R²=0 (serie sin varianza, ver _detect_structural_trend) --
+    base y mantener-actual deben coincidir exactamente, con o sin
+    override de tendencia."""
     flat_history = pd.DataFrame({
         "fiscal_year": [2020, 2021, 2022, 2023],
         "revenue": REVENUE,
@@ -103,10 +139,10 @@ def test_hold_scenario_equals_conservative_when_history_is_flat():
         "tax_rate": [0.25] * 4,
     })
     results = run_scenarios(flat_history, wacc=0.09, cash=100, total_debt=50, diluted_shares=100)
-    conservative = results["Conservador (reversión a la media)"].implied_share_price
+    base_price = results[BASE_SCENARIO_NAME].implied_share_price
     hold = results["Mantener nivel actual"].implied_share_price
     bullish = results["Alcista (continúa la tendencia reciente)"].implied_share_price
-    assert conservative == pytest.approx(hold)
+    assert base_price == pytest.approx(hold)
     assert hold == pytest.approx(bullish)  # sin tendencia, "seguir mejorando" tampoco cambia nada
 
 
@@ -126,7 +162,7 @@ def test_run_scenarios_applies_real_stub_when_history_has_fiscal_dates():
         history_with_dates, valuation_date=date(2023, 7, 1), **kwargs
     )
 
-    name = "Conservador (reversión a la media)"
+    name = BASE_SCENARIO_NAME
     assert results_with_stub[name].implied_share_price != pytest.approx(
         results_no_stub[name].implied_share_price
     )

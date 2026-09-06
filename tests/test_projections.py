@@ -316,17 +316,20 @@ def test_default_assumptions_does_not_warn_on_plausible_tax_rate():
         default_assumptions_from_history(history, lookback_years=3)
 
 
-def test_default_assumptions_fades_margin_from_recent_actual_to_historical_average():
-    """Histórico con tendencia de margen: 0.05, 0.05, 0.10, 0.20 (últimos
-    3 años usados: 0.05, 0.10, 0.20 -> media = 0.1166...).
-    Año 1 debe ser el margen del ÚLTIMO año real (0.20), año N la media
-    de la ventana (no el propio 0.20) -> el fade captura la tendencia
-    reciente en vez de diluirla en un promedio plano.
-
-    z modificado de este caso (0.05, 0.10 de referencia, 0.20 candidato)
-    = 3.37, deliberadamente justo por DEBAJO del umbral de outlier (3.5,
-    ver test_default_assumptions_warns_but_keeps_real_anchor_when_last_year_is_a_statistical_outlier)
-    -- este caso no debe disparar ni siquiera el aviso."""
+def test_default_assumptions_holds_current_level_when_trend_is_structural():
+    """Regresión sesión 17 (hallazgo I16): histórico con tendencia clara
+    de margen (0.05, 0.05, 0.10, 0.20 -- creciente los 4 años). Aunque
+    lookback_years=3 (la ventana de la MEDIA sigue siendo los últimos 3:
+    0.05, 0.10, 0.20), la ventana de TENDENCIA es más ancha
+    (max(lookback_years, MIN_TREND_DATA_POINTS)=4, los 4 años completos)
+    -- R² de esa serie de 4 puntos es 0.83, por encima del umbral (0.70),
+    así que año N se MANTIENE en el nivel actual (0.20) en vez de
+    revertir a la media histórica (0.1166...): revertir contra una
+    tendencia real de 4 años no es "conservador", es la asunción
+    equivocada (mismo razonamiento que motivó este cambio con AMZN,
+    docs/AUDIT.md I16). Antes de este cambio, este mismo test afirmaba
+    justo lo contrario (reversión a la media) -- reescrito a propósito,
+    no un test nuevo sin relación."""
     revenue = [1000.0, 1000.0, 1000.0, 1000.0]
     history = pd.DataFrame({
         "fiscal_year": [2020, 2021, 2022, 2023],
@@ -337,12 +340,127 @@ def test_default_assumptions_fades_margin_from_recent_actual_to_historical_avera
         "change_in_nwc": [None, 20.0, 20.0, 20.0],
         "tax_rate": [0.25] * 4,
     })
-    assumptions = default_assumptions_from_history(history, lookback_years=3)
+    with pytest.warns(UserWarning, match="tendencia lineal fuerte"):
+        assumptions = default_assumptions_from_history(history, lookback_years=3)
 
-    expected_average = (0.05 + 0.10 + 0.20) / 3
     assert assumptions.ebit_margin.start == pytest.approx(0.20)  # último año real
-    assert assumptions.ebit_margin.end == pytest.approx(expected_average)
-    assert assumptions.ebit_margin.start > assumptions.ebit_margin.end  # capta la tendencia alcista
+    assert assumptions.ebit_margin.end == pytest.approx(0.20)  # se mantiene, no revierte
+
+
+def test_default_assumptions_trend_override_with_real_amzn_data_margin_yes_capex_no():
+    """Caso real que motivó el cambio (sesión 17, I16): margen EBIT real
+    de AMZN (2.4%, 6.4%, 10.8%, 11.2% -- 4 ejercicios seguidos
+    mejorando, R²=0.92) SÍ dispara el override -- se mantiene en el
+    nivel actual (11.2%) en vez de revertir a la media de los últimos 3
+    años (9.44%). CapEx real de AMZN (12.4%, 9.2%, 13.0%, 18.4% -- el
+    supercycle de IA, pero con un R²=0.545, en la banda intermedia) NO
+    dispara -- caso conocido y deliberadamente no resuelto (ver
+    TREND_R_SQUARED_THRESHOLD): sigue revirtiendo a la media (13.52%).
+    Documentado también en docs/AUDIT.md I16, no solo aquí."""
+    revenue = [1000.0] * 4
+    history = pd.DataFrame({
+        "fiscal_year": [2022, 2023, 2024, 2025],
+        "revenue": revenue,
+        "ebit": [23.83, 64.114, 107.519, 111.553],
+        "capex": [123.827, 91.737, 130.101, 183.867],
+        "d_and_a": [50.0] * 4,
+        "change_in_nwc": [None, 10.0, 10.0, 10.0],
+        "tax_rate": [0.20] * 4,
+    })
+    with pytest.warns(UserWarning, match="margen EBIT.*tendencia lineal fuerte"):
+        assumptions = default_assumptions_from_history(history, lookback_years=3)
+
+    assert assumptions.ebit_margin.start == pytest.approx(0.111553, abs=1e-4)
+    assert assumptions.ebit_margin.end == pytest.approx(0.111553, abs=1e-4)  # se mantiene
+    assert assumptions.driver_trend_info["ebit_margin"].is_override
+    assert assumptions.driver_trend_info["ebit_margin"].r_squared == pytest.approx(0.918, abs=1e-2)
+
+    expected_capex_mean = (0.091737 + 0.130101 + 0.183867) / 3
+    assert assumptions.capex_pct_revenue.end == pytest.approx(expected_capex_mean, abs=1e-4)  # revierte
+    assert not assumptions.driver_trend_info["capex_pct_revenue"].is_override
+    assert assumptions.driver_trend_info["capex_pct_revenue"].r_squared == pytest.approx(0.545, abs=1e-2)
+
+
+def test_default_assumptions_trend_gate_requires_min_data_points_regardless_of_lookback():
+    """Con solo 3 años de historia TOTAL disponibles (no solo
+    lookback_years=3), la ventana de tendencia (max(lookback_years,
+    MIN_TREND_DATA_POINTS)=4) no puede alcanzar 4 puntos aunque los 3
+    disponibles dibujen una tendencia aparente perfecta -- el gate de
+    MIN_TREND_DATA_POINTS se aplica sobre los datos REALMENTE
+    disponibles, no solo sobre el parámetro lookback_years."""
+    revenue = [1000.0, 1000.0, 1000.0]
+    history = pd.DataFrame({
+        "fiscal_year": [2021, 2022, 2023],
+        "revenue": revenue,
+        "ebit": [50.0, 100.0, 200.0],  # tendencia perfecta con solo 3 puntos
+        "capex": [80.0] * 3,
+        "d_and_a": [50.0] * 3,
+        "change_in_nwc": [10.0, 10.0, 10.0],
+        "tax_rate": [0.20] * 3,
+    })
+    import warnings as warnings_module
+    with warnings_module.catch_warnings(record=True) as caught:
+        warnings_module.simplefilter("always")
+        assumptions = default_assumptions_from_history(history, lookback_years=3)
+    assert not any("tendencia lineal fuerte" in str(w.message) for w in caught)
+    assert assumptions.ebit_margin.end == pytest.approx((0.05 + 0.10 + 0.20) / 3)  # revierte, no override
+    assert not assumptions.driver_trend_info["ebit_margin"].is_override
+
+
+def test_default_assumptions_trend_detection_beats_strict_monotonicity():
+    """Caso real GOOGL (sesión 17, I16): margen EBIT 26.5%, 27.4%,
+    32.1%, 32.0% -- el último paso es una caída mínima, así que la serie
+    NO es estrictamente monótona, pero R²=0.86 (tendencia real y clara).
+    Confirma que R² es el criterio correcto y monotonicidad estricta
+    habría rechazado mal este caso."""
+    revenue = [1000.0] * 4
+    history = pd.DataFrame({
+        "fiscal_year": [2022, 2023, 2024, 2025],
+        "revenue": revenue,
+        "ebit": [265.0, 274.0, 321.0, 320.0],
+        "capex": [80.0] * 4,
+        "d_and_a": [50.0] * 4,
+        "change_in_nwc": [None, 10.0, 10.0, 10.0],
+        "tax_rate": [0.20] * 4,
+    })
+    diffs = [274 - 265, 321 - 274, 320 - 321]
+    assert not all(d > 0 for d in diffs)  # confirma que NO es monótona estricta
+
+    with pytest.warns(UserWarning, match="tendencia lineal fuerte"):
+        assumptions = default_assumptions_from_history(history, lookback_years=3)
+    assert assumptions.ebit_margin.end == pytest.approx(0.320, abs=1e-4)  # se mantiene, dispara igual
+    assert assumptions.driver_trend_info["ebit_margin"].r_squared == pytest.approx(0.86, abs=1e-2)
+
+
+def test_default_assumptions_outlier_and_trend_warnings_can_both_fire_without_contradiction():
+    """El aviso de outlier (último año vs. años previos) y el de
+    tendencia (serie completa) responden preguntas distintas y pueden
+    dispararse a la vez sobre el mismo driver sin ser contradictorios
+    -- el texto del aviso de tendencia lo referencia explícitamente
+    cuando esto ocurre."""
+    revenue = [1000.0] * 4
+    history = pd.DataFrame({
+        "fiscal_year": [2020, 2021, 2022, 2023],
+        "revenue": revenue,
+        # último año es outlier estadístico frente a los 2 previos
+        # (z modificado >> 3.5) Y la serie completa de 4 puntos tiene
+        # R² alto (progresión limpia 50->90->140->550).
+        "ebit": [50.0, 90.0, 140.0, 550.0],
+        "capex": [80.0] * 4,
+        "d_and_a": [50.0] * 4,
+        "change_in_nwc": [None, 10.0, 10.0, 10.0],
+        "tax_rate": [0.20] * 4,
+    })
+    import warnings as warnings_module
+    with warnings_module.catch_warnings(record=True) as caught:
+        warnings_module.simplefilter("always")
+        assumptions = default_assumptions_from_history(history, lookback_years=3)
+    messages = [str(w.message) for w in caught]
+    assert any("outlier" in m for m in messages)
+    assert any("tendencia lineal fuerte" in m for m in messages)
+    trend_message = next(m for m in messages if "tendencia lineal fuerte" in m)
+    assert "outlier" in trend_message  # se referencia explícitamente, no es un texto aislado
+    assert assumptions.driver_trend_info["ebit_margin"].is_override
 
 
 def test_default_assumptions_warns_but_keeps_real_anchor_when_last_year_is_a_statistical_outlier():

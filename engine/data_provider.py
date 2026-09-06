@@ -273,6 +273,15 @@ def historical_financials(client: AlphaVantageClient, symbol: str,
         ebit = _to_float(inc.get("operatingIncome")) or _to_float(inc.get("ebit"))
         pretax_income = _to_float(inc.get("incomeBeforeTax"))
         tax_expense = _to_float(inc.get("incomeTaxExpense"))
+        if tax_expense is None:
+            # Mismo guard defensivo que engine.yfinance_provider (sesión
+            # 17, repaso de punta a punta con AMZN): tax_expense = pretax
+            # - net_income es una identidad contable siempre válida, no
+            # una aproximación -- por si algún año/empresa no reporta
+            # "incomeTaxExpense" directamente en Alpha Vantage.
+            net_income_for_tax = _to_float(inc.get("netIncome"))
+            if pretax_income is not None and net_income_for_tax is not None:
+                tax_expense = pretax_income - net_income_for_tax
         tax_rate = (tax_expense / pretax_income) if (tax_expense is not None
                     and pretax_income not in (None, 0)) else None
 

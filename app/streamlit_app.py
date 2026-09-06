@@ -18,10 +18,11 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from ai.memo_generator import CONSERVATIVE_SCENARIO_NAME, build_memo_input, build_prompt, run_scenarios_capturing_warnings
+from ai.memo_generator import build_memo_input, build_prompt, run_scenarios_capturing_warnings
 from engine.data_provider import AlphaVantageClient, AlphaVantageError
 from engine.data_provider import historical_financials as av_historical_financials
 from engine.data_provider import market_snapshot as av_market_snapshot
+from engine.scenarios import BASE_SCENARIO_NAME
 from engine.validation import build_peer_set
 from engine.valuation import DCFInputs, sensitivity_matrix
 from engine.wacc_builder import build_wacc
@@ -778,26 +779,26 @@ with tab_valoracion:
         st.info("Sin avisos técnicos: el margen WACC-g es saludable en este cálculo.")
 
     st.subheader("Valor terminal: Gordon Growth vs. múltiplo de salida")
-    conservative_result = scenario_results.get(CONSERVATIVE_SCENARIO_NAME)
-    if conservative_result is not None:
+    base_result = scenario_results.get(BASE_SCENARIO_NAME)
+    if base_result is not None:
         gordon_ev_col, exit_ev_col, blend_col = st.columns(3)
         gordon_ev_col.metric(
-            "Gordon Growth", f"${conservative_result.gordon_terminal_value:,.0f}",
+            "Gordon Growth", f"${base_result.gordon_terminal_value:,.0f}",
             help=f"VT perpetuo a partir del último año explícito, con g={terminal_growth_rate*100:.2f}%.",
         )
-        if conservative_result.exit_multiple_terminal_value is not None:
+        if base_result.exit_multiple_terminal_value is not None:
             exit_ev_col.metric(
-                "Múltiplo de salida", f"${conservative_result.exit_multiple_terminal_value:,.0f}",
+                "Múltiplo de salida", f"${base_result.exit_multiple_terminal_value:,.0f}",
                 help=f"EBITDA del último año explícito × {terminal_multiple:.1f}x (mediana de peers).",
             )
         else:
             exit_ev_col.metric("Múltiplo de salida", "n/d")
         blend_col.metric(
-            "Valor terminal usado", f"${conservative_result.terminal_value:,.0f}",
+            "Valor terminal usado", f"${base_result.terminal_value:,.0f}",
             help=f"Blend: {gordon_weight*100:.0f}% Gordon Growth + {(1-gordon_weight)*100:.0f}% múltiplo de salida.",
         )
-        if conservative_result.exit_multiple_terminal_value:
-            gap = conservative_result.gordon_terminal_value / conservative_result.exit_multiple_terminal_value - 1
+        if base_result.exit_multiple_terminal_value:
+            gap = base_result.gordon_terminal_value / base_result.exit_multiple_terminal_value - 1
             st.caption(
                 f"Gordon Growth implica un valor terminal {gap:+.0%} frente al múltiplo de salida de peers. "
                 "Una brecha grande entre ambos métodos (sobre todo con Gordon Growth muy por encima) es la "
@@ -834,8 +835,9 @@ with tab_supuestos:
     st.subheader("Tendencia histórica")
     st.caption(
         "Contexto antes de la proyección: de dónde parte cada supuesto del fade. El año 1 del "
-        "escenario conservador ancla en el último punto real de esta serie; el año N, en su "
-        "promedio de los últimos años (ver tabla debajo)."
+        "escenario base ancla en el último punto real de esta serie; el año N, en su promedio "
+        "de los últimos años -- salvo que haya una tendencia estructural real, en cuyo caso se "
+        "mantiene en el nivel actual (ver tabla debajo y la descripción del escenario)."
     )
     hist_years = hist["fiscal_year"].tolist()
     hist_revenue_growth_pct = (hist["revenue"].pct_change() * 100).tolist()
@@ -861,7 +863,7 @@ with tab_supuestos:
     )
     st.plotly_chart(trend_fig, width="stretch", config={"displayModeBar": False})
 
-    st.subheader("Supuestos de proyección (escenario conservador)")
+    st.subheader("Supuestos de proyección (escenario base)")
     assumptions_df = pd.DataFrame([
         {"Driver": "Crecimiento de ingresos", "Año 1": f"{assumptions.revenue_growth.start*100:.2f}%",
          "Año N": f"{assumptions.revenue_growth.end*100:.2f}%"},
@@ -901,7 +903,7 @@ with tab_supuestos:
             })
         st.dataframe(pd.DataFrame(implied_rows), hide_index=True, width="stretch")
         st.caption(
-            f"Crecimiento de ingresos asumido (escenario conservador, CAGR reciente): "
+            f"Crecimiento de ingresos asumido (escenario base, CAGR reciente): "
             f"**{assumptions.revenue_growth.start*100:.1f}%**. Tasa de crecimiento terminal asumida: "
             f"**{terminal_growth_rate*100:.2f}%**. ⚠️ junto a la g terminal implícita indica que ese "
             "valor cae en la zona de spread WACC-g estrecho (inestable, ver aviso técnico del modelo)."
@@ -912,7 +914,7 @@ with tab_supuestos:
     st.subheader("Sensibilidad del precio a cada supuesto")
     st.caption(
         "Efecto sobre el precio implícito de mover cada supuesto +1 punto porcentual, uno a la vez, "
-        "manteniendo el resto en el escenario conservador. Responde sistemáticamente a la pregunta "
+        "manteniendo el resto en el escenario base. Responde sistemáticamente a la pregunta "
         "'¿qué palanca domina la valoración de esta empresa?', en vez de investigarlo caso a caso."
     )
     sens_fig = go.Figure()

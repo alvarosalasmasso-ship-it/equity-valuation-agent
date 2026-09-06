@@ -10,16 +10,22 @@ campos y avisa cuando difieren de lo que ya reporta el proveedor activo
 más de un umbral -- detectar ese PATRÓN de bug automáticamente, en vez
 de encontrarlo ticker a ticker.
 
-Deliberadamente EXCLUYE dos campos de la comparación (ver sección 26):
-- `total_debt`: SEC EDGAR reporta solo deuda financiera pura; Alpha
-  Vantage/yfinance incluyen además obligaciones de leasing (post ASC
-  842, ver hallazgo I8) -- una diferencia de METODOLOGÍA ya investigada
-  y entendida, no un error. Compararlos generaría falsos positivos
-  sistemáticos.
-- `d_and_a`: la reconstrucción desde tags XBRL resultó no fiable en la
-  investigación previa (hasta 18% de diferencia para MSFT, varias
-  combinaciones de tags probadas) -- no hay una "verdad EDGAR" en la
-  que confiar todavía para este campo.
+Deliberadamente EXCLUYE `total_debt` de la comparación (ver sección
+26): SEC EDGAR reporta solo deuda financiera pura; Alpha Vantage/
+yfinance incluyen además obligaciones de leasing (post ASC 842, ver
+hallazgo I8) -- una diferencia de METODOLOGÍA ya investigada y
+entendida, no un error. Compararlos generaría falsos positivos
+sistemáticos.
+
+`d_and_a` tiene cobertura PARCIAL, no universal, y a propósito: AMZN/
+AAPL/META reportan una única línea combinada de D&A en el cash flow
+(coincide exacto contra EDGAR, verificado con datos reales); MSFT/
+GOOGL la reportan partida en 3+ tags separados que NO suman al mismo
+total que usa el proveedor (investigación sección 26, hasta 18% de
+diferencia) -- para esas empresas no existe el tag combinado en
+absoluto, así que la comparación se omite en vez de generar un falso
+mismatch. No es una limitación oculta: es el mismo patrón "avisa
+cuando hay evidencia, omite cuando no la hay" del resto del proyecto.
 
 La taxonomía US-GAAP migra de tag por empresa y por año -- confirmado
 de nuevo esta sesión con datos reales: MSFT reporta `InterestExpense`
@@ -62,13 +68,30 @@ CONCEPT_TAGS: dict[str, list[str]] = {
              "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
     "interest_expense": ["InterestExpense", "InterestExpenseNonoperating", "InterestExpenseDebt",
                           "InterestExpenseDebtExcludingAmortization"],
+    # Verificado con datos reales de AMZN (sesión 17, repaso de punta a
+    # punta): el tag migra de "PaymentsToAcquirePropertyPlantAndEquipment"
+    # (hasta ~2016) a "PaymentsToAcquireProductiveAssets" (2023+, coincide
+    # exacto con el CapEx que ya usa el pipeline) -- otro caso real de
+    # migración de tag por año, no solo por empresa (ver interest_expense).
+    "capex": ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets",
+              "PaymentsForCapitalImprovements"],
+    # A diferencia de capex/interest_expense, esto NO cubre todas las
+    # empresas por diseño, no por descuido: AMZN/AAPL/META reportan una
+    # única línea combinada de D&A en el cash flow (coincide exacto,
+    # verificado con datos reales); MSFT/GOOGL la reportan partida en
+    # 3+ tags separados que NO suman al mismo total que usa el proveedor
+    # (investigación sección 26, hasta 18% de diferencia) -- para esas
+    # empresas simplemente no hay tag combinado en absoluto, así que
+    # get_concept_value() devuelve None y la comparación se omite en vez
+    # de generar un falso mismatch.
+    "d_and_a": ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization"],
 }
 
 # True: hecho que cubre un periodo de ~1 año (cuenta de resultados).
 # False: hecho instantáneo a fecha de cierre (balance).
 CONCEPT_IS_DURATION: dict[str, bool] = {
-    "revenue": True, "ebit": True, "net_income": True, "interest_expense": True,
-    "total_assets": False, "total_equity": False, "current_assets": False,
+    "revenue": True, "ebit": True, "net_income": True, "interest_expense": True, "capex": True,
+    "d_and_a": True, "total_assets": False, "total_equity": False, "current_assets": False,
     "current_liabilities": False, "cash": False,
 }
 

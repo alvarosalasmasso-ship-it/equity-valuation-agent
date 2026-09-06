@@ -19,7 +19,15 @@ mantiene sus métricas actuales a perpetuidad). Por defecto:
 - Año 1 = valor real del último ejercicio fiscal reportado (el mejor
   estimador disponible del "estado actual" de la compañía).
 - Año N = media de los últimos `lookback_years` años (estimador del
-  "estado normalizado" de largo plazo) para márgenes/CapEx/D&A/ΔNWC.
+  "estado normalizado" de largo plazo) para márgenes/CapEx/D&A/ΔNWC --
+  SALVO que la serie histórica muestre una tendencia estructural real y
+  sostenida (R² de un ajuste lineal por encima de un umbral, ver
+  `TREND_R_SQUARED_THRESHOLD`/`_detect_structural_trend()`), en cuyo
+  caso año N se mantiene en el nivel actual en vez de revertir contra
+  la tendencia -- sesión 17, hallazgo I16, `docs/AUDIT.md`. Revertir
+  hacia una media que la propia empresa lleva varios años dejando atrás
+  no es "conservador", es la asunción equivocada (caso motivador real:
+  AMZN, margen EBIT mejorando 4 ejercicios seguidos).
 
 **Crecimiento de ingresos: plano durante todo el horizonte explícito,
 NO fade hacia la tasa terminal.** Verificado contra el propio Excel de
@@ -49,7 +57,7 @@ para Amazon pero que puede ser razonable para otra compañía).
 import math
 import statistics
 import warnings
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Optional, Sequence
 
@@ -139,6 +147,78 @@ EXTREME_FLAT_GROWTH_WARNING_THRESHOLD = 0.50
 # amplio informado por tipos efectivos reales observados esta sesión.
 TAX_RATE_PLAUSIBLE_RANGE = (-0.10, 0.60)
 
+# Sesión 17 (repaso de punta a punta con AMZN, hallazgo I16): el motor
+# revertía SIEMPRE margen/CapEx/D&A/ΔNWC hacia la media histórica, aunque
+# la empresa mostrara una tendencia estructural real y sostenida (AMZN:
+# margen EBIT mejorando 4 ejercicios seguidos, 2.4%->6.4%->10.8%->11.2%;
+# CapEx en supercycle de IA, 12.4%->9.2%->13.0%->18.4% -- mismo patrón ya
+# confirmado para MSFT/META/GOOGL/NVDA). Revertir CONTRA una tendencia
+# real de 4 años no es "conservador", es la asunción equivocada.
+#
+# Se probó R² de un ajuste lineal (mínimos cuadrados) sobre la ventana
+# histórica como criterio objetivo, verificado contra los 25 tickers
+# reales ya usados en la auditoría de esta sesión (Big Tech, semis,
+# utilities, biotech, small-caps) -- separa limpio tendencia real de
+# ruido: casos altos (R²>0.85) AMZN margen 0.92, MSFT margen 0.93, MSFT
+# CapEx 0.94, KO margen 0.98, PG CapEx 0.96, DUK margen 0.94, D margen
+# 0.95; casos bajos (R²<0.3) JNJ margen 0.01, PG margen 0.10, BOOT margen
+# 0.05, VRTX margen 0.16 (el mismo año outlier de I15), QCOM/INTC/NEE
+# margen 0.24-0.30. La monotonicidad simple es peor criterio: GOOGL
+# margen (26.5%/27.4%/32.1%/32.0%) tiene R²=0.86 (tendencia real clara)
+# pero falla monotonicidad estricta por un último paso casi plano --
+# R² la captura correctamente, monotonicidad la rechazaría mal.
+#
+# Caso conocido, deliberadamente NO resuelto: AMZN CapEx (R²=0.545) cae
+# bajo el umbral -- se prefiere dejar pasar un caso real real antes que
+# repetir el error ya investigado y rechazado en I15 (excluir outliers
+# de tax_rate disparaba en 9/24 tickers, muchos falsos positivos).
+# Regla de pulgar (no una ley exacta, mismo espíritu que
+# EXTREME_FLAT_GROWTH_WARNING_THRESHOLD/TAX_RATE_PLAUSIBLE_RANGE).
+TREND_R_SQUARED_THRESHOLD = 0.70
+
+# R² con 3 puntos tiene 1 solo grado de libertad residual -- degenerado,
+# cualquier serie de 3 puntos puede dar un R² alto o inestable sin que
+# eso sea evidencia real de tendencia. Con menos de 4 puntos, la función
+# nunca evalúa el test (mismo criterio que _detect_anchor_outlier con
+# <3 años). Nota importante: `lookback_years=3` es el valor por defecto
+# real en TODOS los call sites del pipeline (run_scenarios,
+# driver_sensitivities, run_monte_carlo, el slider de la app) -- si el
+# test de tendencia usara la misma ventana de `lookback_years` que la
+# media histórica, nunca tendría suficientes puntos con los valores por
+# defecto reales. default_assumptions_from_history() usa una ventana
+# MÁS ANCHA (max(lookback_years, MIN_TREND_DATA_POINTS)) solo para este
+# test, sin cambiar la ventana de la media histórica.
+MIN_TREND_DATA_POINTS = 4
+
+
+def _detect_structural_trend(chronological_ratios: Sequence[float]) -> tuple[bool, float]:
+    """(es_tendencia, R²) de un ajuste lineal por mínimos cuadrados de
+    chronological_ratios contra el índice temporal 0..n-1 -- Python puro,
+    sin numpy (coherente con el resto del módulo). Con menos de
+    MIN_TREND_DATA_POINTS no hay base estadística para juzgar (mismo
+    criterio que _detect_anchor_outlier con <3 años), así que nunca se
+    marca tendencia."""
+    n = len(chronological_ratios)
+    if n < MIN_TREND_DATA_POINTS:
+        return False, 0.0
+    xs = list(range(n))
+    mean_x = statistics.mean(xs)
+    mean_y = statistics.mean(chronological_ratios)
+    sxy = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, chronological_ratios))
+    sxx = sum((x - mean_x) ** 2 for x in xs)
+    if sxx == 0:
+        return False, 0.0
+    slope = sxy / sxx
+    intercept = mean_y - slope * mean_x
+    ss_res = sum((y - (slope * x + intercept)) ** 2 for x, y in zip(xs, chronological_ratios))
+    ss_tot = sum((y - mean_y) ** 2 for y in chronological_ratios)
+    if ss_tot == 0:
+        # Serie perfectamente plana: sin varianza que explicar, no es una
+        # tendencia (coincide con el caso mad==0 de _detect_anchor_outlier).
+        return False, 0.0
+    r_squared = 1 - ss_res / ss_tot
+    return r_squared >= TREND_R_SQUARED_THRESHOLD, r_squared
+
 
 def _detect_anchor_outlier(chronological_ratios: Sequence[float]) -> tuple[bool, float]:
     """Compara el último valor de la serie (candidato a ancla `start` del
@@ -186,6 +266,18 @@ class FadeAssumption:
 
 
 @dataclass
+class DriverTrendInfo:
+    """Diagnóstico de `_detect_structural_trend()` para un driver
+    concreto -- necesario, más allá de informativo, para que
+    `engine.scenarios.bullish_scenario()` pueda seguir extrapolando la
+    distancia real a la media histórica aunque `FadeAssumption.end` ya
+    no sea esa media (ver hallazgo I16)."""
+    is_override: bool
+    r_squared: float
+    historical_mean: float
+
+
+@dataclass
 class ProjectionAssumptions:
     n_years: int
     revenue_growth: FadeAssumption
@@ -194,6 +286,7 @@ class ProjectionAssumptions:
     capex_pct_revenue: FadeAssumption
     nwc_change_pct_revenue: FadeAssumption
     tax_rate: float  # se mantiene plano: fade de tipo impositivo no es práctica estándar
+    driver_trend_info: dict[str, DriverTrendInfo] = field(default_factory=dict)
 
 
 @dataclass
@@ -234,10 +327,29 @@ def project_financials(last_actual_revenue: float,
 
 
 def _margin_fade_from_recent_to_average(window: pd.DataFrame, column: str,
-                                         driver_label: Optional[str] = None) -> FadeAssumption:
+                                         driver_label: Optional[str] = None,
+                                         trend_window: Optional[pd.DataFrame] = None,
+                                         ) -> tuple[FadeAssumption, DriverTrendInfo]:
     """Año 1 = margen real del último año de la ventana; año N = media
-    de la ventana completa. Si ambos coinciden (histórico plano), el
+    de la ventana completa -- SALVO que `trend_window` muestre una
+    tendencia estructural real (ver `_detect_structural_trend()` e
+    I16, docs/AUDIT.md), en cuyo caso año N se mantiene en el nivel
+    actual en vez de revertir. Si ambos coinciden (histórico plano), el
     fade colapsa a un valor constante.
+
+    `trend_window` (opcional, por defecto `window`): ventana MÁS ANCHA
+    usada solo para el test de tendencia, desacoplada de `lookback_years`
+    -- con menos de `MIN_TREND_DATA_POINTS` puntos el test no tiene base
+    estadística (ver la constante), y `lookback_years=3` es el valor por
+    defecto real en todo el pipeline, insuficiente por sí solo.
+
+    Devuelve `(FadeAssumption, DriverTrendInfo)` -- el segundo elemento
+    lleva SIEMPRE la media histórica real (`historical_mean`), la haya
+    usado o no como `end`, porque `engine.scenarios.bullish_scenario()`
+    la necesita para seguir extrapolando la distancia real a la media
+    aunque el escenario base ya no revierta a ella (si no se separa,
+    `bullish_scenario()` colapsa en un duplicado silencioso de "mantener
+    nivel actual" justo para las empresas que motivan este cambio).
 
     Aviso de outlier (sesión 17, ver docs/METHODOLOGY.md sección 9 y el
     hallazgo de JNJ): si el último año es un outlier estadístico frente a
@@ -292,7 +404,33 @@ def _margin_fade_from_recent_to_average(window: pd.DataFrame, column: str,
             stacklevel=3,
         )
     average_value = average_margin(window[column].tolist(), window["revenue"].tolist())
-    return FadeAssumption(start=float(recent_value), end=float(average_value))
+
+    trend_ratios = _valid_ratio_series(
+        (trend_window if trend_window is not None else window)[column].tolist(),
+        (trend_window if trend_window is not None else window)["revenue"].tolist(),
+    )
+    is_trend, r_squared = _detect_structural_trend(trend_ratios)
+    trend_info = DriverTrendInfo(is_override=is_trend, r_squared=r_squared, historical_mean=float(average_value))
+
+    if is_trend:
+        outlier_note = (
+            " (pese al aviso de outlier anterior sobre el último año: son dos preguntas "
+            "distintas -- si el último año es raro frente a los previos, y si la SERIE "
+            "completa dibuja una línea consistente; aquí ambas cosas son ciertas a la vez)"
+            if is_outlier else ""
+        )
+        warnings.warn(
+            f"{driver_label or column}: los últimos {len(trend_ratios)} años muestran una tendencia "
+            f"lineal fuerte (R²={r_squared:.2f} >= {TREND_R_SQUARED_THRESHOLD}){outlier_note} -- se "
+            f"mantiene el año N en el nivel actual ({recent_value:.1%}) en vez de revertir a la media "
+            f"histórica ({average_value:.1%}), sin extrapolar más allá (ver hallazgo I12: extrapolar "
+            "una tendencia fuerte puede producir valores implausibles). Revisa manualmente si conviene "
+            "modelar continuación de la tendencia en vez de mantener el nivel actual.",
+            stacklevel=3,
+        )
+        return FadeAssumption(start=float(recent_value), end=float(recent_value)), trend_info
+
+    return FadeAssumption(start=float(recent_value), end=float(average_value)), trend_info
 
 
 def historical_ratio_stats(history: pd.DataFrame, column: str, lookback_years: int) -> tuple[float, float]:
@@ -389,13 +527,30 @@ def default_assumptions_from_history(history: pd.DataFrame, n_years: int = 5,
     if margin_window.empty or pd.isna(margin_window.iloc[-1].get("revenue")):
         raise ValueError("No hay datos suficientes en la ventana de márgenes")
 
-    ebit_margin = _margin_fade_from_recent_to_average(margin_window, "ebit", "margen EBIT")
-    da_pct = _margin_fade_from_recent_to_average(margin_window, "d_and_a", "D&A % ventas")
-    capex_pct = _margin_fade_from_recent_to_average(margin_window, "capex", "CapEx % ventas")
+    # Ventana MÁS ANCHA solo para el test de tendencia estructural (I16)
+    # -- desacoplada de lookback_years a propósito, ver MIN_TREND_DATA_POINTS.
+    trend_window = history.tail(max(lookback_years, MIN_TREND_DATA_POINTS))
+
+    ebit_margin, ebit_trend = _margin_fade_from_recent_to_average(
+        margin_window, "ebit", "margen EBIT", trend_window=trend_window)
+    da_pct, da_trend = _margin_fade_from_recent_to_average(
+        margin_window, "d_and_a", "D&A % ventas", trend_window=trend_window)
+    capex_pct, capex_trend = _margin_fade_from_recent_to_average(
+        margin_window, "capex", "CapEx % ventas", trend_window=trend_window)
 
     nwc_window = margin_window.dropna(subset=["change_in_nwc", "revenue"])
-    nwc_fade = (_margin_fade_from_recent_to_average(nwc_window, "change_in_nwc", "ΔNWC % ventas")
-                if len(nwc_window) > 0 else FadeAssumption(0.0, 0.0))
+    nwc_trend_window = trend_window.dropna(subset=["change_in_nwc", "revenue"])
+    if len(nwc_window) > 0:
+        nwc_fade, nwc_trend = _margin_fade_from_recent_to_average(
+            nwc_window, "change_in_nwc", "ΔNWC % ventas", trend_window=nwc_trend_window)
+    else:
+        nwc_fade = FadeAssumption(0.0, 0.0)
+        nwc_trend = DriverTrendInfo(is_override=False, r_squared=0.0, historical_mean=0.0)
+
+    driver_trend_info = {
+        "ebit_margin": ebit_trend, "da_pct_revenue": da_trend,
+        "capex_pct_revenue": capex_trend, "nwc_change_pct_revenue": nwc_trend,
+    }
 
     tax_rate = margin_window["tax_rate"].dropna().mean()
     if pd.isna(tax_rate):
@@ -421,6 +576,7 @@ def default_assumptions_from_history(history: pd.DataFrame, n_years: int = 5,
         capex_pct_revenue=capex_pct,
         nwc_change_pct_revenue=nwc_fade,
         tax_rate=float(tax_rate),
+        driver_trend_info=driver_trend_info,
     )
 
 
