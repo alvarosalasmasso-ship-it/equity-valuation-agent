@@ -1,0 +1,14 @@
+# Tema visual del Agente de Valoración DCF (sesión 16, pase de UX/UI).
+# Paleta profesional "quant/banca de inversión": azul marino serio como
+# acento primario, grises fríos neutros, sin el look genérico de IA
+# (nada de degradados morado-azul ni beige+terracota). Coherente con la
+# identidad ya usada en los informes de auditoría (docs/AUDIT.md,
+# docs/PROGRESS_REVIEW.md).
+
+[theme]
+base = "light"
+primaryColor = "#1B3A5C"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F6F7F9"
+textColor = "#10151C"
+font = "sans serif"

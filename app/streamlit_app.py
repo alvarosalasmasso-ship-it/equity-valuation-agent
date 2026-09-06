@@ -13,8 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import matplotlib.pyplot as plt
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from ai.memo_generator import build_memo_input, build_prompt, run_scenarios_capturing_warnings
@@ -28,6 +28,70 @@ from engine.yfinance_provider import get_ticker as yf_get_ticker
 from engine.yfinance_provider import historical_financials as yf_historical_financials
 from engine.yfinance_provider import market_snapshot as yf_market_snapshot
 from engine.yfinance_provider import treasury_yield_10y as yf_treasury_yield_10y
+
+# ---------------------------------------------------------------------------
+# Diseño: tokens de color/tipografía (sesión 16, pase de UX/UI)
+# ---------------------------------------------------------------------------
+#
+# Fuente única para el color en toda la app -- CSS inyectado y gráficos
+# Plotly leen de aquí, para no tener la paleta duplicada en dos sitios
+# que puedan desincronizarse. Paleta "quant/banca de inversión": un
+# único azul marino como acento, grises fríos neutros, semántica
+# separada del acento (verde=crea valor, ámbar=aviso, rojo=negativo) --
+# igual que ya se hace en docs/AUDIT.md y docs/PROGRESS_REVIEW.md.
+COLORS = {
+    "ink": "#10151C", "ink_soft": "#4B5768", "ink_faint": "#8993A4",
+    "border": "#E1E4EA", "surface": "#FFFFFF", "bg": "#F6F7F9",
+    "accent": "#1B3A5C", "accent_soft": "#E8EEF4",
+    "series": "#2F6690",  # magnitud ordenada (escenarios, mapa de calor) -- no es una categórica de identidad
+    "good": "#1F7A5C", "warn": "#A66A1B", "bad": "#B23B36",
+    "market_ref": "#6B7280", "consensus_ref": "#A66A1B",
+}
+FONT_SANS = "IBM Plex Sans, -apple-system, Segoe UI, sans-serif"
+FONT_MONO = "IBM Plex Mono, SFMono-Regular, Consolas, monospace"
+
+
+def _inject_custom_css() -> None:
+    st.markdown(f"""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+    html, body, [class*="css"] {{ font-family: {FONT_SANS} !important; }}
+    h1, h2, h3, [data-testid="stMarkdownContainer"] h1,
+    [data-testid="stMarkdownContainer"] h2, [data-testid="stMarkdownContainer"] h3 {{
+        font-family: {FONT_SANS} !important; font-weight: 600 !important;
+        letter-spacing: -0.01em; color: {COLORS['ink']};
+    }}
+    [data-testid="stMetricValue"] {{
+        font-family: {FONT_MONO} !important; font-weight: 600; color: {COLORS['ink']};
+        font-variant-numeric: tabular-nums; font-size: 1.65rem !important;
+        white-space: normal !important; overflow: visible !important;
+        line-height: 1.3 !important; word-break: break-word;
+    }}
+    [data-testid="stMetric"] {{ overflow: visible !important; }}
+    [data-testid="stMetricLabel"] {{
+        font-family: {FONT_SANS} !important; font-size: 0.78rem; color: {COLORS['ink_soft']};
+        text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500;
+    }}
+    [data-testid="stMetricDelta"] {{ font-family: {FONT_SANS} !important; font-weight: 500; }}
+    code, [data-testid="stCodeBlock"], .stDataFrame {{ font-family: {FONT_MONO} !important; }}
+    [data-testid="stSidebar"] {{ background-color: {COLORS['bg']}; border-right: 1px solid {COLORS['border']}; }}
+    [data-testid="stMetric"] {{
+        background: {COLORS['surface']}; border: 1px solid {COLORS['border']};
+        border-radius: 10px; padding: 14px 16px 10px;
+    }}
+    .stTabs [data-baseweb="tab-list"] {{ gap: 4px; }}
+    .stTabs [data-baseweb="tab"] {{
+        font-family: {FONT_SANS}; font-weight: 500; font-size: 0.92rem;
+    }}
+    .app-eyebrow {{
+        font-family: {FONT_MONO}; font-size: 0.75rem; letter-spacing: 0.08em;
+        text-transform: uppercase; color: {COLORS['accent']}; margin-bottom: 2px;
+    }}
+    .app-subtitle {{ color: {COLORS['ink_soft']}; font-size: 0.95rem; margin-top: -6px; }}
+    </style>
+    """, unsafe_allow_html=True)
+
 
 # ---------------------------------------------------------------------------
 # Universos con comparables ya validados en sesiones anteriores (ver estado.md)
@@ -110,11 +174,15 @@ def build_peer_wacc(target: str, hist_data: dict, snap_data: dict,
 # UI
 # ---------------------------------------------------------------------------
 
-st.set_page_config(page_title="Agente de Valoración DCF", layout="wide")
+st.set_page_config(page_title="Agente de Valoración DCF", page_icon="📊", layout="wide")
+_inject_custom_css()
+
+st.markdown('<div class="app-eyebrow">Motor determinista · Reverse DCF · IA desacoplada del cálculo</div>',
+            unsafe_allow_html=True)
 st.title("Agente de Valoración DCF")
-st.caption(
-    "Motor determinista (engine/) + capa generativa desacoplada (ai/). "
-    "Herramienta educativa y de portfolio — no es asesoramiento de inversión regulado."
+st.markdown(
+    '<p class="app-subtitle">Herramienta educativa y de portfolio — no es asesoramiento de inversión regulado.</p>',
+    unsafe_allow_html=True,
 )
 
 with st.sidebar:
@@ -240,94 +308,39 @@ stub_fraction = stub_fraction_from_history(hist, valuation_date=valuation_date)
 
 # --- Métricas clave ---------------------------------------------------------
 
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Precio de mercado", f"${snap['price']:.2f}" if snap.get("price") else "n/d")
-col2.metric("Consenso analistas", f"${snap['analyst_target_price']:.2f}" if snap.get("analyst_target_price") else "n/d")
-col3.metric("WACC", f"{wacc_value*100:.2f}%")
-col4.metric("Sector", snap.get("sector") or "n/d")
+st.markdown(f"### {target}")
+with st.container(border=True):
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Precio de mercado", f"${snap['price']:.2f}" if snap.get("price") else "n/d")
+    col2.metric("Consenso analistas", f"${snap['analyst_target_price']:.2f}" if snap.get("analyst_target_price") else "n/d")
+    col3.metric("WACC", f"{wacc_value*100:.2f}%",
+                help="Coste medio ponderado de capital, vía CAPM con beta de comparables (universo cacheado) o beta propia (cualquier ticker).")
+    col4.metric("Sector", snap.get("sector") or "n/d")
+    st.caption(
+        f"Stub period del primer año proyectado: **{stub_fraction:.3f}** "
+        f"(fracción del ejercicio fiscal que queda desde {valuation_date.isoformat()} hasta su cierre)."
+    )
 
-st.caption(
-    f"Stub period del primer año proyectado: **{stub_fraction:.3f}** "
-    f"(fracción del ejercicio fiscal que queda desde {valuation_date.isoformat()} hasta su cierre). "
-    "Antes de la auditoría de la sesión 15 este valor era siempre 1.0 (se asumía valorar el 1 de enero)."
-)
+# --- Cómputo (sin renderizar todavía) ------------------------------------------
+#
+# Todo el cálculo se hace aquí, de un tirón; el renderizado (más abajo, dentro
+# de las pestañas) solo lee estos resultados ya calculados -- separar cómputo
+# de presentación es lo que permite reorganizar la UI en pestañas sin tocar
+# ninguna lógica financiera.
 
-# --- Escenarios --------------------------------------------------------------
-
-st.subheader("Rango de escenarios")
 scenario_results, warnings_text = run_scenarios_capturing_warnings(
     hist, wacc=wacc_value, cash=snap.get("cash") or 0, total_debt=snap.get("total_debt") or 0,
     diluted_shares=snap["shares_outstanding"], n_years=n_years, terminal_growth_rate=terminal_growth_rate,
     lookback_years=lookback_years, terminal_ev_ebitda_multiple=terminal_multiple,
     gordon_weight=gordon_weight, valuation_date=valuation_date,
 )
-
 scenario_names = list(scenario_results.keys())
 scenario_prices = [r.implied_share_price for r in scenario_results.values()]
 
-fig, ax = plt.subplots(figsize=(8, 3.2))
-bar_color = "#4C72B0"  # hue único, neutro — no es una categórica de identidad, es una magnitud ordenada
-bars = ax.barh(scenario_names, scenario_prices, color=bar_color, height=0.5)
-for bar, price in zip(bars, scenario_prices):
-    ax.text(bar.get_width() + max(scenario_prices) * 0.01, bar.get_y() + bar.get_height() / 2,
-            f"${price:,.2f}", va="center", fontsize=9)
-
-if snap.get("price"):
-    ax.axvline(snap["price"], color="#555555", linestyle="--", linewidth=1.5)
-    ax.text(snap["price"], -0.7, f"Mercado ${snap['price']:.2f}", color="#555555",
-            fontsize=8, ha="center", va="top")
-if snap.get("analyst_target_price"):
-    ax.axvline(snap["analyst_target_price"], color="#C44E52", linestyle=":", linewidth=1.5)
-    ax.text(snap["analyst_target_price"], -0.7, f"Consenso ${snap['analyst_target_price']:.2f}",
-            color="#C44E52", fontsize=8, ha="center", va="top")
-
-ax.set_xlabel("Precio implícito ($)")
-ax.spines[["top", "right"]].set_visible(False)
-fig.tight_layout()
-st.pyplot(fig)
-
-if warnings_text:
-    for w in warnings_text:
-        st.warning(f"⚠️ Aviso técnico del modelo: {w}")
-else:
-    st.info("Sin avisos técnicos: el margen WACC-g es saludable en este cálculo.")
-
-# --- Supuestos clave ----------------------------------------------------------
-
-from engine.projections import default_assumptions_from_history
-
-assumptions = default_assumptions_from_history(
-    hist, n_years=n_years, lookback_years=lookback_years,
-)
-st.subheader("Supuestos de proyección (escenario conservador)")
-assumptions_df = pd.DataFrame([
-    {"Driver": "Crecimiento de ingresos", "Año 1": f"{assumptions.revenue_growth.start*100:.2f}%",
-     "Año N": f"{assumptions.revenue_growth.end*100:.2f}%"},
-    {"Driver": "Margen EBIT", "Año 1": f"{assumptions.ebit_margin.start*100:.2f}%",
-     "Año N": f"{assumptions.ebit_margin.end*100:.2f}%"},
-    {"Driver": "D&A (% ventas)", "Año 1": f"{assumptions.da_pct_revenue.start*100:.2f}%",
-     "Año N": f"{assumptions.da_pct_revenue.end*100:.2f}%"},
-    {"Driver": "CapEx (% ventas)", "Año 1": f"{assumptions.capex_pct_revenue.start*100:.2f}%",
-     "Año N": f"{assumptions.capex_pct_revenue.end*100:.2f}%"},
-    {"Driver": "Δ NWC (% ventas)", "Año 1": f"{assumptions.nwc_change_pct_revenue.start*100:.2f}%",
-     "Año N": f"{assumptions.nwc_change_pct_revenue.end*100:.2f}%"},
-])
-st.dataframe(assumptions_df, hide_index=True, use_container_width=True)
-
-# --- Expectativas implícitas del mercado (reverse DCF) -------------------------
-#
-# Un DCF hacia delante responde "¿qué precio justifican mis supuestos?". Esta
-# sección responde la pregunta complementaria, igual de estándar en equity
-# research: "¿qué tendría que ser cierto para justificar el precio que YA
-# cotiza el mercado (o el consenso)?". La brecha frente al escenario
-# conservador no es un error del modelo a esconder -- es la prima de
-# crecimiento que el mercado está pagando hoy, ahora cuantificada en vez de
-# solo mostrada como un porcentaje de desviación. Ver docs/METHODOLOGY.md
-# sección 20 y docs/PROGRESS_REVIEW.md.
-
-from engine.projections import project_financials
+from engine.projections import default_assumptions_from_history, project_financials
 from engine.reverse_dcf import compute_implied_expectations
 
+assumptions = default_assumptions_from_history(hist, n_years=n_years, lookback_years=lookback_years)
 projection = project_financials(hist["revenue"].iloc[-1], assumptions)
 base_inputs = DCFInputs(
     ebit=projection.ebit, tax_rate=projection.tax_rate, d_and_a=projection.d_and_a,
@@ -343,116 +356,25 @@ reverse_dcf_kwargs = dict(
     diluted_shares=snap["shares_outstanding"], terminal_ev_ebitda_multiple=terminal_multiple,
     gordon_weight=gordon_weight,
 )
-
-st.subheader("Expectativas implícitas del mercado (reverse DCF)")
-st.caption(
-    "¿Qué tendría que ser cierto para justificar el precio que ya cotiza el mercado o el "
-    "consenso? No es un error del modelo — es la prima de crecimiento que se está pagando hoy, "
-    "cuantificada en vez de solo mostrada como un porcentaje de desviación."
-)
-
 implied_expectations = compute_implied_expectations(
     hist["revenue"].iloc[-1], assumptions, base_inputs, reverse_dcf_kwargs,
     targets=[("Mercado", snap.get("price")), ("Consenso analistas", snap.get("analyst_target_price"))],
 )
 
-if implied_expectations:
-    implied_rows = []
-    for exp in implied_expectations:
-        growth_cell = (f"{exp.implied_revenue_growth*100:.1f}%" if exp.implied_revenue_growth is not None
-                       else "fuera de rango (-30%/+60%)")
-        gap_cell = f"{exp.revenue_growth_gap*100:+.1f} pp" if exp.revenue_growth_gap is not None else "n/d"
-        if exp.implied_terminal_growth is not None:
-            flag = " ⚠️" if exp.terminal_growth_fragile else ""
-            g_cell = f"{exp.implied_terminal_growth*100:.2f}%{flag}"
-        else:
-            g_cell = "fuera de rango"
-        implied_rows.append({
-            "Precio objetivo": f"{exp.target_label} (${exp.target_price:,.2f})",
-            "Crecimiento de ingresos implícito": growth_cell,
-            "Gap vs. asumido": gap_cell,
-            "g terminal implícita": g_cell,
-        })
-    st.dataframe(pd.DataFrame(implied_rows), hide_index=True, use_container_width=True)
-    st.caption(
-        f"Crecimiento de ingresos asumido (escenario conservador, CAGR reciente): "
-        f"**{assumptions.revenue_growth.start*100:.1f}%**. Tasa de crecimiento terminal asumida: "
-        f"**{terminal_growth_rate*100:.2f}%**. ⚠️ junto a la g terminal implícita indica que ese "
-        "valor cae en la zona de spread WACC-g estrecho (inestable, ver aviso técnico del modelo)."
-    )
-else:
-    st.caption("Sin precio de mercado ni consenso disponible para calcular expectativas implícitas.")
-
-# --- Ratios financieros --------------------------------------------------------
-
 from engine.ratios import latest_ratio_snapshot
 
-st.subheader("Ratios financieros (último ejercicio disponible)")
 try:
     ratio_snapshot = latest_ratio_snapshot(hist, wacc_value)
-    ratio_cols = st.columns(5)
-    ratio_cols[0].metric("ROE", f"{ratio_snapshot.roe*100:.1f}%")
-    ratio_cols[1].metric("ROIC vs. WACC",
-                          f"{ratio_snapshot.roic*100:.1f}%",
-                          "Crea valor" if ratio_snapshot.creates_value else "No crea valor")
-    ratio_cols[2].metric("Debt/EBITDA", f"{ratio_snapshot.debt_to_ebitda:.2f}x")
-    ratio_cols[3].metric("Cobertura de intereses",
-                          f"{ratio_snapshot.interest_coverage:.1f}x" if ratio_snapshot.interest_coverage != float("inf") else "∞")
-    ratio_cols[4].metric("Current ratio", f"{ratio_snapshot.current_ratio:.2f}")
-    st.caption(f"Ejercicio fiscal {ratio_snapshot.fiscal_year}")
+    ratio_error = None
 except ValueError as e:
     ratio_snapshot = None
-    st.caption(f"No se pudieron calcular los ratios: {e}")
-
-# --- Comparables ---------------------------------------------------------------
-
-st.subheader("Comparables")
-if comps_table is not None:
-    st.dataframe(comps_table, use_container_width=True)
-    st.caption(
-        f"Múltiplo EV/EBITDA de salida usado en el valor terminal: **{terminal_multiple:.2f}x** "
-        f"(mediana de los comparables, excluyendo {target} — no el múltiplo de la propia empresa)."
-    )
-elif terminal_multiple:
-    st.caption(
-        f"Sin grupo de comparables en modo ticker libre — el múltiplo de salida usado "
-        f"({terminal_multiple:.2f}x) es el de la propia empresa, no el de comparables."
-    )
-else:
-    st.caption("No hay múltiplo EV/EBITDA disponible — el valor terminal usa Gordon Growth puro.")
-
-# --- Matriz de sensibilidad ---------------------------------------------------
-
-st.subheader("Sensibilidad: WACC × tasa de crecimiento terminal")
-conservative_name = "Conservador (reversión a la media)"
-base_result = scenario_results[conservative_name]
-
-# projection/base_inputs ya se construyeron en la sección de expectativas
-# implícitas de arriba -- se reutilizan tal cual, sin recalcular.
+    ratio_error = str(e)
 
 wacc_range = [wacc_value + delta for delta in (-0.01, -0.005, 0.0, 0.005, 0.01)]
 growth_range = [max(terminal_growth_rate + delta, 0.0) for delta in (-0.01, -0.005, 0.0, 0.005, 0.01)]
 wacc_range = [w for w in wacc_range if w > max(growth_range)]
+matrix = sensitivity_matrix(base_inputs, wacc_values=wacc_range, growth_values=growth_range) if len(wacc_range) >= 2 else None
 
-if len(wacc_range) >= 2:
-    matrix = sensitivity_matrix(base_inputs, wacc_values=wacc_range, growth_values=growth_range)
-    matrix_df = pd.DataFrame(
-        matrix.implied_share_price,
-        index=[f"{w*100:.2f}%" for w in matrix.wacc_values],
-        columns=[f"{g*100:.2f}%" for g in matrix.growth_values],
-    )
-    matrix_df.index.name = "WACC"
-    matrix_df.columns.name = "g terminal"
-    st.dataframe(
-        matrix_df.style.format("${:,.2f}").background_gradient(cmap="Blues", axis=None),
-        use_container_width=True,
-    )
-else:
-    st.caption("Rango de WACC insuficiente para la matriz con la g elegida (sube el WACC o baja g).")
-
-# --- Memo (sin API todavía) ---------------------------------------------------
-
-st.subheader("Investment Memo")
 key_assumptions = {
     "ebit_margin_start": assumptions.ebit_margin.start, "ebit_margin_end": assumptions.ebit_margin.end,
     "capex_pct_start": assumptions.capex_pct_revenue.start, "capex_pct_end": assumptions.capex_pct_revenue.end,
@@ -466,18 +388,173 @@ memo_input = build_memo_input(
     implied_expectations=implied_expectations,
 )
 
-import os
+# --- Presentación, organizada en pestañas ---------------------------------------
 
-if os.environ.get("ANTHROPIC_API_KEY"):
-    if st.button("Generar memo con la API de Anthropic"):
-        from ai.memo_generator import generate_memo
-        with st.spinner("Redactando memo..."):
-            memo_text = generate_memo(memo_input)
-        st.markdown(memo_text)
-else:
-    st.info(
-        "No hay ANTHROPIC_API_KEY configurada. Copia este prompt y pégalo en Claude.ai "
-        "para generar el memo manualmente sin coste (ver estado.md)."
+tab_valoracion, tab_supuestos, tab_fundamentales, tab_memo = st.tabs(
+    ["Valoración", "Supuestos y expectativas", "Fundamentales", "Memo"]
+)
+
+with tab_valoracion:
+    st.subheader("Rango de escenarios")
+
+    fig = go.Figure()
+    fig.add_bar(
+        y=scenario_names, x=scenario_prices, orientation="h", width=0.5,
+        marker_color=COLORS["series"], marker_line_width=0,
+        text=[f"${p:,.2f}" for p in scenario_prices], textposition="outside",
+        textfont=dict(family=FONT_MONO, size=13, color=COLORS["ink"]),
+        hovertemplate="%{y}<br>$%{x:,.2f}<extra></extra>",
     )
-    _, user_prompt = build_prompt(memo_input)
-    st.code(user_prompt, language="json")
+    reference_prices = [v for v in (snap.get("price"), snap.get("analyst_target_price")) if v]
+    max_x = max(scenario_prices + reference_prices) * 1.18
+    if snap.get("price"):
+        fig.add_vline(x=snap["price"], line_dash="dash", line_width=1.5, line_color=COLORS["market_ref"],
+                      annotation_text=f"Mercado ${snap['price']:.2f}", annotation_position="top",
+                      annotation_font=dict(family=FONT_SANS, size=11, color=COLORS["market_ref"]))
+    if snap.get("analyst_target_price"):
+        fig.add_vline(x=snap["analyst_target_price"], line_dash="dot", line_width=1.5, line_color=COLORS["consensus_ref"],
+                      annotation_text=f"Consenso ${snap['analyst_target_price']:.2f}", annotation_position="bottom",
+                      annotation_font=dict(family=FONT_SANS, size=11, color=COLORS["consensus_ref"]))
+    fig.update_layout(
+        height=280, margin=dict(l=10, r=10, t=50, b=40), showlegend=False,
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"],
+        font=dict(family=FONT_SANS, color=COLORS["ink_soft"], size=13),
+        xaxis=dict(title="Precio implícito ($)", range=[0, max_x], gridcolor=COLORS["border"], zeroline=False),
+        yaxis=dict(gridcolor=COLORS["border"], automargin=True),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    if warnings_text:
+        for w in warnings_text:
+            st.warning(f"Aviso técnico del modelo: {w}")
+    else:
+        st.info("Sin avisos técnicos: el margen WACC-g es saludable en este cálculo.")
+
+    st.subheader("Sensibilidad: WACC × tasa de crecimiento terminal")
+    if matrix is not None:
+        z = matrix.implied_share_price
+        x_labels = [f"{g*100:.2f}%" for g in matrix.growth_values]
+        y_labels = [f"{w*100:.2f}%" for w in matrix.wacc_values]
+        fig_matrix = go.Figure(data=go.Heatmap(
+            z=z, x=x_labels, y=y_labels,
+            colorscale=[[0, COLORS["accent_soft"]], [1, COLORS["accent"]]],
+            text=[[f"${v:,.0f}" for v in row] for row in z],
+            texttemplate="%{text}", textfont=dict(family=FONT_MONO, size=12, color=COLORS["ink"]),
+            hovertemplate="WACC %{y} · g %{x}<br>$%{z:,.2f}<extra></extra>",
+            colorbar=dict(title=dict(text="$", font=dict(family=FONT_SANS)), tickfont=dict(family=FONT_MONO)),
+            xgap=2, ygap=2,
+        ))
+        fig_matrix.update_layout(
+            height=280, margin=dict(l=10, r=10, t=10, b=10),
+            plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"],
+            font=dict(family=FONT_SANS, color=COLORS["ink_soft"], size=13),
+            xaxis=dict(title="g terminal", side="bottom"),
+            yaxis=dict(title="WACC", autorange="reversed"),
+        )
+        st.plotly_chart(fig_matrix, use_container_width=True, config={"displayModeBar": False})
+    else:
+        st.caption("Rango de WACC insuficiente para la matriz con la g elegida (sube el WACC o baja g).")
+
+with tab_supuestos:
+    st.subheader("Supuestos de proyección (escenario conservador)")
+    assumptions_df = pd.DataFrame([
+        {"Driver": "Crecimiento de ingresos", "Año 1": f"{assumptions.revenue_growth.start*100:.2f}%",
+         "Año N": f"{assumptions.revenue_growth.end*100:.2f}%"},
+        {"Driver": "Margen EBIT", "Año 1": f"{assumptions.ebit_margin.start*100:.2f}%",
+         "Año N": f"{assumptions.ebit_margin.end*100:.2f}%"},
+        {"Driver": "D&A (% ventas)", "Año 1": f"{assumptions.da_pct_revenue.start*100:.2f}%",
+         "Año N": f"{assumptions.da_pct_revenue.end*100:.2f}%"},
+        {"Driver": "CapEx (% ventas)", "Año 1": f"{assumptions.capex_pct_revenue.start*100:.2f}%",
+         "Año N": f"{assumptions.capex_pct_revenue.end*100:.2f}%"},
+        {"Driver": "Δ NWC (% ventas)", "Año 1": f"{assumptions.nwc_change_pct_revenue.start*100:.2f}%",
+         "Año N": f"{assumptions.nwc_change_pct_revenue.end*100:.2f}%"},
+    ])
+    st.dataframe(assumptions_df, hide_index=True, use_container_width=True)
+
+    st.subheader("Expectativas implícitas del mercado (reverse DCF)")
+    st.caption(
+        "¿Qué tendría que ser cierto para justificar el precio que ya cotiza el mercado o el "
+        "consenso? No es un error del modelo — es la prima de crecimiento que se está pagando hoy, "
+        "cuantificada en vez de solo mostrada como un porcentaje de desviación."
+    )
+    if implied_expectations:
+        implied_rows = []
+        for exp in implied_expectations:
+            growth_cell = (f"{exp.implied_revenue_growth*100:.1f}%" if exp.implied_revenue_growth is not None
+                           else "fuera de rango (-30%/+60%)")
+            gap_cell = f"{exp.revenue_growth_gap*100:+.1f} pp" if exp.revenue_growth_gap is not None else "n/d"
+            if exp.implied_terminal_growth is not None:
+                flag = " ⚠️" if exp.terminal_growth_fragile else ""
+                g_cell = f"{exp.implied_terminal_growth*100:.2f}%{flag}"
+            else:
+                g_cell = "fuera de rango"
+            implied_rows.append({
+                "Precio objetivo": f"{exp.target_label} (${exp.target_price:,.2f})",
+                "Crecimiento de ingresos implícito": growth_cell,
+                "Gap vs. asumido": gap_cell,
+                "g terminal implícita": g_cell,
+            })
+        st.dataframe(pd.DataFrame(implied_rows), hide_index=True, use_container_width=True)
+        st.caption(
+            f"Crecimiento de ingresos asumido (escenario conservador, CAGR reciente): "
+            f"**{assumptions.revenue_growth.start*100:.1f}%**. Tasa de crecimiento terminal asumida: "
+            f"**{terminal_growth_rate*100:.2f}%**. ⚠️ junto a la g terminal implícita indica que ese "
+            "valor cae en la zona de spread WACC-g estrecho (inestable, ver aviso técnico del modelo)."
+        )
+    else:
+        st.caption("Sin precio de mercado ni consenso disponible para calcular expectativas implícitas.")
+
+with tab_fundamentales:
+    st.subheader("Ratios financieros (último ejercicio disponible)")
+    if ratio_snapshot is not None:
+        ratio_cols = st.columns(5)
+        ratio_cols[0].metric("ROE", f"{ratio_snapshot.roe*100:.1f}%")
+        ratio_cols[1].metric(
+            "ROIC vs. WACC", f"{ratio_snapshot.roic*100:.1f}%",
+            "Crea valor" if ratio_snapshot.creates_value else "No crea valor",
+            # st.metric no puede inferir el signo de un delta de texto libre --
+            # sin esto, "No crea valor" se pintaría en verde igual que "Crea
+            # valor" (Streamlit lo trata como positivo por defecto al no
+            # llevar un "-" delante), lo cual sería activamente engañoso.
+            delta_color="normal" if ratio_snapshot.creates_value else "inverse",
+        )
+        ratio_cols[2].metric("Debt/EBITDA", f"{ratio_snapshot.debt_to_ebitda:.2f}x")
+        ratio_cols[3].metric("Cobertura de intereses",
+                              f"{ratio_snapshot.interest_coverage:.1f}x" if ratio_snapshot.interest_coverage != float("inf") else "∞")
+        ratio_cols[4].metric("Current ratio", f"{ratio_snapshot.current_ratio:.2f}")
+        st.caption(f"Ejercicio fiscal {ratio_snapshot.fiscal_year}")
+    else:
+        st.caption(f"No se pudieron calcular los ratios: {ratio_error}")
+
+    st.subheader("Comparables")
+    if comps_table is not None:
+        st.dataframe(comps_table, use_container_width=True)
+        st.caption(
+            f"Múltiplo EV/EBITDA de salida usado en el valor terminal: **{terminal_multiple:.2f}x** "
+            f"(mediana de los comparables, excluyendo {target} — no el múltiplo de la propia empresa)."
+        )
+    elif terminal_multiple:
+        st.caption(
+            f"Sin grupo de comparables en modo ticker libre — el múltiplo de salida usado "
+            f"({terminal_multiple:.2f}x) es el de la propia empresa, no el de comparables."
+        )
+    else:
+        st.caption("No hay múltiplo EV/EBITDA disponible — el valor terminal usa Gordon Growth puro.")
+
+with tab_memo:
+    st.subheader("Investment Memo")
+    import os
+
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        if st.button("Generar memo con la API de Anthropic"):
+            from ai.memo_generator import generate_memo
+            with st.spinner("Redactando memo..."):
+                memo_text = generate_memo(memo_input)
+            st.markdown(memo_text)
+    else:
+        st.info(
+            "No hay ANTHROPIC_API_KEY configurada. Copia este prompt y pégalo en Claude.ai "
+            "para generar el memo manualmente sin coste (ver estado.md)."
+        )
+        _, user_prompt = build_prompt(memo_input)
+        st.code(user_prompt, language="json")

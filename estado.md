@@ -1031,7 +1031,64 @@ ejemplo de esta sesión (31.8% de crecimiento implícito vs. mercado).
 2 tests de regresión nuevos. **144 tests en total, todos en verde.**
 Commit y push hechos.
 
-## 10. Próximo paso inmediato
+## 10. Sesión 16 (continuación) — Pase de UX/UI
+
+El usuario pidió centrarse en experiencia de usuario y frontend,
+mencionando la extensión 21st y varias skills de diseño. Aclaración
+dada antes de empezar: 21st/Figma generan componentes React/Tailwind
+o archivos de Figma, que no se pueden usar directamente en una app
+Streamlit (renderiza sus propios widgets en Python del lado servidor)
+sin un puente de componente custom — no aplicables aquí sin un cambio
+de arquitectura mucho mayor. Se aplicaron en su lugar los principios sí
+transferibles (paleta, tipografía, jerarquía, corrección de gráficos
+vía la skill `dataviz`) a través de lo que Streamlit sí permite
+personalizar: tema, CSS inyectado, y Plotly en vez de matplotlib.
+
+- **`.streamlit/config.toml`** (nuevo): tema "quant/banca de inversión"
+  — azul marino (#1B3A5C) como acento único, grises fríos neutros. Esto
+  recolorea todos los widgets nativos automáticamente.
+- **CSS inyectado** (`_inject_custom_css()` en `app/streamlit_app.py`):
+  IBM Plex Sans (UI/headings) + IBM Plex Mono (todos los números,
+  `font-variant-numeric: tabular-nums`) vía Google Fonts. Tarjetas con
+  borde para métricas, tipografía de pestañas, paleta centralizada en
+  un único diccionario `COLORS` (una sola fuente de verdad, leída tanto
+  por el CSS como por los gráficos Plotly).
+- **Gráficos migrados de matplotlib a Plotly:** el gráfico de escenarios
+  ahora tiene anotaciones de mercado/consenso en top/bottom sin solape
+  (bug real del gráfico anterior, visible con NVDA: las etiquetas de
+  precio de mercado y consenso quedaban una encima de otra cuando los
+  precios estaban cerca) y tooltips. La matriz de sensibilidad pasó de
+  una tabla `pandas.Styler` a un heatmap Plotly con una sola escala de
+  color secuencial (principio `dataviz`: sequential = un solo hue,
+  claro→oscuro), WACC ascendente de arriba a abajo.
+- **Layout reorganizado en pestañas** (`st.tabs`): Valoración / Supuestos
+  y expectativas / Fundamentales / Memo — antes era una sola página con
+  scroll largo. El cómputo se separó de la presentación (todo se calcula
+  una vez arriba; las pestañas solo leen resultados ya calculados), sin
+  tocar ninguna lógica financiera.
+- **Fix de correctitud encontrado en el propio pase de diseño:** el
+  metric `ROIC vs. WACC` mostraba el delta "Crea valor"/"No crea valor"
+  siempre en verde — `st.metric` no puede inferir el signo de un texto
+  libre sin un "-" delante, así que "No crea valor" se pintaba en verde
+  igual que "Crea valor" (activamente engañoso). Corregido con
+  `delta_color="normal"/"inverse"` explícito según
+  `ratio_snapshot.creates_value`.
+
+**Decisión de alcance explícita, no un olvido:** el diseño se hizo para
+un único tema (claro, "banca de inversión"), sin soporte de modo oscuro
+manual de Streamlit — most viewers verán siempre el tema configurado en
+`config.toml`; forzar "Dark" desde el menú de Streamlit podría chocar
+con los colores fijos del CSS inyectado. Aceptable para el alcance de
+esta herramienta; documentado aquí para que no se lea como un descuido.
+
+**Verificado con Playwright contra la app real** (no solo con
+`py_compile`): capturas de pantalla en las 4 pestañas, en modo universo
+cacheado (AMZN) y modo cualquier ticker (NVDA) — sin errores de consola,
+sin tracebacks, gráficos renderizando con los datos correctos. `plotly`
+añadido y fijado en `requirements.txt` (7.0.0). 144 tests siguen en
+verde (el cambio es puramente de presentación, ninguna lógica tocada).
+
+## 11. Próximo paso inmediato
 
 1. Hallazgos técnicos moderados que siguen abiertos, sin urgencia: M2
    (`gordon_weight=0.8` sin justificación propia), M5 (sin verificación
