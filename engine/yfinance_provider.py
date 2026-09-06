@@ -154,6 +154,15 @@ def historical_financials(ticker) -> pd.DataFrame:
                     and pretax_income not in (None, 0)) else None
 
         d_and_a = _clean(cf.get("Depreciation And Amortization"))
+        if d_and_a is None:
+            # Utilities/energía con contabilidad de "depletion" (p.ej. D
+            # -Dominion Energy-, auditoría sesión 17) reportan esta partida
+            # como "Depreciation Amortization Depletion" en vez de la
+            # etiqueta estándar -- sin este fallback, default_assumptions_
+            # from_history() lanza ValueError con un mensaje que apunta a
+            # "estados financieros no estándar (bancos/REITs)", diagnóstico
+            # engañoso para una utility con datos perfectamente estándar.
+            d_and_a = _clean(cf.get("Depreciation Amortization Depletion"))
         capex = _clean(cf.get("Capital Expenditure"))
         if capex is not None:
             capex = abs(capex)  # yfinance reporta CapEx como salida de caja (negativo)

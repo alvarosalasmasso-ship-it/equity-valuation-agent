@@ -112,6 +112,32 @@ def test_historical_financials_takes_absolute_value_of_capex():
     assert list(df["capex"]) == [10.0, 12.0]
 
 
+def test_historical_financials_falls_back_to_depletion_label_for_d_and_a():
+    """Utilities/energía con contabilidad de depleción (p.ej. D -Dominion
+    Energy-, auditoría sesión 17) reportan D&A como "Depreciation
+    Amortization Depletion" en vez de la etiqueta estándar -- sin este
+    fallback, el histórico salía 100% None y default_assumptions_from_
+    history() lanzaba ValueError con un mensaje engañoso (ver M8)."""
+    cashflow_depletion = _make_frame({
+        "Depreciation Amortization Depletion": [5.0, 4.0],
+        "Capital Expenditure": [-12.0, -10.0],
+    }, DATES)
+    ticker = FakeTicker(FINANCIALS, BALANCE_SHEET, cashflow_depletion, INFO, ticker="D")
+    df = historical_financials(ticker)
+    assert list(df["d_and_a"]) == [4.0, 5.0]
+
+
+def test_historical_financials_prefers_standard_d_and_a_label_when_both_present():
+    cashflow_both = _make_frame({
+        "Depreciation And Amortization": [5.0, 4.0],
+        "Depreciation Amortization Depletion": [99.0, 99.0],
+        "Capital Expenditure": [-12.0, -10.0],
+    }, DATES)
+    ticker = FakeTicker(FINANCIALS, BALANCE_SHEET, cashflow_both, INFO, ticker="TEST")
+    df = historical_financials(ticker)
+    assert list(df["d_and_a"]) == [4.0, 5.0]
+
+
 def test_historical_financials_computes_tax_rate_from_pretax_income():
     df = historical_financials(make_fake_ticker())
     row_2022 = df[df["fiscal_year"] == 2022].iloc[0]

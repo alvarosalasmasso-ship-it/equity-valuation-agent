@@ -1494,12 +1494,98 @@ preceder un retorno MAYOR, sugerente pero muestra pequeña.
 **225 tests en total, todos en verde.** Documentado en
 `docs/METHODOLOGY.md` sección 30 y `docs/AUDIT.md` hallazgo I13.
 
-## 23. Próximo paso inmediato
+## 23. Sesión 17 (continuación) — Evaluación de punta a punta ("dogfooding") con MSFT, memo incluido
 
+A petición explícita del usuario, antes de seguir añadiendo
+funcionalidades: probar la herramienta de cabo a rabo con una empresa
+real y ya cubierta públicamente, para contrastar contra consenso y
+detectar fallos propios. Elegido MSFT. Pipeline completo (WACC vía
+peers, comps, DCF/escenarios, reverse DCF, sensibilidades, ratios) más
+memo de inversión escrito localmente (sin llamada a la API) siguiendo
+`ai/prompts/investment_memo_system.md`, usando solo el JSON real de
+`build_prompt()`.
+
+**Resultado**: DCF conservador $330.43 vs mercado $499.70 (-33.9%) y
+consenso $572.92 (-42.3%). El WACC (9.62%) es la palanca dominante
+(-10.65% por +1pp), por delante de g terminal y crecimiento de
+ingresos. El mercado descuenta un crecimiento implícito de 26.3%
+frente al 16.1% asumido por reversión a la media — brecha de +10.1pp,
+consistente con la narrativa pública de MSFT (Azure/IA) sin que el
+modelo necesite "saberlo". ROIC 24.75% vs WACC 9.62% (crea valor
+claro), apalancamiento bajo (deuda neta/EBITDA 0.52x). Dos avisos
+técnicos correctos (margen EBIT y CapEx del último año, outliers
+estadísticos). Sin hallazgos nuevos de herramienta en este caso — MSFT
+resultó ser un caso "bien portado" para la metodología.
+
+## 24. Sesión 17 (continuación) — Grupo de comparables semiconductores (NVDA/AMD/AVGO/QCOM/INTC), vía yfinance
+
+Extensión del dogfooding a un sector completo, para evaluar la
+herramienta "en conjunto" (petición explícita del usuario). **Aviso
+del usuario a mitad de tarea: no gastar cuota de Alpha Vantage sin
+necesidad ("es muy valiosa", compartida 25/día entre todos los
+visitantes de la app en vivo)** — tarea detenida en cuanto llegó el
+aviso (`TaskStop` sobre el fetch en curso) y pivotada por completo a
+yfinance (ilimitado, gratis) para el resto de esta evaluación y todas
+las posteriores.
+
+Dos hallazgos reales, documentados en `docs/AUDIT.md`:
+- **Addendum a I4** (contaminación de WACC entre comparables
+  heterogéneos): mezclar NVDA/AMD (hiper-crecimiento, beta alto) con
+  QCOM/INTC (maduras) en el mismo grupo de peers infla el WACC
+  relevered de estas últimas por encima de lo que su propio perfil de
+  riesgo justificaría — cuantificado con datos reales.
+- **I14 (nuevo)**: reverse DCF solo resuelve crecimiento de ingresos o
+  g terminal, nunca margen — AMD (ROIC 7.1% < WACC 12.3%, PE 121.8x)
+  es un caso real donde el optimismo de mercado es plausiblemente sobre
+  recuperación de margen (post-amortización Xilinx), y la maquinaria
+  actual no puede articular esa hipótesis, solo devuelve "fuera de
+  rango".
+
+## 25. Sesión 17 (continuación) — Grupo Utilities reguladas (NEE/DUK/SO/D), vía yfinance: un bug real y un hallazgo de fragilidad sistemática
+
+Continuación del mismo "sigue analizando empresas" — sector elegido
+deliberadamente por contraste máximo (bajo crecimiento, bajo beta,
+alto apalancamiento, CapEx estructural sin supercycle).
+
+**Bug real encontrado y corregido (M8)**: el pipeline completo
+crasheaba en D (Dominion Energy) — `historical_financials()` (yfinance)
+solo reconocía la etiqueta `"Depreciation And Amortization"`, y D
+reporta esa partida como `"Depreciation Amortization Depletion"`
+(convención contable de empresas con activos de extracción/depleción).
+El 100% del histórico de D&A salía `None`. Peor aún: el mensaje de
+error que sí llega al usuario (protegido por el try/except ya
+existente) apuntaba a "bancos/REITs" — diagnóstico engañoso para una
+utility con estados financieros estándar. Corregido con fallback de
+etiqueta en `engine/yfinance_provider.py`; 2 tests de regresión
+nuevos. Verificado: D pasa de histórico 100% vacío a datos completos,
+pipeline de las 4 utilities corre sin excepciones.
+
+**Hallazgo de fragilidad sistemática (addendum a M2)**: con el bug
+corregido, el WACC vía peers de las 4 utilities sale muy bajo
+(5.20%-6.16%, beta relevered 0.32-0.65) — con g terminal fija en 2.5%,
+el spread WACC-g cae por debajo del umbral prudente de 3% en 3 de 4
+casos (el aviso ya existente SÍ dispara). El resultado en precio es
+extremo: DUK -75.6% vs mercado, SO -90.5%, y **D da un precio
+implícito NEGATIVO (-$255.48 vs $65.84 real)** — matemáticamente
+consistente (mismo mecanismo que I10) pero inutilizable sin contexto.
+Confirma que la fragilidad de Gordon Growth con spread estrecho, hasta
+ahora ilustrada solo con JNJ (M2), es el comportamiento **esperable de
+cualquier sector regulado de bajo riesgo**, no una excepción aislada.
+
+**227 tests en total, todos en verde.**
+
+## 26. Próximo paso inmediato
+
+0. Commitear los hallazgos pendientes de esta sesión (M8, addenda a
+   M2/I4, I14) con confirmación explícita del usuario.
+1. Seguir analizando más empresas/sectores (petición explícita y
+   activa del usuario) — siguientes candidatos naturales: un sector
+   de alto crecimiento no-tech (p.ej. biotech/farma) o small-caps para
+   probar el límite inferior de cobertura de datos.
 0.5. SEC EDGAR — retomar si se quiere reducir la dependencia de la
    cuota de Alpha Vantage: falta D&A fiable (sin resolver) y construir
    el módulo completo con lo ya validado para el resto de campos.
-1. E — Intervalo de confianza (bootstrap) sobre la desviación agregada
+2. E — Intervalo de confianza (bootstrap) sobre la desviación agregada
    del universo piloto (n=8) — la única pieza del lote de rigor
    matemático que queda sin construir; bajo esfuerzo.
 4. Fase 9 (sentiment en earnings calls) — extensión opcional.

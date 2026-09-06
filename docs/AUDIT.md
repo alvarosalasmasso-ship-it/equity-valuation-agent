@@ -30,16 +30,22 @@ reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
 y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
-**1 hallazgo crítico (✅ corregido), 13 importantes (10 ✅ corregidos —
+**1 hallazgo crítico (✅ corregido), 14 importantes (10 ✅ corregidos —
 I6/I7/I8 de la auditoría matemática/financiera a fondo, I9/I10 de una
 prueba de estrés con 11 tickers reales ("como si un banco fuese a
 usarla"), I12 (aviso de hiper-crecimiento extremo, corrección parcial:
 avisa, no ajusta el número), I13 (precio de mercado de Alpha Vantage
 mal para GOOGL/META, corrige la desviación media del universo piloto de
-41.82% a 34.21%) —, 3 ✅ aceptados como limitación documentada — I2, I4,
-I11: DCF FCFF no encaja con bancos/REITs), 7 moderados (**todos
-cerrados**: 6 ✅ corregidos incluido M7 en el Lote A, 1 ✅ decisión
-explícita investigada — M2, y M6 recién investigado con evidencia
+41.82% a 34.21%) —, 4 ✅ aceptados/documentados como limitación — I2,
+I4 (con nueva evidencia real de contaminación de WACC entre
+comparables heterogéneos, grupo de semiconductores), I11 (DCF FCFF no
+encaja con bancos/REITs), I14 (reverse DCF solo resuelve crecimiento,
+no margen — hallazgo real con AMD)), 8 moderados (**todos
+cerrados**: 7 ✅ corregidos incluido M7 en el Lote A y M8 (evaluación
+del sector Utilities: yfinance no reportaba D&A para D bajo la etiqueta
+estándar), 1 ✅ decisión explícita investigada — M2 (con nueva evidencia
+de fragilidad sistemática de Gordon Growth en todo el sector Utilities,
+no solo un caso puntual), y M6 recién investigado con evidencia
 directa del Excel de referencia y también cerrado), 3 informativos (1
 ✅ corregido — N2 —, 2 sin acción necesaria). Con esto, **no queda
 ningún hallazgo moderado o importante abierto** — I12 se corrigió
@@ -295,6 +301,23 @@ lista curada a mano como la actual. Ampliar la lista a mano (p. ej. de
 Ya está señalado en la propia UI (`app/streamlit_app.py`, tabla de
 comparables) que el múltiplo es la mediana de un grupo concreto, no de
 un universo exhaustivo.
+
+**Nueva evidencia cuantitativa (sesión 17, evaluación de un grupo real
+de semiconductores — NVDA, AMD, AVGO, QCOM, INTC):** la heterogeneidad
+del grupo no solo distorsiona el múltiplo de salida (ya documentado
+arriba) — también **contamina el WACC de los miembros más
+conservadores del grupo vía la beta de industria**. QCOM e INTC,
+negocios maduros de riesgo mucho más bajo que el resto, heredan un WACC
+de 12.57%/11.60% porque la beta de industria promedia sus betas reales
+(1.68/2.23) con las de NVDA (2.22) y AMD (2.48) — betas extremas
+propias de nombres de hiper-crecimiento muy volátiles, no del perfil de
+QCOM/INTC. Mecanismo ya conocido en la práctica bancaria real (un
+comparable de riesgo muy distinto sesga la beta de industria), pero
+nunca antes cuantificado en este proyecto con un grupo curado a
+propósito para exponerlo. Misma decisión que arriba: aceptado como
+limitación del alcance actual, mismo motivo (sin taxonomía de industria
+de calidad gratuita para segmentar comparables por subsector de riesgo
+homogéneo).
 
 ### I5. Sin manejo de errores en modo "universo cacheado" — ✅ CORREGIDO (sesión 16)
 
@@ -672,6 +695,43 @@ precio correcto (ver `data/validation_history/2026-09-06.json`).
 
 ---
 
+### I14. Reverse DCF solo resuelve crecimiento de ingresos o g terminal, no margen — ✅ DOCUMENTADO como limitación de alcance (sesión 17)
+
+**Qué es:** evaluando un grupo real de semiconductores (NVDA, AMD,
+AVGO, QCOM, INTC, vía yfinance) como prueba de extremo a extremo,
+`engine.reverse_dcf.compute_implied_expectations()` devolvió "fuera de
+rango" para AMD — ni con un crecimiento de ingresos del 60% (el límite
+superior de búsqueda) se justifica el precio de mercado ($477.57 frente
+a un precio conservador de $55.23). El propio dato de AMD explica por
+qué: ROIC=7.1% frente a WACC=12.3% (no crea valor con la rentabilidad
+ACTUAL), y un PE ratio de 121.8x en la tabla de comparables — señales
+de que el mercado no está pagando por más ingresos, sino por una
+recuperación de MARGEN (los cargos de amortización de la adquisición de
+Xilinx, 2022, deprimen la rentabilidad reportada actual de forma no
+recurrente). El reverse DCF de este proyecto solo tiene una palanca de
+resolución -- crecimiento de ingresos (`engine.projections
+.implied_revenue_growth`) o tasa de crecimiento terminal
+(`engine.valuation.implied_terminal_growth_rate`) -- nunca margen, así
+que no puede expresar "el mercado espera que el margen EBIT vuelva al
+X%" como hipótesis alternativa, aunque sea la lectura más plausible
+para una empresa como AMD en este momento concreto.
+
+**Por qué se documenta así, no se "corrige":** añadir un tercer solver
+(`implied_ebit_margin`, con la misma bisección que ya usan los otros
+dos) es mecánicamente sencillo — el diseño y la infraestructura de
+`solve_for_target_price()` ya son genéricos, no específicos de
+crecimiento. No se construye en esta sesión porque no se ha investigado
+todavía si margen y crecimiento son solubles de forma independiente sin
+ambigüedad (a diferencia de crecimiento/g, que son parámetros
+claramente separados en el pipeline, un cambio de margen afecta
+simultáneamente a EBIT y, indirectamente, a la lectura de "qué domina"
+ya dada por `engine.sensitivity` — mezclar ambas herramientas sin
+pensarlo bien podría confundir más de lo que aclara). Queda como
+candidato concreto para una futura sesión, no como pendiente indefinido
+sin dueño.
+
+---
+
 ## Moderado
 
 ### M1. `requirements.txt` sin versiones fijadas — ✅ CORREGIDO (sesión 15)
@@ -758,6 +818,44 @@ el default correcto para la primitiva de bajo nivel, cuando no se sabe
 si habrá un múltiplo de comparables disponible ni si es de fiar — la
 capa de orquestación, que sí tiene esa información, decide distinto con
 motivo.
+
+**Nueva evidencia cuantitativa (sesión 17, evaluación de un grupo real
+de utilities reguladas — NEE, DUK, SO, D, vía yfinance):** la
+fragilidad de Gordon Growth con spread WACC-g estrecho, hasta ahora
+ilustrada con un caso puntual (JNJ, tabla de arriba), resulta ser un
+**patrón sistemático de sector completo**, no una excepción aislada.
+El WACC construido con peers (beta relevered ~0.32-0.65, típico de
+utilities reguladas de bajo riesgo) sale entre 5.20% y 6.16% para las 4
+compañías — con `terminal_growth_rate=2.5%` fijo, el spread WACC-g cae
+por debajo del umbral prudente de 3% (`MIN_PRUDENT_WACC_GROWTH_SPREAD`,
+dispara el aviso ya existente) en 3 de los 4 casos (DUK: 2.90pp, SO:
+2.99pp, D: 2.70pp — solo NEE, con el beta más alto del grupo, 0.64,
+queda holgado en 3.66pp). El resultado en precio conservador es
+extremo: DUK $29.35 vs mercado $120.22 (-75.6%), SO $8.34 vs $88.11
+(-90.5%), y **D da un precio implícito NEGATIVO de -$255.48** (vs
+mercado $65.84) — matemáticamente consistente con la fórmula (mismo
+mecanismo que I10), pero un resultado que ningún analista presentaría
+sin contexto adicional.
+
+**Confirma, con un caso más severo, la lógica de M2:** con
+`gordon_weight=0.8`, el 20% de peso en el múltiplo de comparables
+amortigua parcialmente el efecto (evita que el precio explote a
+infinito), pero no lo suficiente cuando el spread es tan estrecho como
+en este sector — el resultado sigue siendo económicamente absurdo en 3
+de 4 casos. Esto no cambia la decisión de M2 (`gordon_weight=1.0`
+expondría el 100% del valor terminal a esta misma fragilidad, sería
+peor, no mejor), pero sí confirma que **sectores de bajo beta y bajo
+WACC construidos vía comparables son, como grupo, el caso de uso donde
+la fragilidad de Gordon Growth con spread estrecho es más probable de
+encontrarse en la práctica** — no un caso de laboratorio aislado como
+JNJ, sino el comportamiento esperable de cualquier sector regulado de
+bajo riesgo (utilities, algunas REITs si se forzara el DCF genérico,
+consumo defensivo con beta bajo). El aviso de spread estrecho ya
+existente cumple su función (avisa en 3 de 4 casos reales), pero un
+usuario que ignore el aviso y confíe en el número de D vería un precio
+implícito negativo sin entender por qué — mismo espíritu de "avisar, no
+maquillar" que I10, aplicado aquí a escala de sector completo en vez de
+a un ticker aislado.
 
 ### M3. `DCFInputs` no valida `wacc > 0` ni `0 <= gordon_weight <= 1` — ✅ CORREGIDO (sesión 15)
 
@@ -956,6 +1054,49 @@ neta/EBITDA" como métricas separadas y explícitamente rotuladas, y el
 memo usa la neta como cifra principal de apalancamiento. Verificado con
 3 tests nuevos en `test_ratios.py` (cálculo, caja neta positiva da
 negativo, EBITDA no positivo lanza `ValueError` en ambas versiones).
+
+---
+
+### M8. `historical_financials()` (yfinance) no reconocía la etiqueta "Depreciation Amortization Depletion" — ✅ CORREGIDO (sesión 17, evaluación del sector Utilities)
+
+**Qué es:** al evaluar un grupo de comparables de utilities reguladas
+(NEE, DUK, SO, D), **D (Dominion Energy)** hacía crashear la
+construcción de la proyección con `ValueError: Sin ningún dato válido
+de 'D&A % ventas'` — el 100% del histórico de `d_and_a` salía `None`.
+Investigado contra el `cash_flow` crudo de yfinance: el dato SÍ existe
+para D, pero bajo la etiqueta `"Depreciation Amortization Depletion"`
+(convención contable de empresas con activos de extracción/depleción —
+energía, utilities con generación, minería), no la etiqueta estándar
+`"Depreciation And Amortization"` que `historical_financials()`
+buscaba en exclusiva.
+
+**Por qué importa doble:** (1) es un hueco de cobertura real y
+alcanzable con un ticker de primera línea (Dominion Energy, componente
+del S&P 500, no un caso de laboratorio); (2) el mensaje de error que sí
+llega al usuario (protegido por el `try/except` de la sección de
+cómputo compartida, mismo patrón que I9) es **engañoso** en este caso
+concreto: apunta a "sectores con estados financieros no estándar
+(bancos/financieras, REITs)" — pero D es una utility con estados
+financieros perfectamente estándar; el problema real es una etiqueta
+de yfinance no cubierta, no una incompatibilidad estructural de
+sector. Un usuario que confiara en ese mensaje concluiría erróneamente
+que las utilities, como grupo, no son valorables con la herramienta.
+
+**Cómo se corrigió:** `historical_financials()` ahora hace fallback a
+`"Depreciation Amortization Depletion"` cuando `"Depreciation And
+Amortization"` no está disponible. Verificado con datos reales: D pasa
+de un histórico 100% `None` a valores completos (p.ej. $2.68bn en el
+último ejercicio), y el pipeline completo (WACC, comps, DCF,
+escenarios, reverse DCF, sensibilidades, ratios) corre sin excepciones
+para las 4 utilities del grupo.
+
+**Nota relacionada, no corregida (alcance limitado a este hallazgo):**
+el mensaje de error genérico de la sección 490-499 de
+`app/streamlit_app.py` sigue atribuyendo cualquier fallo de
+`default_assumptions_from_history()` a "bancos/REITs" — correcto para
+I2/I11, pero potencialmente engañoso para futuros huecos de datos de
+proveedor no relacionados con el sector. Queda como mejora de mensaje,
+no como bug, fuera del alcance de esta corrección puntual.
 
 ---
 
