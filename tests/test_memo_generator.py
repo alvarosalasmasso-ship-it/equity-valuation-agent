@@ -232,6 +232,43 @@ def test_build_memo_input_omits_implied_expectations_when_not_provided():
     assert payload["expectativas_implicitas_del_mercado"] is None
 
 
+def test_build_memo_input_includes_sensitivities_when_provided():
+    from engine.sensitivity import DriverSensitivity
+
+    sensitivities = [
+        DriverSensitivity(driver="capex_pct_revenue", label="CapEx % ventas", base_value=0.184,
+                           bump=0.01, base_price=104.41, price_at_bump=95.0),
+        DriverSensitivity(driver="wacc", label="WACC", base_value=0.0827,
+                           bump=0.01, base_price=104.41, price_at_bump=98.0),
+    ]
+    memo_input = build_memo_input(
+        ticker="AMZN", wacc=0.0827, terminal_growth_rate=0.025,
+        scenario_results=_sample_scenario_results(), key_assumptions={},
+        sensitivities=sensitivities,
+    )
+    assert memo_input.sensitivities == [
+        {"supuesto": "CapEx % ventas", "cambio_en_precio_por_1pp": pytest.approx((95.0 - 104.41) / 104.41)},
+        {"supuesto": "WACC", "cambio_en_precio_por_1pp": pytest.approx((98.0 - 104.41) / 104.41)},
+    ]
+
+    _, user_prompt = build_prompt(memo_input)
+    json_start = user_prompt.index("{")
+    payload = json.loads(user_prompt[json_start:])
+    assert payload["sensibilidad_del_precio_por_supuesto"][0]["supuesto"] == "CapEx % ventas"
+
+
+def test_build_memo_input_omits_sensitivities_when_not_provided():
+    memo_input = build_memo_input(
+        ticker="TEST", wacc=0.08, terminal_growth_rate=0.025,
+        scenario_results=_sample_scenario_results(), key_assumptions={},
+    )
+    assert memo_input.sensitivities is None
+    _, user_prompt = build_prompt(memo_input)
+    json_start = user_prompt.index("{")
+    payload = json.loads(user_prompt[json_start:])
+    assert payload["sensibilidad_del_precio_por_supuesto"] is None
+
+
 # --- build_prompt -------------------------------------------------------------
 
 def _sample_memo_input() -> MemoInput:

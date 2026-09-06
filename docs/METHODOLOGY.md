@@ -1242,3 +1242,175 @@ pantalla confirma que la tabla renderiza con los números exactos
 calculados por el motor, en modo universo cacheado (AMZN) y en modo
 cualquier ticker (NVDA, caso límite de fuera de rango). Servidor
 Streamlit reiniciado y verificado arrancando limpio.
+
+## 21. Detección de outliers en el ancla del fade — intento de auto-corrección, descartado con evidencia (sesión 17)
+
+Petición explícita del usuario: analizar cómo aumentar el rigor
+matemático del modelo y de la confianza en lo que reporta, más allá de
+acercar el precio al mercado (ya descartado como objetivo — sería el
+mismo sobreajuste evitado en cada hallazgo anterior). El punto de
+partida fue el propio hallazgo de la sección 9: JNJ hereda un outlier
+real (margen EBIT 2025 = 35.6% frente a 18.6%/19.6% en 2023/2024, un
+ítem no recurrente ligado a la escisión de Kenvue) porque
+`_margin_fade_from_recent_to_average()` ancla el año 1 del fade en el
+último año real sin comprobar si ese año es representativo.
+
+### Primer diseño (descartado): sustitución automática por la mediana
+
+Se implementó un detector estadístico — z-score modificado (mediana +
+MAD de los años de referencia, regla de Iglewicz & Hoaglin 1993,
+`|z| > 3.5`), robusto en muestras pequeñas a diferencia de media/
+desviación típica clásicas — que, al detectar un outlier en el último
+año, sustituía el ancla `start` del fade por la mediana de los años
+previos, con un aviso explícito (mismo patrón que
+`MIN_PRUDENT_WACC_GROWTH_SPREAD`). Verificado primero con el caso JNJ
+real: z=21.3, muy por encima del umbral, ancla correctamente sustituida
+de 35.6% a 19.1% — funcionaba exactamente como se pretendía, aisladamente.
+
+### La contraprueba con el universo piloto completo lo invalidó
+
+Antes de dar el cambio por bueno se corrió `scripts/validate_universe.py`
+sobre los 8 tickers reales (mismo estándar de verificación que cualquier
+otro hallazgo de este documento) para medir el impacto agregado. El
+detector disparó en **7 de 8 tickers**, no solo en JNJ:
+
+| Ticker | Driver marcado | Último año | Mediana previa | z modificado |
+|---|---|---|---|---|
+| AMZN | D&A % ventas | 9.2% | 8.4% | 5.7 |
+| MSFT | Margen EBIT | 50.9% | 44.9% | 18.3 |
+| MSFT | CapEx % ventas | 34.9% | 20.5% | 4.1 |
+| GOOGL | ΔNWC % ventas | 4.6% | -3.3% | 6.5 |
+| META | CapEx % ventas | 34.7% | 21.4% | 7.3 |
+| KO | Margen EBIT | 36.8% | 31.5% | 22.5 |
+| PG | D&A % ventas | 3.6% | 3.4% | 4.3 |
+| JNJ | Margen EBIT | 35.6% | 19.1% | 21.3 |
+
+**El problema: el CapEx de MSFT (34.9%) y META (34.7%) marcados como
+"outlier a sustituir" es precisamente el supercycle de inversión en IA
+que la sección 7 ya verificó como una tendencia real y estructural, no
+ruido** — sustituirlo por la mediana histórica habría borrado
+silenciosamente la señal más importante y ya validada de todo el
+proyecto (la explicación mecánica de por qué Big Tech sale
+infravalorada). Se comprobó el histórico completo de MSFT (no solo la
+ventana de 3 años) para confirmarlo antes de descartar el diseño:
+margen EBIT 43.1%→45.2%→44.7%→50.9% y CapEx 13.3%→18.1%→22.9%→34.9% a
+lo largo de 2023-2026 — una aceleración multi-año consistente, no un
+salto puntual.
+
+**Causa raíz del fallo de diseño:** con solo 2-3 años de referencia
+(`lookback_years` por defecto = 3), un z-score no tiene forma de
+distinguir estadísticamente "ítem no recurrente" (JNJ: plano durante
+años, luego un salto puntual sin continuidad) de "inicio/aceleración de
+una tendencia estructural real" (MSFT/META: la propia serie ya venía
+subiendo antes del último año) — ambos producen una desviación enorme
+frente a una referencia de solo 2 puntos. Distinguir ambos casos
+requiere criterio cualitativo verificable (como se hizo a mano en la
+sección 9: cruzar el dato con la escisión de Kenvue; y en la sección 7:
+cruzar el CapEx con el JSON crudo y el contexto de mercado conocido),
+no es inferible de un histórico tan corto.
+
+### Corrección: aviso, nunca sustitución automática
+
+Se mantiene el detector (matemáticamente correcto para lo que
+detecta: "este año es estadísticamente atípico frente a su propia
+referencia reciente") pero se elimina la sustitución. El año 1 del fade
+siempre usa el valor real del último año, sin excepción — fiel al
+principio original ("el último año real es el mejor estimador
+disponible del estado actual"). El detector solo añade un
+`warnings.warn()` señalando la anomalía para revisión manual, igual que
+`MIN_PRUDENT_WACC_GROWTH_SPREAD`: nunca un ajuste silencioso, la
+decisión queda del lado del analista que lee el aviso.
+
+Este aviso llega gratis a las tres superficies que ya consumen
+`warnings.warn()` sin cableado adicional: `app/streamlit_app.py`
+("Aviso técnico del modelo"), `ai/memo_generator.py`
+(`MemoInput.warnings_raised`, vía `run_scenarios_capturing_warnings()`)
+y `scripts/validate_universe.py` (capturado por ticker en el JSON de
+validación) — las tres ya envuelven el cálculo con
+`warnings.catch_warnings(record=True)`.
+
+**Verificado que el cambio final no altera ningún precio ya
+documentado:** se re-corrió `validate_universe.py` con la versión
+final (solo aviso) y la desviación agregada volvió exactamente a
+41.82% / 39.76% (mercado/consenso), idéntica a la de antes de esta
+sesión — como debía ser, ya que el ancla nunca cambia de valor, solo se
+señala. 23 tests nuevos/actualizados en `test_projections.py`
+(detección de outlier con aviso pero sin sustitución sobre el caso JNJ
+sintético; el caso límite de la sección 9 con z=3.37 confirmado por
+debajo del umbral; e insuficientes años de referencia sin falso
+positivo). 159 tests en total, todos en verde.
+
+**Valor real de lo que queda, honestamente acotado:** no es una mejora
+de precisión (no cambia ningún número) — es una mejora de
+**transparencia diagnóstica**: el informe ahora señala explícitamente
+qué supuestos de partida son estadísticamente inusuales frente a su
+propio histórico reciente, para que el analista decida con
+información en vez de heredar un año atípico sin saberlo. El intento
+fallido de auto-corrección queda documentado en detalle porque el
+proceso de descubrir por qué no funcionaba —no solo el resultado final—
+es la evidencia real de rigor que se le pidió al proyecto.
+
+## 22. Elasticidades del modelo ("Greeks") — `engine/sensitivity.py` (sesión 17)
+
+Segunda mitad del mismo encargo de la sección 21: sistematizar el
+ejercicio que hasta ahora se hacía a mano, desglosando el DCF caso por
+caso, para concluir cosas como "en MSFT domina el CapEx" (sección 7) o
+"en PG/JNJ domina el spread WACC-g" (sección 9). `driver_sensitivities()`
+automatiza exactamente ese ejercicio: sobre el escenario conservador,
+desplaza un supuesto a la vez (+1pp por defecto — WACC, g terminal,
+margen EBIT, D&A % ventas, CapEx % ventas, crecimiento de ingresos),
+reejecuta el DCF completo y mide el cambio en el precio implícito,
+devolviendo la lista ordenada de mayor a menor impacto absoluto. Para
+margen/D&A/CapEx/crecimiento, el desplazamiento mueve TODO el tramo del
+fade en paralelo (año 1 y año N por igual) — responde a "¿y si este
+supuesto fuera sistemáticamente 1pp más alto?", no solo a "¿y si
+cambiara el ancla?". Reutiliza literalmente el mismo pipeline que
+`engine.scenarios.run_scenarios` (histórico -> supuestos -> proyección
+-> DCF), así que el precio base coincide exactamente con el escenario
+"Conservador".
+
+### Verificado con datos reales — reproduce automáticamente los hallazgos ya documentados, y añade un matiz nuevo
+
+| Ticker | WACC | Driver dominante | Efecto por +1pp |
+|---|---|---|---|
+| AMZN | 9.30% | CapEx % ventas | -21.65% |
+| MSFT | 9.30% | Tasa de crecimiento terminal (g) | +15.75% |
+| PG | 5.70% | Tasa de crecimiento terminal (g) | +42.41% |
+| JNJ | 5.70% | Tasa de crecimiento terminal (g) | +42.30% |
+
+AMZN confirma el mecanismo de la sección 7 (CapEx domina) tal cual;
+PG/JNJ confirman el de la sección 9 (spread WACC-g estrecho domina,
+amplificado por `gordon_weight=0.8`) con un número exacto en vez de una
+narrativa. **Matiz nuevo, no documentado hasta ahora:** en MSFT domina
+la tasa de crecimiento terminal (+15.75%) y el WACC (-14.34%) por
+delante del CapEx, pese a que MSFT también tiene un CapEx elevado
+(sección 21, supercycle de IA) — consistente con que, para un WACC-g
+saludable (~6.8pp de spread), el valor terminal sigue pesando la mayor
+parte del enterprise value con solo 5 años de horizonte explícito, un
+hecho conocido de cualquier DCF pero que hasta ahora nunca se había
+cuantificado por ticker en este proyecto.
+
+### Dónde vive en la app y en el memo
+
+`app/streamlit_app.py`, pestaña "Supuestos y expectativas": gráfico de
+barras horizontal (tornado chart) bajo las expectativas implícitas del
+mercado, un solo hue (igual criterio que el resto de gráficos de
+magnitud del proyecto — la dirección ya la comunica el signo del label
+y la posición izquierda/derecha del cero, no hace falta codificar
+"sube/baja" con semántica de color bueno/malo, que no aplica aquí).
+`ai/memo_generator.py`: `MemoInput.sensitivities` (nuevo campo opcional)
+se serializa como `sensibilidad_del_precio_por_supuesto`; la regla de la
+sección "Tesis de Valoración" del prompt de sistema ahora nombra el
+supuesto dominante y su impacto en vez de listar los supuestos sin
+jerarquía.
+
+11 tests nuevos (`test_sensitivity.py`: los 6 drivers presentes, mismo
+precio base compartido, orden descendente por impacto absoluto, signos
+verificados a mano contra la mecánica de UFCF, simetría exacta CapEx/D&A
+—mismo coeficiente, signo opuesto—, escalado aproximadamente lineal con
+el tamaño del bump, `gordon_weight=0` anula el efecto de g terminal;
+`test_memo_generator.py`: serialización con y sin el campo;
+`test_app.py`: la sección renderiza con los 3 gráficos Plotly de la
+pestaña). 171 tests en total, todos en verde. Verificado con AppTest que
+la sección renderiza sin excepción sobre el estado por defecto de la
+app.

@@ -435,6 +435,15 @@ implied_expectations = compute_implied_expectations(
     targets=[("Mercado", snap.get("price")), ("Consenso analistas", snap.get("analyst_target_price"))],
 )
 
+from engine.sensitivity import driver_sensitivities
+
+sensitivities = driver_sensitivities(
+    hist, wacc=wacc_value, cash=snap.get("cash") or 0, total_debt=snap.get("total_debt") or 0,
+    diluted_shares=snap["shares_outstanding"], n_years=n_years, terminal_growth_rate=terminal_growth_rate,
+    lookback_years=lookback_years, terminal_ev_ebitda_multiple=terminal_multiple,
+    gordon_weight=gordon_weight, valuation_date=valuation_date,
+)
+
 from engine.ratios import latest_ratio_snapshot
 
 try:
@@ -459,7 +468,7 @@ memo_input = build_memo_input(
     scenario_results=scenario_results, key_assumptions=key_assumptions,
     market_price=snap.get("price"), analyst_target_price=snap.get("analyst_target_price"),
     warnings_raised=warnings_text, ratios=ratio_snapshot,
-    implied_expectations=implied_expectations,
+    implied_expectations=implied_expectations, sensitivities=sensitivities,
 )
 
 # --- Presentación, organizada en pestañas ---------------------------------------
@@ -577,6 +586,33 @@ with tab_supuestos:
         )
     else:
         st.caption("Sin precio de mercado ni consenso disponible para calcular expectativas implícitas.")
+
+    st.subheader("Sensibilidad del precio a cada supuesto")
+    st.caption(
+        "Efecto sobre el precio implícito de mover cada supuesto +1 punto porcentual, uno a la vez, "
+        "manteniendo el resto en el escenario conservador. Responde sistemáticamente a la pregunta "
+        "'¿qué palanca domina la valoración de esta empresa?', en vez de investigarlo caso a caso."
+    )
+    sens_fig = go.Figure()
+    sens_labels = [s.label for s in reversed(sensitivities)]
+    sens_values = [s.price_change_pct * 100 for s in reversed(sensitivities)]
+    sens_fig.add_bar(
+        y=sens_labels, x=sens_values, orientation="h", width=0.55,
+        marker_color=COLORS["series"], marker_line_width=0,
+        text=[f"{v:+.1f}%" for v in sens_values], textposition="outside",
+        textfont=dict(family=FONT_MONO, size=13, color=COLORS["ink"]),
+        hovertemplate="%{y}<br>%{x:+.2f}%% por +1pp<extra></extra>",
+    )
+    sens_max = max(abs(v) for v in sens_values) * 1.3 if sens_values else 1.0
+    sens_fig.update_layout(
+        height=260, margin=dict(l=10, r=10, t=10, b=40), showlegend=False,
+        plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"],
+        font=dict(family=FONT_SANS, color=COLORS["ink_soft"], size=13),
+        xaxis=dict(title="Cambio en el precio implícito (%)", range=[-sens_max, sens_max],
+                    gridcolor=COLORS["border"], zeroline=True, zerolinecolor=COLORS["border"], zerolinewidth=1.5),
+        yaxis=dict(gridcolor=COLORS["border"], automargin=True),
+    )
+    st.plotly_chart(sens_fig, width="stretch", config={"displayModeBar": False})
 
 with tab_fundamentales:
     st.subheader("Ratios financieros (último ejercicio disponible)")

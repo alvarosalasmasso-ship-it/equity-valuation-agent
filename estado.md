@@ -1177,11 +1177,69 @@ end-to-end con Playwright contra la app real corriendo (AMZN sigue
 funcionando exactamente igual). `docs/AUDIT.md` actualizado: I5 y N2
 añadidos/cerrados, contadores del resumen ejecutivo al día.
 
-## 13. Próximo paso inmediato
+## 13. Sesión 17 — Rigor matemático: ancla robusta a outliers y elasticidades del modelo
 
-1. Fase 9 (sentiment en earnings calls) — extensión opcional.
-2. Probar la capa generativa con una llamada real — aparcado por ahora
+El usuario pidió analizar cómo aumentar el rigor matemático del modelo
+y de la confianza en lo que reporta — explícitamente NO acercar el
+precio al mercado (ya descartado como objetivo en sesiones previas,
+sería sobreajuste). Se propusieron 5 palancas (A: ancla robusta a
+outliers, B: elasticidades/Greeks, C: Monte Carlo, D: backtesting, E:
+intervalo de confianza sobre la desviación agregada); el usuario eligió
+empezar por A+B.
+
+**A — detector de outliers en el ancla del fade.** Primer diseño
+(sustitución automática por la mediana cuando el último año es un
+outlier estadístico, z-score modificado de Iglewicz & Hoaglin) parecía
+correcto verificado solo con JNJ (z=21.3, sustituye 35.6%→19.1%), pero
+la contraprueba con el universo piloto completo (`validate_universe.py`)
+lo invalidó: disparaba en 7 de 8 tickers, incluido el CapEx de MSFT/META
+(34.9%/34.7%) — el supercycle de IA ya verificado como real en sesiones
+anteriores, no ruido. Con solo 2-3 años de referencia, un z-score no
+distingue "ítem no recurrente" de "inicio de una tendencia real".
+**Corregido a: aviso, nunca sustitución** — mismo patrón que
+`MIN_PRUDENT_WACC_GROWTH_SPREAD`. No cambia ningún precio (verificado:
+la desviación agregada vuelve exactamente a 41.82%/39.76%), solo añade
+transparencia sobre qué años de partida son estadísticamente atípicos.
+Documentado en detalle en `docs/METHODOLOGY.md` sección 21, incluido el
+diseño descartado — el proceso de por qué no funcionaba es la evidencia
+de rigor, no solo el resultado final.
+
+**B — `engine/sensitivity.py`, elasticidades del modelo.**
+`driver_sensitivities()` sistematiza el ejercicio que antes se hacía a
+mano (desglosar el DCF para concluir "en MSFT domina el CapEx"): bump de
++1pp a la vez sobre WACC, g terminal, margen EBIT, D&A%, CapEx% y
+crecimiento de ingresos, reprecio completo, ranking por impacto
+absoluto. Verificado con datos reales: reproduce automáticamente el
+mecanismo de AMZN (CapEx domina, -21.65%) y de PG/JNJ (WACC-g domina,
++42%) ya documentados, y añade un matiz nuevo no visto antes (en MSFT
+domina g terminal/WACC por delante del CapEx, pese al mismo supercycle
+— el valor terminal sigue pesando más con solo 5 años de horizonte).
+Conectado a la app (nueva sección "Sensibilidad del precio a cada
+supuesto" en la pestaña "Supuestos y expectativas", tornado chart
+Plotly) y al memo (`MemoInput.sensitivities`, regla de la "Tesis de
+Valoración" del prompt actualizada para nombrar el driver dominante).
+Documentado en `docs/METHODOLOGY.md` sección 22.
+
+**171 tests en total, todos en verde** (157 + 9 de test_sensitivity.py +
+2 de test_memo_generator.py + 1 de test_app.py, con 2 ajustados de
+test_projections.py). Verificado con AppTest que la nueva sección
+renderiza sin excepción.
+
+## 14. Próximo paso inmediato
+
+1. C — Monte Carlo: bandas de confianza probabilísticas (P10/P50/P90)
+   sobre el precio implícito, muestreando WACC/margen/CapEx desde su
+   propia varianza histórica. La palanca de mayor rigor que queda de las
+   5 propuestas en la sesión 17; construida sobre el motor actual sin
+   tocar supuestos por defecto.
+2. D — Backtesting walk-forward: valor muy alto si es viable, pero
+   pendiente de investigar si Alpha Vantage/yfinance free tier dan
+   fundamentales histórico punto-en-el-tiempo (riesgo de restatements).
+3. E — Intervalo de confianza (bootstrap) sobre la desviación agregada
+   del universo piloto (n=8) — complementa a C, bajo esfuerzo.
+4. Fase 9 (sentiment en earnings calls) — extensión opcional.
+5. Probar la capa generativa con una llamada real — aparcado por ahora
    a petición del usuario, no es una prioridad activa.
-3. Universo de comparables más amplio/mejor segmentado — se evaluó como
-   opción de "rigor técnico" pero no se priorizó frente a lo demás esta
-   sesión; sigue disponible como línea futura si se retoma.
+6. Universo de comparables más amplio/mejor segmentado — se evaluó como
+   opción de "rigor técnico" pero no se priorizó frente a lo demás;
+   sigue disponible como línea futura si se retoma.

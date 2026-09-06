@@ -20,6 +20,7 @@ from typing import Optional
 from engine.ratios import RatioSnapshot
 from engine.reverse_dcf import ImpliedExpectations
 from engine.scenarios import run_scenarios
+from engine.sensitivity import DriverSensitivity
 from engine.valuation import DCFResult
 
 PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
@@ -53,6 +54,7 @@ class MemoInput:
     warnings_raised: list[str] = field(default_factory=list)
     ratios: Optional[dict] = None
     implied_expectations: Optional[list[dict]] = None
+    sensitivities: Optional[list[dict]] = None
 
 
 CONSERVATIVE_SCENARIO_NAME = "Conservador (reversión a la media)"
@@ -76,7 +78,8 @@ def build_memo_input(ticker: str, wacc: float, terminal_growth_rate: float,
                       analyst_target_price: Optional[float] = None,
                       warnings_raised: Optional[list[str]] = None,
                       ratios: Optional[RatioSnapshot] = None,
-                      implied_expectations: Optional[list[ImpliedExpectations]] = None) -> MemoInput:
+                      implied_expectations: Optional[list[ImpliedExpectations]] = None,
+                      sensitivities: Optional[list[DriverSensitivity]] = None) -> MemoInput:
     """Ensambla el MemoInput. La desviación vs. mercado/consenso se mide
     sobre el escenario conservador (el valor por defecto del motor).
 
@@ -91,7 +94,13 @@ def build_memo_input(ticker: str, wacc: float, terminal_growth_rate: float,
     para justificar el precio de mercado/consenso, comparado contra lo
     que asume el propio escenario conservador. Es lo que le permite al
     memo explicar el mecanismo detrás de una desviación grande en vez de
-    solo reportar el porcentaje (ver la regla 6 del prompt de sistema)."""
+    solo reportar el porcentaje (ver la regla 6 del prompt de sistema).
+
+    sensitivities: resultado de engine.sensitivity.driver_sensitivities()
+    (sesión 17) -- cuánto se mueve el precio implícito por cada supuesto
+    (WACC, g terminal, margen, D&A, CapEx, crecimiento), de mayor a menor
+    impacto. Le da al memo la palanca que domina la valoración de esta
+    empresa en concreto, en vez de una lista genérica de supuestos."""
     base_result = scenario_results.get(CONSERVATIVE_SCENARIO_NAME)
     base_price = base_result.implied_share_price if base_result else None
 
@@ -137,6 +146,16 @@ def build_memo_input(ticker: str, wacc: float, terminal_growth_rate: float,
             for exp in implied_expectations
         ]
 
+    sensitivities_list = None
+    if sensitivities:
+        sensitivities_list = [
+            {
+                "supuesto": s.label,
+                "cambio_en_precio_por_1pp": s.price_change_pct,
+            }
+            for s in sensitivities
+        ]
+
     return MemoInput(
         ticker=ticker, company_name=company_name, wacc=wacc,
         terminal_growth_rate=terminal_growth_rate, scenarios=scenarios,
@@ -144,6 +163,7 @@ def build_memo_input(ticker: str, wacc: float, terminal_growth_rate: float,
         analyst_target_price=analyst_target_price, deviation_vs_market=dev_market,
         deviation_vs_consensus=dev_consensus, warnings_raised=warnings_raised or [],
         ratios=ratios_dict, implied_expectations=implied_expectations_list,
+        sensitivities=sensitivities_list,
     )
 
 
@@ -168,6 +188,7 @@ def build_prompt(memo_input: MemoInput) -> tuple[str, str]:
         "supuestos_clave_de_proyeccion": memo_input.key_assumptions,
         "ratios_financieros": memo_input.ratios,
         "expectativas_implicitas_del_mercado": memo_input.implied_expectations,
+        "sensibilidad_del_precio_por_supuesto": memo_input.sensitivities,
     }
     user_prompt = (
         "Redacta el Investment Memo para el siguiente paquete de datos. "

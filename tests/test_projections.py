@@ -172,7 +172,12 @@ def test_default_assumptions_fades_margin_from_recent_actual_to_historical_avera
     3 años usados: 0.05, 0.10, 0.20 -> media = 0.1166...).
     Año 1 debe ser el margen del ÚLTIMO año real (0.20), año N la media
     de la ventana (no el propio 0.20) -> el fade captura la tendencia
-    reciente en vez de diluirla en un promedio plano."""
+    reciente en vez de diluirla en un promedio plano.
+
+    z modificado de este caso (0.05, 0.10 de referencia, 0.20 candidato)
+    = 3.37, deliberadamente justo por DEBAJO del umbral de outlier (3.5,
+    ver test_default_assumptions_warns_but_keeps_real_anchor_when_last_year_is_a_statistical_outlier)
+    -- este caso no debe disparar ni siquiera el aviso."""
     revenue = [1000.0, 1000.0, 1000.0, 1000.0]
     history = pd.DataFrame({
         "fiscal_year": [2020, 2021, 2022, 2023],
@@ -189,6 +194,59 @@ def test_default_assumptions_fades_margin_from_recent_actual_to_historical_avera
     assert assumptions.ebit_margin.start == pytest.approx(0.20)  # último año real
     assert assumptions.ebit_margin.end == pytest.approx(expected_average)
     assert assumptions.ebit_margin.start > assumptions.ebit_margin.end  # capta la tendencia alcista
+
+
+def test_default_assumptions_warns_but_keeps_real_anchor_when_last_year_is_a_statistical_outlier():
+    """Reproduce el mecanismo real documentado en docs/METHODOLOGY.md
+    sección 9 (JNJ: margen EBIT 2025 = 35.6% frente a 18.6%/19.6% en
+    2023/2024, un ítem no recurrente por la escisión de Kenvue). Con
+    margen histórico 0.19, 0.21, 0.55 (últimos 3 años), el último año es
+    un outlier estadístico (z modificado >> 3.5) frente a los dos
+    previos -- se emite un aviso explícito, pero el año 1 del fade sigue
+    siendo el 0.55 real: probado con el universo piloto completo, un
+    z-score de muestra pequeña no distingue esto de una tendencia
+    estructural real (p.ej. el CapEx de MSFT/META), así que el motor
+    nunca sustituye el ancla en automático (ver docstring de
+    _margin_fade_from_recent_to_average)."""
+    revenue = [1000.0, 1000.0, 1000.0, 1000.0]
+    history = pd.DataFrame({
+        "fiscal_year": [2020, 2021, 2022, 2023],
+        "revenue": revenue,
+        "ebit": [200.0, 190.0, 210.0, 550.0],
+        "d_and_a": [50.0] * 4,
+        "capex": [80.0] * 4,
+        "change_in_nwc": [None, 20.0, 20.0, 20.0],
+        "tax_rate": [0.25] * 4,
+    })
+    with pytest.warns(UserWarning, match="outlier"):
+        assumptions = default_assumptions_from_history(history, lookback_years=3)
+
+    assert assumptions.ebit_margin.start == pytest.approx(0.55)  # último año real, sin sustituir
+    assert assumptions.ebit_margin.end == pytest.approx((0.19 + 0.21 + 0.55) / 3)
+
+
+def test_default_assumptions_does_not_flag_outlier_with_insufficient_reference_years():
+    """Con lookback_years=2 solo hay 1 año de referencia frente al
+    candidato -- no hay base estadística para juzgar un outlier (ver
+    docstring de _detect_anchor_outlier), así que el ancla debe seguir
+    siendo el último año real tal cual, sin aviso, aunque la diferencia
+    sea enorme."""
+    revenue = [1000.0, 1000.0, 1000.0]
+    history = pd.DataFrame({
+        "fiscal_year": [2021, 2022, 2023],
+        "revenue": revenue,
+        "ebit": [190.0, 210.0, 550.0],
+        "d_and_a": [50.0] * 3,
+        "capex": [80.0] * 3,
+        "change_in_nwc": [20.0, 20.0, 20.0],
+        "tax_rate": [0.25] * 3,
+    })
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assumptions = default_assumptions_from_history(history, lookback_years=2)
+
+    assert assumptions.ebit_margin.start == pytest.approx(0.55)  # último año real, tal cual
 
 
 def test_default_assumptions_requires_at_least_two_revenue_points():

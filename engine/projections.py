@@ -46,7 +46,9 @@ dentro del propio horizonte, algo que el analista del Excel no necesitó
 para Amazon pero que puede ser razonable para otra compañía).
 """
 
+import math
 import statistics
+import warnings
 from dataclasses import dataclass, replace
 from datetime import date
 from typing import Optional, Sequence
@@ -66,13 +68,20 @@ def cagr(first_value: float, last_value: float, n_periods: int) -> float:
     return (last_value / first_value) ** (1 / n_periods) - 1
 
 
-def average_margin(numerator: Sequence[float], denominator: Sequence[float]) -> float:
-    """Media de numerator[i]/denominator[i], ignorando pares con datos
-    faltantes (NaN/None)."""
-    ratios = [
+def _valid_ratio_series(numerator: Sequence[float], denominator: Sequence[float]) -> list[float]:
+    """numerator[i]/denominator[i] en orden cronológico, ignorando pares
+    con datos faltantes (NaN/None). Compartido por average_margin() y la
+    detección de outliers del ancla del fade."""
+    return [
         n / d for n, d in zip(numerator, denominator)
         if n is not None and d not in (None, 0) and not _is_nan(n) and not _is_nan(d)
     ]
+
+
+def average_margin(numerator: Sequence[float], denominator: Sequence[float]) -> float:
+    """Media de numerator[i]/denominator[i], ignorando pares con datos
+    faltantes (NaN/None)."""
+    ratios = _valid_ratio_series(numerator, denominator)
     if not ratios:
         raise ValueError("No hay pares válidos para calcular el margen medio")
     return statistics.mean(ratios)
@@ -80,6 +89,38 @@ def average_margin(numerator: Sequence[float], denominator: Sequence[float]) -> 
 
 def _is_nan(value) -> bool:
     return isinstance(value, float) and value != value
+
+
+# Iglewicz, B. y Hoaglin, D. (1993), "How to Detect and Handle Outliers" --
+# regla estándar del z-score modificado (mediana + MAD, robusto en muestras
+# pequeñas a diferencia de media/desviación típica clásicas). |z| > 3.5 se
+# considera outlier. Verificado contra el caso real documentado en
+# docs/METHODOLOGY.md sección 9 (JNJ, margen EBIT 2025 = 35.6% frente a
+# 18.6%/19.6% en 2023/2024, un ítem no recurrente por la escisión de
+# Kenvue): da z=21.3, muy por encima del umbral.
+OUTLIER_MODIFIED_Z_THRESHOLD = 3.5
+
+
+def _detect_anchor_outlier(chronological_ratios: Sequence[float]) -> tuple[bool, float]:
+    """Compara el último valor de la serie (candidato a ancla `start` del
+    fade) contra la mediana/MAD de los años PREVIOS -- nunca contra una
+    distribución que lo incluya a él mismo. Devuelve (es_outlier, z
+    modificado). Con menos de 2 años de referencia no hay base estadística
+    para juzgar, así que nunca se marca outlier."""
+    if len(chronological_ratios) < 3:
+        return False, 0.0
+    candidate = chronological_ratios[-1]
+    reference = chronological_ratios[:-1]
+    median_ref = statistics.median(reference)
+    mad = statistics.median([abs(v - median_ref) for v in reference])
+    if mad == 0:
+        # Referencia sin variación (histórico plano): solo es outlier si la
+        # diferencia es real, no ruido de coma flotante de un mismo margen
+        # calculado a partir de revenues distintos (p.ej. r*0.05 / r).
+        differs = not math.isclose(candidate, median_ref, rel_tol=1e-9, abs_tol=1e-12)
+        return differs, float("inf") if differs else 0.0
+    modified_z = 0.6745 * (candidate - median_ref) / mad
+    return abs(modified_z) > OUTLIER_MODIFIED_Z_THRESHOLD, modified_z
 
 
 def linear_fade(start: float, end: float, n_years: int) -> list[float]:
@@ -153,12 +194,43 @@ def project_financials(last_actual_revenue: float,
     )
 
 
-def _margin_fade_from_recent_to_average(window: pd.DataFrame, column: str) -> FadeAssumption:
+def _margin_fade_from_recent_to_average(window: pd.DataFrame, column: str,
+                                         driver_label: Optional[str] = None) -> FadeAssumption:
     """Año 1 = margen real del último año de la ventana; año N = media
     de la ventana completa. Si ambos coinciden (histórico plano), el
-    fade colapsa a un valor constante."""
-    most_recent = window.iloc[-1]
-    recent_value = most_recent[column] / most_recent["revenue"]
+    fade colapsa a un valor constante.
+
+    Aviso de outlier (sesión 17, ver docs/METHODOLOGY.md sección 9 y el
+    hallazgo de JNJ): si el último año es un outlier estadístico frente a
+    los años previos (`_detect_anchor_outlier`), SE AVISA pero NO se
+    sustituye el ancla -- se probó primero la sustitución automática
+    (mediana de años previos) y, con datos reales del universo piloto
+    completo, resultó ser la decisión equivocada: dispara en 7 de 8
+    tickers, incluido el CapEx de MSFT/META (34.9%/34.7% de ventas), que
+    es precisamente el supercycle de inversión en IA ya verificado como
+    real en la sección 7 -- no ruido. Con solo 2-3 años de referencia, un
+    z-score no puede distinguir "ítem no recurrente" (JNJ, Kenvue) de
+    "inicio de una tendencia estructural real" (CapEx de IA): esa
+    distinción requiere criterio cualitativo, no estadística de muestra
+    pequeña. Por eso el motor mantiene siempre el valor real como año 1
+    (fiel al principio "el último año real es el mejor estimador del
+    estado actual") y solo señala la anomalía para que el usuario la
+    revise -- mismo patrón que MIN_PRUDENT_WACC_GROWTH_SPREAD en
+    engine.valuation: nunca un ajuste silencioso."""
+    ratios = _valid_ratio_series(window[column].tolist(), window["revenue"].tolist())
+    recent_value = ratios[-1]
+    is_outlier, modified_z = _detect_anchor_outlier(ratios)
+    if is_outlier:
+        reference_median = statistics.median(ratios[:-1])
+        warnings.warn(
+            f"{driver_label or column}: el último año ({recent_value:.1%}) es un outlier "
+            f"estadístico frente a los {len(ratios) - 1} años previos (mediana {reference_median:.1%}, "
+            f"z modificado={modified_z:.1f}, umbral {OUTLIER_MODIFIED_Z_THRESHOLD} -- Iglewicz & "
+            "Hoaglin). Se mantiene como año 1 del fade (el motor no puede distinguir si es un ítem "
+            "no recurrente o el inicio de una tendencia real) -- revisa manualmente si conviene "
+            "ajustar el escenario.",
+            stacklevel=3,
+        )
     average_value = average_margin(window[column].tolist(), window["revenue"].tolist())
     return FadeAssumption(start=float(recent_value), end=float(average_value))
 
@@ -197,12 +269,12 @@ def default_assumptions_from_history(history: pd.DataFrame, n_years: int = 5,
     if margin_window.empty or pd.isna(margin_window.iloc[-1].get("revenue")):
         raise ValueError("No hay datos suficientes en la ventana de márgenes")
 
-    ebit_margin = _margin_fade_from_recent_to_average(margin_window, "ebit")
-    da_pct = _margin_fade_from_recent_to_average(margin_window, "d_and_a")
-    capex_pct = _margin_fade_from_recent_to_average(margin_window, "capex")
+    ebit_margin = _margin_fade_from_recent_to_average(margin_window, "ebit", "margen EBIT")
+    da_pct = _margin_fade_from_recent_to_average(margin_window, "d_and_a", "D&A % ventas")
+    capex_pct = _margin_fade_from_recent_to_average(margin_window, "capex", "CapEx % ventas")
 
     nwc_window = margin_window.dropna(subset=["change_in_nwc", "revenue"])
-    nwc_fade = (_margin_fade_from_recent_to_average(nwc_window, "change_in_nwc")
+    nwc_fade = (_margin_fade_from_recent_to_average(nwc_window, "change_in_nwc", "ΔNWC % ventas")
                 if len(nwc_window) > 0 else FadeAssumption(0.0, 0.0))
 
     tax_rate = margin_window["tax_rate"].dropna().mean()

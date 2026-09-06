@@ -162,7 +162,21 @@
           ]
         }
       ],
-      "warnings": {},
+      "warnings": {
+        "AMZN": [
+          "D&A % ventas: el último año (9.2%) es un outlier estadístico frente a los 2 años previos (mediana 8.4%, z modificado=5.7, umbral 3.5 -- Iglewicz & Hoaglin). Se mantiene como año 1 del fade (el motor no puede distinguir si es un ítem no recurrente o el inicio de una tendencia real) -- revisa manualmente si conviene ajustar el escenario."
+        ],
+        "MSFT": [
+          "margen EBIT: el último año (50.9%) es un outlier estadístico frente a los 2 años previos (mediana 44.9%, z modificado=18.3, umbral 3.5 -- Iglewicz & Hoaglin). Se mantiene como año 1 del fade (el motor no puede distinguir si es un ítem no recurrente o el inicio de una tendencia real) -- revisa manualmente si conviene ajustar el escenario.",
+          "CapEx % ventas: el último año (34.9%) es un outlier estadístico frente a los 2 años previos (mediana 20.5%, z modificado=4.1, umbral 3.5 -- Iglewicz & Hoaglin). Se mantiene como año 1 del fade (el motor no puede distinguir si es un ítem no recurrente o el inicio de una tendencia real) -- revisa manualmente si conviene ajustar el escenario."
+        ],
+        "GOOGL": [
+          "ΔNWC % ventas: el último año (4.6%) es un outlier estadístico frente a los 2 años previos (mediana -3.3%, z modificado=6.5, umbral 3.5 -- Iglewicz & Hoaglin). Se mantiene como año 1 del fade (el motor no puede distinguir si es un ítem no recurrente o el inicio de una tendencia real) -- revisa manualmente si conviene ajustar el escenario."
+        ],
+        "META": [
+          "CapEx % ventas: el último año (34.7%) es un outlier estadístico frente a los 2 años previos (mediana 21.4%, z modificado=7.3, umbral 3.5 -- Iglewicz & Hoaglin). Se mantiene como año 1 del fade (el motor no puede distinguir si es un ítem no recurrente o el inicio de una tendencia real) -- revisa manualmente si conviene ajustar el escenario."
+        ]
+      },
       "summary": {
         "n": 5,
         "mean_abs_deviation_vs_market": 0.4694164278846502,
@@ -264,7 +278,17 @@
           ]
         }
       ],
-      "warnings": {},
+      "warnings": {
+        "KO": [
+          "margen EBIT: el último año (36.8%) es un outlier estadístico frente a los 2 años previos (mediana 31.5%, z modificado=22.5, umbral 3.5 -- Iglewicz & Hoaglin). Se mantiene como año 1 del fade (el motor no puede distinguir si es un ítem no recurrente o el inicio de una tendencia real) -- revisa manualmente si conviene ajustar el escenario."
+        ],
+        "PG": [
+          "D&A % ventas: el último año (3.6%) es un outlier estadístico frente a los 2 años previos (mediana 3.4%, z modificado=4.3, umbral 3.5 -- Iglewicz & Hoaglin). Se mantiene como año 1 del fade (el motor no puede distinguir si es un ítem no recurrente o el inicio de una tendencia real) -- revisa manualmente si conviene ajustar el escenario."
+        ],
+        "JNJ": [
+          "margen EBIT: el último año (35.6%) es un outlier estadístico frente a los 2 años previos (mediana 19.1%, z modificado=21.3, umbral 3.5 -- Iglewicz & Hoaglin). Se mantiene como año 1 del fade (el motor no puede distinguir si es un ítem no recurrente o el inicio de una tendencia real) -- revisa manualmente si conviene ajustar el escenario."
+        ]
+      },
       "summary": {
         "n": 3,
         "mean_abs_deviation_vs_market": 0.3327200356879375,

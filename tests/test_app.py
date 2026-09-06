@@ -180,6 +180,18 @@ def test_default_state_shows_key_metrics():
     assert price_metric.value == "$100.00"  # AMZN en _REVENUE_BY_SYMBOL
 
 
+def test_sensitivity_section_renders_with_three_plotly_charts():
+    """Regresión (sesión 17, ítem B del lote de rigor matemático):
+    engine.sensitivity.driver_sensitivities() se conecta a la pestaña
+    'Supuestos y expectativas' como un tercer gráfico Plotly (escenarios
+    + heatmap WACC×g ya existentes + este nuevo tornado chart)."""
+    at = _run_app()
+    assert not at.exception
+    headers = [h.value for h in at.subheader]
+    assert "Sensibilidad del precio a cada supuesto" in headers
+    assert len(at.get("plotly_chart")) == 3
+
+
 def test_roic_delta_color_reflects_creates_value():
     """Regresión: el delta 'Crea valor'/'No crea valor' del ROIC vs. WACC
     debe pintarse en verde cuando SÍ crea valor (fix de esta sesión --
