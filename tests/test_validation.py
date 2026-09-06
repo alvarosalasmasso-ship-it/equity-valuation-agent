@@ -7,6 +7,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
+from engine.reverse_dcf import ImpliedExpectations
 from engine.validation import build_peer_set, summarize_deviation, validate_universe, value_ticker
 
 
@@ -104,6 +105,27 @@ def test_value_ticker_handles_missing_market_price_or_consensus():
     check = value_ticker("AAA", UNIVERSE_HIST, snap, risk_free_rate=0.04, market_risk_premium=0.05)
     assert check.deviation_vs_market is None
     assert check.deviation_vs_consensus is None
+
+
+def test_value_ticker_includes_reverse_dcf_implied_expectations():
+    """engine/reverse_dcf.py (sesión 16): value_ticker() debe adjuntar
+    las expectativas implícitas de mercado/consenso, reutilizando los
+    mismos base_inputs/assumptions que ya calcula para el DCF -- sin
+    reconstruirlos por separado."""
+    check = value_ticker("AAA", UNIVERSE_HIST, UNIVERSE_SNAP,
+                          risk_free_rate=0.04, market_risk_premium=0.05)
+    assert len(check.implied_expectations) == 2
+    labels = {e.target_label for e in check.implied_expectations}
+    assert labels == {"Mercado", "Consenso analistas"}
+    for exp in check.implied_expectations:
+        assert isinstance(exp, ImpliedExpectations)
+        assert exp.assumed_revenue_growth == pytest.approx(0.10, abs=1e-6)  # _flat_history: 10%/año
+
+
+def test_value_ticker_skips_implied_expectations_for_missing_prices():
+    snap = {**UNIVERSE_SNAP, "AAA": {**UNIVERSE_SNAP["AAA"], "price": None, "analyst_target_price": None}}
+    check = value_ticker("AAA", UNIVERSE_HIST, snap, risk_free_rate=0.04, market_risk_premium=0.05)
+    assert check.implied_expectations == []
 
 
 def test_validate_universe_returns_one_row_per_ticker():

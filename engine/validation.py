@@ -21,6 +21,7 @@ import pandas as pd
 
 from engine.comps import build_comps_table, peer_average_multiple
 from engine.projections import default_assumptions_from_history, project_financials, stub_fraction_from_history
+from engine.reverse_dcf import ImpliedExpectations, compute_implied_expectations
 from engine.valuation import DCFInputs, run_dcf
 from engine.wacc_builder import PeerInput, build_wacc
 
@@ -52,6 +53,7 @@ class ValuationCheck:
     deviation_vs_market: Optional[float]
     deviation_vs_consensus: Optional[float]
     peer_ev_ebitda_multiple: float
+    implied_expectations: list[ImpliedExpectations]
 
 
 def value_ticker(target: str, universe_hist: dict[str, pd.DataFrame],
@@ -122,11 +124,26 @@ def value_ticker(target: str, universe_hist: dict[str, pd.DataFrame],
     dev_market = (result.implied_share_price / market_price - 1) if market_price else None
     dev_consensus = (result.implied_share_price / consensus - 1) if consensus else None
 
+    # Reverse DCF (ver engine/reverse_dcf.py, docs/METHODOLOGY.md sección
+    # 20): qué crecimiento de ingresos / tasa de crecimiento terminal
+    # justificarían el precio de mercado o el consenso, dado el resto de
+    # supuestos ya fijados arriba. `inputs` ya tiene todo lo que necesita
+    # como `base_inputs`; no se reconstruye nada.
+    reverse_dcf_kwargs = dict(
+        wacc=wacc_result.wacc, terminal_growth_rate=terminal_growth_rate, stub_fraction=stub_fraction,
+        cash=snap["cash"], total_debt=snap["total_debt"], diluted_shares=snap["shares_outstanding"],
+        terminal_ev_ebitda_multiple=peer_ev_ebitda, gordon_weight=gordon_weight,
+    )
+    implied_expectations = compute_implied_expectations(
+        hist["revenue"].iloc[-1], assumptions, inputs, reverse_dcf_kwargs,
+        targets=[("Mercado", market_price), ("Consenso analistas", consensus)],
+    )
+
     return ValuationCheck(
         ticker=target, wacc=wacc_result.wacc, implied_price=result.implied_share_price,
         market_price=market_price, analyst_target_price=consensus,
         deviation_vs_market=dev_market, deviation_vs_consensus=dev_consensus,
-        peer_ev_ebitda_multiple=peer_ev_ebitda,
+        peer_ev_ebitda_multiple=peer_ev_ebitda, implied_expectations=implied_expectations,
     )
 
 
