@@ -903,24 +903,7 @@ puntuales). Resumen de lo más importante:
   5) decidir M2 (`gordon_weight=0.8`) como decisión de producto, no
   dejarlo pendiente indefinidamente; 6) Fase 9, solo después.
 
-## 6. Próximo paso inmediato
-
-En orden de impacto (ver `docs/PROGRESS_REVIEW.md` sección 5 para el
-razonamiento completo):
-
-1. **Desplegar (Fase 8):** repo en GitHub + Streamlit Community Cloud.
-2. **Probar la capa generativa con una llamada real** a la API de
-   Anthropic antes de desplegar.
-3. **Hacer explícita en la UI** la limitación de precisión vs. mercado
-   (texto fijo, no generado por IA).
-4. **Crear `scripts/validate_universe.py`** reproducible, con historial
-   fechado de la desviación media.
-5. Hallazgos técnicos moderados que siguen abiertos, sin urgencia:
-   M2 (`gordon_weight=0.8` sin justificación propia), M5 (sin
-   verificación de divisa de reporte), I2 (Treasury Stock Method
-   construido pero no usado — estructural), I4 (universo de
-   comparables pequeño — estructural).
-6. Fase 9 (sentiment en earnings calls) — extensión opcional, al final.
+## 6. Principios de fondo (sesión 16)
 
 **Principio de fondo que sigue aplicando:** cualquier UI debe mostrar el
 número junto a su explicación, nunca el número solo. No revertir un
@@ -933,3 +916,62 @@ cerrado — no basta con que los tests sintéticos pasen. Y ahora también:
 solo el impacto de cada uno por separado** — la sesión 16 mostró que la
 suma de mejoras individuales puede no sumar limpiamente en el número
 agregado (mejora en un grupo, empeora en otro).
+
+## 7. Sesión 16 (continuación) — Reverse DCF: expectativas implícitas del mercado
+
+El usuario planteó la pregunta que debía enmarcar todo lo anterior:
+**¿para qué se usa un DCF de verdad, y qué información aporta?** Un DCF
+hacia delante no predice el precio de mercado — la pregunta
+complementaria, estándar en equity research, es "¿qué tendría que ser
+cierto para justificar el precio que YA cotiza el mercado?". Eso no
+existía en la herramienta: solo se mostraba el % de desviación, nunca
+el mecanismo. Desarrollado con el mismo rigor que el resto del motor
+(replica exactamente `run_dcf()`, no una segunda metodología):
+
+- **`engine/valuation.py`:** `solve_for_target_price()` (bisección pura,
+  sin scipy) + `implied_terminal_growth_rate()` (resuelve la tasa de
+  crecimiento perpetuo que justifica un precio objetivo).
+- **`engine/projections.py`:** `implied_revenue_growth()` (resuelve el
+  crecimiento de ingresos plano del horizonte explícito que justifica un
+  precio objetivo, misma forma que `default_assumptions_from_history()`).
+- **`engine/reverse_dcf.py`** (nuevo módulo de orquestación, mismo patrón
+  que `wacc_builder.py`): `compute_implied_expectations()` combina ambas
+  piezas en un bundle único, con manejo explícito de "fuera de rango"
+  (nunca un fallo silencioso ni un valor inventado).
+- **App:** nueva sección "Expectativas implícitas del mercado (reverse
+  DCF)" entre supuestos y ratios.
+- **Memo:** `MemoInput.implied_expectations` nuevo, prompt de sistema
+  actualizado con una sección dedicada — la desviación se explica con
+  esto en vez de con una causa inventada.
+
+**Validado con datos reales (AMZN, hoy):** el mercado paga un
+crecimiento de ingresos implícito del **31.8%** frente al 11.7% asumido
+(consenso: 38.3%) — un gap de +20.1pp / +26.6pp. Alternativamente, vía
+solo crecimiento terminal perpetuo: 7.25%/7.72%, marcado ⚠️ por caer en
+zona de inestabilidad de Gordon Growth — evidencia de que la brecha se
+explica por crecimiento del horizonte explícito, no por una perpetuidad
+optimista. **Validado también en un caso límite real** (NVDA, modo
+"cualquier ticker"): con un CAGR ya asumido de ~100%, ambos solvers
+devuelven correctamente "fuera de rango" en vez de fallar o forzar un
+resultado. Verificado end-to-end con Playwright contra la app real
+corriendo (no solo con tests): capturas de pantalla confirman que la
+tabla renderiza los números exactos del motor, sin errores de consola
+ni tracebacks, en ambos modos de datos.
+
+14 tests de regresión nuevos. **142 tests en total, todos en verde.**
+Detalle técnico completo en `docs/METHODOLOGY.md` sección 20;
+`docs/PROGRESS_REVIEW.md` actualizado (sección 6, roadmap ítem 1 ya
+hecho).
+
+## 8. Próximo paso inmediato
+
+1. **Desplegar (Fase 8):** repo en GitHub + Streamlit Community Cloud —
+   máxima prioridad pendiente.
+2. **Probar la capa generativa con una llamada real** (ahora con la
+   sección de expectativas implícitas incluida en el memo).
+3. **Crear `scripts/validate_universe.py`** reproducible, con historial
+   fechado de la desviación media y las expectativas implícitas.
+4. Hallazgos técnicos moderados que siguen abiertos, sin urgencia: M2
+   (`gordon_weight=0.8` sin justificación propia), M5 (sin verificación
+   de divisa de reporte), I2/I4 (estructurales).
+5. Fase 9 (sentiment en earnings calls) — extensión opcional, al final.

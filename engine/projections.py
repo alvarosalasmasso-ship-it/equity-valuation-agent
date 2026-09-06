@@ -47,13 +47,13 @@ para Amazon pero que puede ser razonable para otra compañía).
 """
 
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Optional, Sequence
 
 import pandas as pd
 
-from engine.valuation import compute_stub_fraction
+from engine.valuation import DCFInputs, compute_stub_fraction, run_dcf, solve_for_target_price
 
 
 def cagr(first_value: float, last_value: float, n_periods: int) -> float:
@@ -248,4 +248,71 @@ def stub_fraction_from_history(history: pd.DataFrame, valuation_date: Optional[d
         fiscal_year_end_month=int(last_row["fiscal_year_end_month"]),
         fiscal_year_end_day=int(last_row["fiscal_year_end_day"]),
         valuation_date=valuation_date or date.today(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Reverse DCF: crecimiento de ingresos implícito en el precio de mercado
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ImpliedGrowthResult:
+    """implied_growth: la tasa de crecimiento plana (misma forma que
+    default_assumptions_from_history(), ver docstring del módulo y
+    METHODOLOGY.md sección 14) que reproduce target_price.
+    assumed_growth: la que de verdad usa el escenario base, para poder
+    comparar las dos directamente -- esa comparación es el output que le
+    importa a un analista, no el número aislado."""
+    implied_growth: float
+    assumed_growth: float
+
+    @property
+    def gap(self) -> float:
+        """implied - assumed. Positivo: el mercado exige más crecimiento
+        del que asume el motor. Negativo: exige menos (el motor es más
+        optimista que el precio de mercado)."""
+        return self.implied_growth - self.assumed_growth
+
+
+def implied_revenue_growth(last_actual_revenue: float, base_assumptions: ProjectionAssumptions,
+                            dcf_kwargs: dict, target_price: float,
+                            lower_bound: float = -0.30, upper_bound: float = 0.60) -> ImpliedGrowthResult:
+    """Reverse DCF: dado un precio objetivo (típicamente el de mercado o
+    el consenso de analistas), resuelve qué tasa de crecimiento de
+    ingresos PLANA durante todo el horizonte explícito -- la misma forma
+    que ya usa `default_assumptions_from_history()` -- reproduce ese
+    precio con `engine.valuation.run_dcf()`, manteniendo fijo todo lo
+    demás: márgenes, CapEx/D&A/ΔNWC (% de ventas), tipo impositivo, WACC,
+    tasa de crecimiento terminal y múltiplo de salida.
+
+    Es deliberadamente el mismo tipo de supuesto (crecimiento plano) que
+    el motor ya usa por defecto, no un artificio ad hoc para "resolver
+    hacia atrás" -- así el resultado se puede comparar directamente contra
+    `base_assumptions.revenue_growth.start` en las mismas unidades.
+
+    dcf_kwargs: el resto de argumentos de `DCFInputs` aparte de las series
+    de proyección (wacc, terminal_growth_rate, stub_fraction, cash,
+    total_debt, diluted_shares, terminal_ev_ebitda_multiple, gordon_weight).
+
+    lower_bound/upper_bound: rango de búsqueda de la tasa de crecimiento
+    (-30% a +60% por defecto). Si `target_price` queda fuera de ese rango
+    -- p.ej. ni con un 60% de crecimiento anual se alcanza el precio de
+    mercado -- `solve_for_target_price()` falla explícitamente con el
+    precio real alcanzable en cada extremo, que es en sí mismo un dato
+    informativo (cuantifica cuán grande es la brecha), no un error a
+    esconder.
+    """
+    def price_at_growth(g: float) -> float:
+        trial_assumptions = replace(base_assumptions, revenue_growth=FadeAssumption(g, g))
+        projection = project_financials(last_actual_revenue, trial_assumptions)
+        inputs = DCFInputs(
+            ebit=projection.ebit, tax_rate=projection.tax_rate, d_and_a=projection.d_and_a,
+            capex=projection.capex, change_in_nwc=projection.change_in_nwc, **dcf_kwargs,
+        )
+        return run_dcf(inputs).implied_share_price
+
+    implied = solve_for_target_price(price_at_growth, target_price, lower_bound, upper_bound)
+    return ImpliedGrowthResult(
+        implied_growth=implied,
+        assumed_growth=base_assumptions.revenue_growth.start,
     )

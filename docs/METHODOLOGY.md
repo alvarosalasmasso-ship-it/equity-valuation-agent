@@ -1110,3 +1110,135 @@ reciente, error si el histórico viene vacío). 118 tests en total, todos
 en verde. Servidor Streamlit reiniciado y verificado arrancando limpio
 tras el cambio (puerto 8514, `/_stcore/health` responde `ok`, sin
 tracebacks en el log del servidor).
+
+## 20. Reverse DCF: expectativas implícitas del mercado (sesión 16)
+
+### La pregunta que faltaba responder
+
+Toda la sesión 15 (auditoría técnica) y la revisión de progreso de la
+sesión 16 (`docs/PROGRESS_REVIEW.md`) trataron la desviación del ~42%
+frente al precio de mercado como una limitación a medir y comunicar. El
+usuario planteó la pregunta correcta antes de seguir desarrollando:
+**¿para qué se usa un DCF de verdad, y qué información aporta?** Un DCF
+hacia delante no está diseñado para predecir el precio de mercado —
+responde "¿qué precio justifican mis supuestos?". La pregunta
+complementaria, igual de estándar en equity research profesional
+(análisis de expectativas implícitas / reverse DCF), es "¿qué tendría
+que ser cierto para justificar el precio que YA cotiza el mercado (o el
+consenso)?". Esa pregunta nunca se había implementado — solo se mostraba
+el TAMAÑO de la brecha (%), nunca el MECANISMO (qué crecimiento habría
+que creer).
+
+### Diseño: mismo motor, resuelto al revés — no una segunda metodología
+
+Un reverse DCF no es una forma alternativa de calcular valor: es
+`run_dcf()` (ya validado exacto contra el Excel) resuelto para una
+incógnita dado un precio objetivo, en vez de resuelto para el precio
+dado las hipótesis. Esto se implementó con **bisección pura, sin
+dependencias externas** (`engine.valuation.solve_for_target_price()`),
+consistente con el principio de "Python puro" del blueprint — válido
+porque las funciones involucradas (proyección con fade, Gordon Growth)
+son continuas y monótonas crecientes en el rango relevante, así que no
+hace falta un método de raíces más sofisticado (Newton, scipy.optimize,
+etc.). El solver:
+
+- Verifica la monotonía contra los dos extremos del rango antes de
+  buscar (no la asume a ciegas) y falla explícitamente si no se cumple.
+- Falla explícitamente, con el precio real alcanzable en cada extremo,
+  si `target_price` queda fuera del rango de búsqueda — ese fallo es en
+  sí mismo informativo (cuantifica cuán grande es la brecha), no un
+  error a esconder.
+- Tolerancia de precio: $0.01 (al céntimo, mismo estándar que el resto
+  del motor).
+
+Dos incógnitas distintas, cada una responde una pregunta distinta:
+
+1. **`implied_revenue_growth()`** (`engine/projections.py`): con
+   márgenes/CapEx/D&A/ΔNWC/WACC/g terminal/múltiplo de salida fijos en
+   los del escenario conservador, resuelve qué tasa de crecimiento de
+   ingresos PLANA durante el horizonte explícito — la misma forma que ya
+   usa `default_assumptions_from_history()` (sección 14) — reproduce el
+   precio objetivo. Es la lectura más intuitiva para un memo: "el
+   mercado necesita X% de crecimiento anual, nosotros asumimos Y%".
+2. **`implied_terminal_growth_rate()`** (`engine/valuation.py`): con
+   todo lo demás fijo, resuelve qué tasa de crecimiento PERPETUO (la
+   misma `g` de Gordon Growth) reproduce el precio objetivo. Lectura
+   complementaria: si el `g` resuelto es economicamente implausible para
+   una perpetuidad (p. ej. por encima del crecimiento nominal del PIB a
+   largo plazo), es una señal de que la brecha no se explica solo con
+   más crecimiento perpetuo — hace falta crecimiento real en el
+   horizonte explícito. Requiere `gordon_weight>0` cuando hay múltiplo
+   de salida (si `gordon_weight<=0`, g no tiene ningún efecto sobre el
+   precio — ver M4 — y se falla explícitamente en vez de devolver un
+   valor sin sentido). Si el `g` resuelto cae en la zona de spread
+   WACC-g estrecho (`MIN_PRUDENT_WACC_GROWTH_SPREAD`), se re-evalúa sin
+   suprimir avisos al final de la búsqueda para que el mismo warning de
+   siempre llegue al llamador — no se inventa un aviso nuevo ni distinto.
+
+`engine/reverse_dcf.py` orquesta ambas piezas en un único bundle
+(`compute_implied_expectations()`), igual que `engine/wacc_builder.py`
+orquesta las piezas de `valuation.py` para el WACC — mismo patrón
+arquitectónico ya establecido en el proyecto, sin una segunda fuente de
+verdad. Cuando un target queda fuera de rango para un solver concreto,
+ese campo queda en `None` sin descartar el resto del resultado.
+
+### Verificado con datos reales — AMZN, hoy
+
+| Precio objetivo | Crecimiento de ingresos implícito | Asumido (conservador) | Gap | g terminal implícita | Asumida |
+|---|---|---|---|---|---|
+| Mercado ($258.51) | **31.8%** | 11.7% | **+20.1 pp** | 7.25% ⚠️ | 2.50% |
+| Consenso ($328.17) | **38.3%** | 11.7% | **+26.6 pp** | 7.72% ⚠️ | 2.50% |
+
+**Lectura conjunta, no cada cifra por separado:** el mercado paga hoy
+por AMZN un crecimiento de ingresos casi el triple del asumido en el
+escenario conservador (31.8% vs. 11.7%). Alternativamente, si se
+insistiera en explicar todo el precio solo vía una tasa de crecimiento
+perpetuo más alta (sin subir el crecimiento del horizonte explícito),
+haría falta un 7.25% de crecimiento *perpetuo* — muy por encima de
+cualquier tasa de crecimiento macro de largo plazo razonable, y
+correctamente marcado ⚠️ como zona de inestabilidad numérica de Gordon
+Growth. **La combinación de ambas lecturas es la evidencia real de que
+la brecha se explica sobre todo por expectativas de crecimiento en el
+horizonte explícito (probablemente ligadas al supercycle de CapEx en
+IA, ver sección 7), no por una perpetuidad optimista.** Esto es
+exactamente la clase de conclusión que un DCF debe producir — no
+"el modelo se equivoca 42%", sino "así de grande es la apuesta de
+crecimiento implícita en el precio actual, y así se compara con la
+nuestra".
+
+**Validado con un caso límite real, no solo con el caso típico:** en
+modo "cualquier ticker" (yfinance) con NVDA, el CAGR reciente ya asumido
+por el escenario conservador (~100%, crecimiento real de la compañía)
+es tan alto que ni el propio precio de mercado actual lo justifica del
+todo con los supuestos de margen/CapEx vigentes — ambos solvers
+devuelven correctamente "fuera de rango" (gap negativo) en vez de
+forzar un resultado o fallar de forma opaca. Confirma que el manejo de
+límites funciona en ambas direcciones (mercado exige más Y mercado
+exige menos de lo asumido), no solo en el caso Big Tech ya conocido.
+
+### Dónde vive en la app y en el memo
+
+Nueva sección "Expectativas implícitas del mercado (reverse DCF)" en
+`app/streamlit_app.py`, entre los supuestos de proyección y los ratios
+financieros — tabla con crecimiento implícito, gap vs. asumido y g
+terminal implícita para mercado y consenso, cada celda con manejo
+explícito de "fuera de rango" quando corresponda. `ai/memo_generator.py`:
+`MemoInput.implied_expectations` (nuevo campo opcional) se serializa al
+payload del LLM como `expectativas_implicitas_del_mercado`; el prompt de
+sistema (`ai/prompts/investment_memo_system.md`) ahora tiene una sección
+dedicada del memo para esto, y la regla 6 (antes "explica el mecanismo
+si está en el paquete") ahora señala este campo como LA explicación del
+mecanismo cuando está presente, en vez de una entre varias posibles.
+
+14 tests de regresión nuevos (`test_valuation.py`: solver genérico +
+`implied_terminal_growth_rate`, incluyendo ida y vuelta sobre el caso
+AMZN real de `TARGET_IMPLIED_PRICE`; `test_projections.py`:
+`implied_revenue_growth`, ida y vuelta sobre un histórico sintético;
+`test_reverse_dcf.py`: orquestación conjunta; `test_memo_generator.py`:
+serialización en el payload del LLM, incluyendo el caso con campos
+`None`). 142 tests en total, todos en verde. Verificado end-to-end en
+la app real (Playwright, sin servidor de por medio): captura de
+pantalla confirma que la tabla renderiza con los números exactos
+calculados por el motor, en modo universo cacheado (AMZN) y en modo
+cualquier ticker (NVDA, caso límite de fuera de rango). Servidor
+Streamlit reiniciado y verificado arrancando limpio.

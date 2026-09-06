@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from engine.ratios import RatioSnapshot
+from engine.reverse_dcf import ImpliedExpectations
 from engine.scenarios import run_scenarios
 from engine.valuation import DCFResult
 
@@ -51,6 +52,7 @@ class MemoInput:
     deviation_vs_consensus: Optional[float] = None
     warnings_raised: list[str] = field(default_factory=list)
     ratios: Optional[dict] = None
+    implied_expectations: Optional[list[dict]] = None
 
 
 CONSERVATIVE_SCENARIO_NAME = "Conservador (reversión a la media)"
@@ -73,14 +75,23 @@ def build_memo_input(ticker: str, wacc: float, terminal_growth_rate: float,
                       company_name: Optional[str] = None, market_price: Optional[float] = None,
                       analyst_target_price: Optional[float] = None,
                       warnings_raised: Optional[list[str]] = None,
-                      ratios: Optional[RatioSnapshot] = None) -> MemoInput:
+                      ratios: Optional[RatioSnapshot] = None,
+                      implied_expectations: Optional[list[ImpliedExpectations]] = None) -> MemoInput:
     """Ensambla el MemoInput. La desviación vs. mercado/consenso se mide
     sobre el escenario conservador (el valor por defecto del motor).
 
     ratios: snapshot de engine.ratios.latest_ratio_snapshot() (ROE,
     ROIC vs. WACC, Debt/EBITDA, cobertura de intereses, current ratio) —
     opcional, da al memo contexto de rentabilidad/apalancamiento además
-    del precio objetivo. Si se omite, el prompt no lo menciona."""
+    del precio objetivo. Si se omite, el prompt no lo menciona.
+
+    implied_expectations: resultado de
+    engine.reverse_dcf.compute_implied_expectations() -- qué crecimiento
+    de ingresos y qué tasa de crecimiento terminal tendrían que cumplirse
+    para justificar el precio de mercado/consenso, comparado contra lo
+    que asume el propio escenario conservador. Es lo que le permite al
+    memo explicar el mecanismo detrás de una desviación grande en vez de
+    solo reportar el porcentaje (ver la regla 6 del prompt de sistema)."""
     base_result = scenario_results.get(CONSERVATIVE_SCENARIO_NAME)
     base_price = base_result.implied_share_price if base_result else None
 
@@ -110,13 +121,29 @@ def build_memo_input(ticker: str, wacc: float, terminal_growth_rate: float,
             "current_ratio": ratios.current_ratio,
         }
 
+    implied_expectations_list = None
+    if implied_expectations:
+        implied_expectations_list = [
+            {
+                "precio_objetivo": exp.target_label,
+                "precio": exp.target_price,
+                "crecimiento_ingresos_asumido": exp.assumed_revenue_growth,
+                "crecimiento_ingresos_implicito": exp.implied_revenue_growth,
+                "gap_crecimiento_ingresos": exp.revenue_growth_gap,
+                "tasa_crecimiento_terminal_asumida": exp.assumed_terminal_growth,
+                "tasa_crecimiento_terminal_implicita": exp.implied_terminal_growth,
+                "crecimiento_terminal_implicito_en_zona_fragil": exp.terminal_growth_fragile,
+            }
+            for exp in implied_expectations
+        ]
+
     return MemoInput(
         ticker=ticker, company_name=company_name, wacc=wacc,
         terminal_growth_rate=terminal_growth_rate, scenarios=scenarios,
         key_assumptions=key_assumptions, market_price=market_price,
         analyst_target_price=analyst_target_price, deviation_vs_market=dev_market,
         deviation_vs_consensus=dev_consensus, warnings_raised=warnings_raised or [],
-        ratios=ratios_dict,
+        ratios=ratios_dict, implied_expectations=implied_expectations_list,
     )
 
 
@@ -140,6 +167,7 @@ def build_prompt(memo_input: MemoInput) -> tuple[str, str]:
         "avisos_tecnicos_del_modelo": memo_input.warnings_raised,
         "supuestos_clave_de_proyeccion": memo_input.key_assumptions,
         "ratios_financieros": memo_input.ratios,
+        "expectativas_implicitas_del_mercado": memo_input.implied_expectations,
     }
     user_prompt = (
         "Redacta el Investment Memo para el siguiente paquete de datos. "

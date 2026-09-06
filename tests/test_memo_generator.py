@@ -174,6 +174,64 @@ def test_build_memo_input_represents_infinite_interest_coverage_as_text():
     assert "Infinity" not in raw_json  # la prueba real: el token no estándar no debe aparecer
 
 
+def test_build_memo_input_includes_implied_expectations_when_provided():
+    from engine.reverse_dcf import ImpliedExpectations
+
+    expectations = [
+        ImpliedExpectations(
+            target_label="Mercado", target_price=258.51,
+            assumed_revenue_growth=0.117, assumed_terminal_growth=0.025,
+            implied_revenue_growth=0.318, implied_terminal_growth=0.0725,
+            terminal_growth_fragile=True,
+        ),
+        ImpliedExpectations(
+            target_label="Precio absurdo", target_price=1_000_000.0,
+            assumed_revenue_growth=0.117, assumed_terminal_growth=0.025,
+            implied_revenue_growth=None, implied_terminal_growth=None,
+        ),
+    ]
+    memo_input = build_memo_input(
+        ticker="AMZN", wacc=0.09, terminal_growth_rate=0.025,
+        scenario_results=_sample_scenario_results(), key_assumptions={},
+        implied_expectations=expectations,
+    )
+    assert memo_input.implied_expectations == [
+        {
+            "precio_objetivo": "Mercado", "precio": 258.51,
+            "crecimiento_ingresos_asumido": 0.117, "crecimiento_ingresos_implicito": 0.318,
+            "gap_crecimiento_ingresos": pytest.approx(0.318 - 0.117),
+            "tasa_crecimiento_terminal_asumida": 0.025, "tasa_crecimiento_terminal_implicita": 0.0725,
+            "crecimiento_terminal_implicito_en_zona_fragil": True,
+        },
+        {
+            "precio_objetivo": "Precio absurdo", "precio": 1_000_000.0,
+            "crecimiento_ingresos_asumido": 0.117, "crecimiento_ingresos_implicito": None,
+            "gap_crecimiento_ingresos": None,
+            "tasa_crecimiento_terminal_asumida": 0.025, "tasa_crecimiento_terminal_implicita": None,
+            "crecimiento_terminal_implicito_en_zona_fragil": False,
+        },
+    ]
+
+    _, user_prompt = build_prompt(memo_input)
+    json_start = user_prompt.index("{")
+    payload = json.loads(user_prompt[json_start:])
+    expectativas = payload["expectativas_implicitas_del_mercado"]
+    assert expectativas[0]["crecimiento_ingresos_implicito"] == pytest.approx(0.318)
+    assert expectativas[1]["crecimiento_ingresos_implicito"] is None
+
+
+def test_build_memo_input_omits_implied_expectations_when_not_provided():
+    memo_input = build_memo_input(
+        ticker="TEST", wacc=0.08, terminal_growth_rate=0.025,
+        scenario_results=_sample_scenario_results(), key_assumptions={},
+    )
+    assert memo_input.implied_expectations is None
+    _, user_prompt = build_prompt(memo_input)
+    json_start = user_prompt.index("{")
+    payload = json.loads(user_prompt[json_start:])
+    assert payload["expectativas_implicitas_del_mercado"] is None
+
+
 # --- build_prompt -------------------------------------------------------------
 
 def _sample_memo_input() -> MemoInput:

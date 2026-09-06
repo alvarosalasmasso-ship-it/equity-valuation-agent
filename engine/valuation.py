@@ -340,6 +340,117 @@ def run_dcf(inputs: DCFInputs) -> DCFResult:
 
 
 # ---------------------------------------------------------------------------
+# Reverse DCF: expectativas implícitas del mercado
+# ---------------------------------------------------------------------------
+#
+# Un DCF hacia delante responde "¿qué precio justifican mis supuestos?".
+# Un reverse DCF responde la pregunta complementaria, igual de estándar en
+# equity research: "¿qué supuesto justificaría el precio que YA cotiza el
+# mercado (o el consenso de analistas)?". No es una segunda metodología ni
+# una forma nueva de calcular: usa exactamente el mismo run_dcf() ya
+# validado contra el Excel, resuelto al revés para una única incógnita con
+# todo lo demás fijo. El motivo de construir esto es que la brecha entre
+# el precio del motor (reversión a la media) y el precio de mercado no es
+# un error a esconder -- es la señal más informativa que puede dar un DCF,
+# y hasta ahora la herramienta solo mostraba el tamaño de la brecha (%),
+# no lo que el mercado necesita creer para justificarla.
+
+def solve_for_target_price(evaluate_price, target_price: float, lower_bound: float,
+                            upper_bound: float, price_tolerance: float = 0.01,
+                            max_iterations: int = 100) -> float:
+    """Bisección genérica: encuentra x en [lower_bound, upper_bound] tal que
+    evaluate_price(x) ~= target_price, en dólares (price_tolerance=0.01 ->
+    al céntimo, mismo estándar de precisión que el resto del motor).
+
+    Bisección pura, sin dependencias externas (scipy, etc.) -- consistente
+    con el principio de "Python puro" del blueprint. Válida porque
+    evaluate_price (proyección con fade -> run_dcf, o Gordon Growth ->
+    run_dcf) es continua y monótona creciente en el rango relevante: no
+    hace falta un método de raíces más sofisticado para esto.
+
+    No asume que la función es creciente a ciegas: lo verifica contra los
+    dos extremos y falla explícitamente (ValueError, nunca un resultado
+    silenciosamente incorrecto) si no lo es, o si target_price queda fuera
+    del rango alcanzable entre lower_bound y upper_bound.
+    """
+    price_at_lower = evaluate_price(lower_bound)
+    price_at_upper = evaluate_price(upper_bound)
+    if price_at_upper - price_at_lower < price_tolerance:
+        raise ValueError(
+            f"El precio no varía de forma creciente en el rango dado "
+            f"(f({lower_bound})=${price_at_lower:,.2f}, f({upper_bound})=${price_at_upper:,.2f}) "
+            "-- no se puede resolver con bisección."
+        )
+    if not (price_at_lower - price_tolerance <= target_price <= price_at_upper + price_tolerance):
+        raise ValueError(
+            f"target_price=${target_price:,.2f} está fuera del rango alcanzable variando "
+            f"el supuesto entre {lower_bound} (precio ${price_at_lower:,.2f}) y "
+            f"{upper_bound} (precio ${price_at_upper:,.2f}). Amplía el rango de búsqueda "
+            "si el supuesto sigue siendo razonable fuera de estos límites."
+        )
+
+    lo, hi = lower_bound, upper_bound
+    mid = (lo + hi) / 2
+    for _ in range(max_iterations):
+        mid = (lo + hi) / 2
+        price_at_mid = evaluate_price(mid)
+        if abs(price_at_mid - target_price) <= price_tolerance:
+            return mid
+        if price_at_mid < target_price:
+            lo = mid
+        else:
+            hi = mid
+    raise RuntimeError(
+        f"No convergió en {max_iterations} iteraciones de bisección "
+        f"(última diferencia: ${abs(evaluate_price(mid) - target_price):,.4f})."
+    )
+
+
+def implied_terminal_growth_rate(inputs: "DCFInputs", target_price: float,
+                                  lower_bound: float = -0.10) -> float:
+    """Reverse DCF sobre la tasa de crecimiento terminal (g): con TODO lo
+    demás fijo (WACC, proyección explícita, múltiplo de salida, peso
+    Gordon/múltiplo), resuelve qué `terminal_growth_rate` hace que
+    run_dcf() reproduzca `target_price` (típicamente el precio de mercado
+    o el consenso de analistas).
+
+    Requiere que g tenga algún efecto sobre el precio: si hay múltiplo de
+    salida Y `gordon_weight<=0`, Gordon Growth no se calcula en absoluto
+    (ver M4, docs/AUDIT.md) y g es irrelevante para el resultado -- no hay
+    nada que resolver, y se falla explícitamente en vez de devolver un
+    valor arbitrario.
+
+    lower_bound: cota inferior de búsqueda (-10% por defecto, una
+    perpetuidad en declive severo -- amplíala si de verdad hace falta). La
+    cota superior es wacc menos un margen ínfimo, el único límite real que
+    impone gordon_growth_terminal_value() (wacc > g estricto). Si el g
+    resuelto cae en la zona de spread WACC-g estrecho, la re-evaluación
+    final emite el mismo aviso que cualquier otra llamada a
+    gordon_growth_terminal_value() -- no uno nuevo ni distinto.
+    """
+    if inputs.terminal_ev_ebitda_multiple is not None and inputs.gordon_weight <= 0.0:
+        raise ValueError(
+            "gordon_weight<=0 con múltiplo de salida presente: terminal_growth_rate no "
+            "tiene ningún efecto sobre el precio en esta configuración (ver hallazgo M4) "
+            "-- no se puede resolver."
+        )
+    upper_bound = inputs.wacc - 1e-4
+
+    def price_at_growth(g: float) -> float:
+        return run_dcf(replace(inputs, terminal_growth_rate=g)).implied_share_price
+
+    with warnings.catch_warnings():
+        # Los candidatos intermedios de la búsqueda no son un resultado
+        # real -- solo el valor final importa para decidir si avisar de un
+        # spread WACC-g estrecho. Se re-evalúa sin suprimir justo después.
+        warnings.simplefilter("ignore")
+        solved_g = solve_for_target_price(price_at_growth, target_price, lower_bound, upper_bound)
+
+    price_at_growth(solved_g)
+    return solved_g
+
+
+# ---------------------------------------------------------------------------
 # Matriz de sensibilidad WACC x g (Consolidated!N51:S57 del Excel)
 # ---------------------------------------------------------------------------
 

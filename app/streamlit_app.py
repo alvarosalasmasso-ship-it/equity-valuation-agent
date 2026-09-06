@@ -314,6 +314,75 @@ assumptions_df = pd.DataFrame([
 ])
 st.dataframe(assumptions_df, hide_index=True, use_container_width=True)
 
+# --- Expectativas implícitas del mercado (reverse DCF) -------------------------
+#
+# Un DCF hacia delante responde "¿qué precio justifican mis supuestos?". Esta
+# sección responde la pregunta complementaria, igual de estándar en equity
+# research: "¿qué tendría que ser cierto para justificar el precio que YA
+# cotiza el mercado (o el consenso)?". La brecha frente al escenario
+# conservador no es un error del modelo a esconder -- es la prima de
+# crecimiento que el mercado está pagando hoy, ahora cuantificada en vez de
+# solo mostrada como un porcentaje de desviación. Ver docs/METHODOLOGY.md
+# sección 20 y docs/PROGRESS_REVIEW.md.
+
+from engine.projections import project_financials
+from engine.reverse_dcf import compute_implied_expectations
+
+projection = project_financials(hist["revenue"].iloc[-1], assumptions)
+base_inputs = DCFInputs(
+    ebit=projection.ebit, tax_rate=projection.tax_rate, d_and_a=projection.d_and_a,
+    capex=projection.capex, change_in_nwc=projection.change_in_nwc, wacc=wacc_value,
+    terminal_growth_rate=terminal_growth_rate, stub_fraction=stub_fraction,
+    cash=snap.get("cash") or 0, total_debt=snap.get("total_debt") or 0,
+    diluted_shares=snap["shares_outstanding"], terminal_ev_ebitda_multiple=terminal_multiple,
+    gordon_weight=gordon_weight,
+)
+reverse_dcf_kwargs = dict(
+    wacc=wacc_value, terminal_growth_rate=terminal_growth_rate, stub_fraction=stub_fraction,
+    cash=snap.get("cash") or 0, total_debt=snap.get("total_debt") or 0,
+    diluted_shares=snap["shares_outstanding"], terminal_ev_ebitda_multiple=terminal_multiple,
+    gordon_weight=gordon_weight,
+)
+
+st.subheader("Expectativas implícitas del mercado (reverse DCF)")
+st.caption(
+    "¿Qué tendría que ser cierto para justificar el precio que ya cotiza el mercado o el "
+    "consenso? No es un error del modelo — es la prima de crecimiento que se está pagando hoy, "
+    "cuantificada en vez de solo mostrada como un porcentaje de desviación."
+)
+
+implied_expectations = compute_implied_expectations(
+    hist["revenue"].iloc[-1], assumptions, base_inputs, reverse_dcf_kwargs,
+    targets=[("Mercado", snap.get("price")), ("Consenso analistas", snap.get("analyst_target_price"))],
+)
+
+if implied_expectations:
+    implied_rows = []
+    for exp in implied_expectations:
+        growth_cell = (f"{exp.implied_revenue_growth*100:.1f}%" if exp.implied_revenue_growth is not None
+                       else "fuera de rango (-30%/+60%)")
+        gap_cell = f"{exp.revenue_growth_gap*100:+.1f} pp" if exp.revenue_growth_gap is not None else "n/d"
+        if exp.implied_terminal_growth is not None:
+            flag = " ⚠️" if exp.terminal_growth_fragile else ""
+            g_cell = f"{exp.implied_terminal_growth*100:.2f}%{flag}"
+        else:
+            g_cell = "fuera de rango"
+        implied_rows.append({
+            "Precio objetivo": f"{exp.target_label} (${exp.target_price:,.2f})",
+            "Crecimiento de ingresos implícito": growth_cell,
+            "Gap vs. asumido": gap_cell,
+            "g terminal implícita": g_cell,
+        })
+    st.dataframe(pd.DataFrame(implied_rows), hide_index=True, use_container_width=True)
+    st.caption(
+        f"Crecimiento de ingresos asumido (escenario conservador, CAGR reciente): "
+        f"**{assumptions.revenue_growth.start*100:.1f}%**. Tasa de crecimiento terminal asumida: "
+        f"**{terminal_growth_rate*100:.2f}%**. ⚠️ junto a la g terminal implícita indica que ese "
+        "valor cae en la zona de spread WACC-g estrecho (inestable, ver aviso técnico del modelo)."
+    )
+else:
+    st.caption("Sin precio de mercado ni consenso disponible para calcular expectativas implícitas.")
+
 # --- Ratios financieros --------------------------------------------------------
 
 from engine.ratios import latest_ratio_snapshot
@@ -358,17 +427,8 @@ st.subheader("Sensibilidad: WACC × tasa de crecimiento terminal")
 conservative_name = "Conservador (reversión a la media)"
 base_result = scenario_results[conservative_name]
 
-from engine.projections import project_financials
-
-projection = project_financials(hist["revenue"].iloc[-1], assumptions)
-base_inputs = DCFInputs(
-    ebit=projection.ebit, tax_rate=projection.tax_rate, d_and_a=projection.d_and_a,
-    capex=projection.capex, change_in_nwc=projection.change_in_nwc, wacc=wacc_value,
-    terminal_growth_rate=terminal_growth_rate, stub_fraction=stub_fraction,
-    cash=snap.get("cash") or 0, total_debt=snap.get("total_debt") or 0,
-    diluted_shares=snap["shares_outstanding"], terminal_ev_ebitda_multiple=terminal_multiple,
-    gordon_weight=gordon_weight,
-)
+# projection/base_inputs ya se construyeron en la sección de expectativas
+# implícitas de arriba -- se reutilizan tal cual, sin recalcular.
 
 wacc_range = [wacc_value + delta for delta in (-0.01, -0.005, 0.0, 0.005, 0.01)]
 growth_range = [max(terminal_growth_rate + delta, 0.0) for delta in (-0.01, -0.005, 0.0, 0.005, 0.01)]
@@ -403,6 +463,7 @@ memo_input = build_memo_input(
     scenario_results=scenario_results, key_assumptions=key_assumptions,
     market_price=snap.get("price"), analyst_target_price=snap.get("analyst_target_price"),
     warnings_raised=warnings_text, ratios=ratio_snapshot,
+    implied_expectations=implied_expectations,
 )
 
 import os

@@ -169,26 +169,39 @@ forma suficientemente visible en la propia interfaz.
 En orden de impacto para un proyecto de portfolio, no de dificultad
 técnica:
 
-1. **Desplegar (Fase 8).** Crear el repo en GitHub (público, con el
+1. ~~**Hacer explícita en la interfaz la limitación de la sección 2.**~~
+   ✅ **Hecho, y con más rigor del que este roadmap pedía** (sesión 16,
+   continuación) — en vez de solo un texto explicativo fijo, se
+   construyó un **reverse DCF** completo (`engine/reverse_dcf.py`):
+   dado el precio de mercado o el consenso, resuelve qué crecimiento de
+   ingresos y qué tasa de crecimiento terminal tendrían que cumplirse
+   para justificarlo, y lo compara contra lo que asume el escenario
+   conservador. Ver `docs/METHODOLOGY.md` sección 20 — la desviación
+   deja de ser un porcentaje sin explicación y pasa a ser una prima de
+   crecimiento cuantificada (AMZN: el mercado paga hoy un 31.8% de
+   crecimiento de ingresos implícito frente al 11.7% asumido). Integrado
+   en la app (nueva sección) y en el Investment Memo (nuevo campo en
+   `MemoInput`, nueva sección del prompt de sistema). Este fue el
+   resultado directo de pararse a responder "¿para qué sirve un DCF de
+   verdad, y qué información aporta?" antes de seguir desarrollando —
+   ver el intercambio que lo motivó, resumido en la sección 6.
+2. **Desplegar (Fase 8).** Crear el repo en GitHub (público, con el
    Excel ya incluido porque el autor permite su uso libre) y desplegar
    en Streamlit Community Cloud. Sin esto, nada de lo construido es
-   demostrable con una URL — es el paso de mayor retorno por esfuerzo
-   invertido ahora mismo.
-2. **Probar la capa generativa con una llamada real** (aunque sea una
+   demostrable con una URL — sigue siendo el paso de mayor retorno
+   pendiente ahora mismo.
+3. **Probar la capa generativa con una llamada real** (aunque sea una
    sola vez, con una `ANTHROPIC_API_KEY` de prueba) antes de desplegar
-   — verificar que el memo se genera correctamente end-to-end, no solo
-   que el payload se ensambla bien.
-3. **Hacer explícita en la interfaz la limitación de la sección 2.**
-   Un usuario que abra la app y vea "-42% vs. mercado" sin contexto
-   puede concluir que la herramienta está simplemente mal, en vez de
-   entender que es una postura de modelado deliberada. Un texto corto
-   y fijo en la UI (no generado por IA) explicando esto sería más
-   honesto que dejar que el usuario lo infiera.
+   — verificar que el memo (ahora con la sección de expectativas
+   implícitas) se genera correctamente end-to-end, no solo que el
+   payload se ensambla bien.
 4. **Crear `scripts/validate_universe.py`** que reproduzca la
    medición de la sección 2 de forma reproducible y la guarde con
    fecha (p. ej. `data/validation_history/2026-09-06.json`) — para que
    la cifra de "desviación media" del CV se pueda regenerar y
-   defender en cualquier momento, no reconstruir a mano.
+   defender en cualquier momento, no reconstruir a mano. Candidato
+   natural para incluir también las expectativas implícitas del punto 1
+   en el mismo historial fechado.
 5. **Decidir M2 como una decisión de producto, no dejarlo pendiente
    indefinidamente:** o se justifica `gordon_weight=0.8` como default
    razonado (p. ej. documentando por qué es razonable para el caso
@@ -205,3 +218,29 @@ seguir sin ajustar supuestos para acercar el precio implícito al de
 mercado. La brecha de la sección 2 se comunica y se contextualiza, no
 se maquilla cambiando `gordon_weight`, `terminal_growth_rate` o
 `lookback_years` hasta que el número agregado mejore.
+
+---
+
+## 6. Addendum — el reverse DCF (sesión 16, continuación)
+
+Tras publicar este documento, el usuario hizo la pregunta que debería
+haber enmarcado la sección 2 desde el principio: **¿para qué se usa un
+DCF de verdad, y qué información aporta?** Un DCF hacia delante no está
+diseñado para predecir el precio de mercado — esa es la lectura que
+esta misma revisión (sección 2) había estado usando implícitamente al
+hablar de "desviación" como si fuera un error. Los usos reales de un
+DCF profesional incluyen, además de la valoración intrínseca: hacer
+explícitas las hipótesis de una tesis, descomponer de dónde viene una
+diferencia de precio, y —el que faltaba aquí— **calcular expectativas
+implícitas (reverse DCF)**: dado el precio que ya cotiza el mercado,
+¿qué tendría que ser cierto para justificarlo?
+
+Comparando esto contra lo que la herramienta aportaba en ese momento
+(escenarios, sensibilidad WACC×g, ratios, comparables — pero ningún
+reverse DCF), quedó claro que la pieza que faltaba no era "más
+precisión" sino la función que convierte la brecha ya medida en
+información aprovechable. Se construyó en la misma sesión: ver
+`docs/METHODOLOGY.md` sección 20 para el diseño técnico completo
+(bisección pura sobre `run_dcf()`, sin segunda metodología) y la
+verificación con datos reales. El roadmap de la sección 5 se actualizó
+para reflejar esto como hecho — item 1, no ya pendiente.

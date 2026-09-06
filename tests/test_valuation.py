@@ -7,6 +7,7 @@ valores calculados por ese Excel (openpyxl, data_only=True), no
 inventados. Ver docs/METHODOLOGY.md para el mapeo celda -> función.
 """
 
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -19,9 +20,11 @@ from engine.valuation import (
     cost_of_equity,
     diluted_shares_outstanding,
     discount_periods,
+    implied_terminal_growth_rate,
     relever_beta,
     run_dcf,
     sensitivity_matrix,
+    solve_for_target_price,
     treasury_stock_method,
     unlever_beta,
     unlevered_fcf,
@@ -411,3 +414,62 @@ def test_sensitivity_matrix_rejects_empty_axes():
         sensitivity_matrix(inputs, wacc_values=[], growth_values=[0.025])
     with pytest.raises(ValueError):
         sensitivity_matrix(inputs, wacc_values=[0.08], growth_values=[])
+
+
+# --- Reverse DCF: solve_for_target_price -------------------------------------
+
+def test_solve_for_target_price_recovers_root_of_simple_increasing_function():
+    """Caso hand-verificable, sin nada financiero de por medio: x**2 en
+    [0, 10] para target=64 -> x=8 exacto."""
+    root = solve_for_target_price(lambda x: x ** 2, target_price=64.0,
+                                   lower_bound=0.0, upper_bound=10.0, price_tolerance=1e-6)
+    assert root == pytest.approx(8.0, abs=1e-3)
+
+
+def test_solve_for_target_price_rejects_non_increasing_function():
+    with pytest.raises(ValueError, match="creciente"):
+        solve_for_target_price(lambda x: -x, target_price=5.0, lower_bound=0.0, upper_bound=10.0)
+
+
+def test_solve_for_target_price_rejects_target_outside_reachable_range():
+    with pytest.raises(ValueError, match="fuera del rango alcanzable"):
+        solve_for_target_price(lambda x: x, target_price=100.0, lower_bound=0.0, upper_bound=10.0)
+
+
+# --- Reverse DCF: implied_terminal_growth_rate -------------------------------
+
+def test_implied_terminal_growth_rate_recovers_known_growth_rate():
+    """Round-trip sobre el caso AMZN real: el precio objetivo generado con
+    TARGET_TGR debe, al resolver hacia atrás, devolver TARGET_TGR de
+    nuevo -- la prueba de rigor estándar de un solver: ida y vuelta."""
+    inputs = _amzn_blended_inputs()
+    solved_g = implied_terminal_growth_rate(inputs, target_price=TARGET_IMPLIED_PRICE)
+    assert solved_g == pytest.approx(TARGET_TGR, abs=1e-4)
+
+
+def test_implied_terminal_growth_rate_higher_target_price_implies_higher_growth():
+    """Monotonía de negocio, no solo del solver: pedir un precio objetivo
+    más alto debe implicar un crecimiento de mercado más exigente."""
+    inputs = _amzn_blended_inputs()
+    low_target_g = implied_terminal_growth_rate(inputs, target_price=TARGET_IMPLIED_PRICE * 0.8)
+    high_target_g = implied_terminal_growth_rate(inputs, target_price=TARGET_IMPLIED_PRICE * 1.2)
+    assert high_target_g > low_target_g
+
+
+def test_implied_terminal_growth_rate_rejects_when_gordon_weight_is_zero():
+    """Auditoría sesión 15, hallazgo M4: con gordon_weight=0 y múltiplo de
+    salida presente, g no afecta al precio -- no hay nada que resolver."""
+    inputs = replace(_amzn_blended_inputs(), gordon_weight=0.0)
+    with pytest.raises(ValueError, match="gordon_weight"):
+        implied_terminal_growth_rate(inputs, target_price=TARGET_IMPLIED_PRICE)
+
+
+def test_implied_terminal_growth_rate_warns_when_solved_value_is_in_fragile_zone():
+    """Si el precio objetivo solo se explica con un g muy cercano al WACC
+    (spread estrecho), debe emitirse el mismo aviso que cualquier otra
+    llamada a gordon_growth_terminal_value() -- no uno nuevo ni distinto."""
+    inputs = replace(_amzn_blended_inputs(), terminal_ev_ebitda_multiple=None, gordon_weight=1.0)
+    # Un precio deliberadamente muy alto empuja el g resuelto muy cerca del WACC.
+    very_high_target = run_dcf(replace(inputs, terminal_growth_rate=0.07)).implied_share_price
+    with pytest.warns(UserWarning, match="margen prudente"):
+        implied_terminal_growth_rate(inputs, target_price=very_high_target)

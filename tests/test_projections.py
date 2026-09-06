@@ -18,6 +18,7 @@ from engine.projections import (
     average_margin,
     cagr,
     default_assumptions_from_history,
+    implied_revenue_growth,
     linear_fade,
     project_financials,
     stub_fraction_from_history,
@@ -246,6 +247,64 @@ def test_stub_fraction_from_history_returns_1_when_no_fiscal_date_columns():
     assert "fiscal_year_end_month" not in history.columns
     stub = stub_fraction_from_history(history, valuation_date=date(2024, 7, 1))
     assert stub == pytest.approx(1.0)
+
+
+# --- Reverse DCF: implied_revenue_growth -------------------------------------
+
+def _dcf_kwargs() -> dict:
+    return dict(
+        wacc=0.09, terminal_growth_rate=0.025, cash=100, total_debt=50,
+        diluted_shares=100, terminal_ev_ebitda_multiple=None, gordon_weight=1.0,
+    )
+
+
+def test_implied_revenue_growth_recovers_the_assumed_growth_when_target_is_the_base_price():
+    """Round-trip: si el precio objetivo es exactamente el que produce el
+    propio escenario base (10% de crecimiento, ver
+    test_default_assumptions_flat_history_collapses_fade_to_constant),
+    resolver hacia atrás debe devolver ese mismo 10% -- la prueba de
+    rigor estándar de un solver, ida y vuelta."""
+    history = _synthetic_flat_history()
+    assumptions = default_assumptions_from_history(history, n_years=5, lookback_years=3)
+    last_revenue = history["revenue"].iloc[-1]
+
+    from engine.valuation import DCFInputs, run_dcf
+    kwargs = _dcf_kwargs()
+    projection = project_financials(last_revenue, assumptions)
+    base_price = run_dcf(DCFInputs(
+        ebit=projection.ebit, tax_rate=projection.tax_rate, d_and_a=projection.d_and_a,
+        capex=projection.capex, change_in_nwc=projection.change_in_nwc, **kwargs,
+    )).implied_share_price
+
+    result = implied_revenue_growth(last_revenue, assumptions, kwargs, target_price=base_price)
+    assert result.implied_growth == pytest.approx(0.10, abs=1e-4)
+    assert result.assumed_growth == pytest.approx(0.10, abs=1e-6)
+    assert result.gap == pytest.approx(0.0, abs=1e-4)
+
+
+def test_implied_revenue_growth_higher_target_price_implies_higher_growth():
+    history = _synthetic_flat_history()
+    assumptions = default_assumptions_from_history(history, n_years=5, lookback_years=3)
+    last_revenue = history["revenue"].iloc[-1]
+    kwargs = _dcf_kwargs()
+
+    low = implied_revenue_growth(last_revenue, assumptions, kwargs, target_price=40.0)
+    high = implied_revenue_growth(last_revenue, assumptions, kwargs, target_price=120.0)
+    assert high.implied_growth > low.implied_growth
+
+
+def test_implied_revenue_growth_raises_informative_error_when_target_out_of_range():
+    """Un precio objetivo inalcanzable incluso en el extremo superior del
+    rango de búsqueda debe fallar con un mensaje que incluya el precio
+    real alcanzable -- esa cifra es en sí misma informativa (cuantifica
+    la brecha), no un error genérico a esconder."""
+    history = _synthetic_flat_history()
+    assumptions = default_assumptions_from_history(history, n_years=5, lookback_years=3)
+    last_revenue = history["revenue"].iloc[-1]
+    kwargs = _dcf_kwargs()
+
+    with pytest.raises(ValueError, match="fuera del rango alcanzable"):
+        implied_revenue_growth(last_revenue, assumptions, kwargs, target_price=1_000_000.0)
 
 
 def test_stub_fraction_from_history_uses_last_year_fiscal_date():
