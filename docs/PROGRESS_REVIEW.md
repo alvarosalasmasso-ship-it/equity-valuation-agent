@@ -23,7 +23,7 @@ resumen de memoria de sesiones anteriores.
 | 5 — Capa generativa | `ai/memo_generator.py` | ⚠️ **Construida pero nunca probada con la API real** — sin `ANTHROPIC_API_KEY` configurada, el botón "Generar memo" del código nunca se ha ejecutado de verdad; solo se ha verificado el ensamblado del payload y del prompt |
 | 6 — Interfaz | `app/streamlit_app.py` | ✅ Completo y verificado repetidamente (arranque limpio, sin tracebacks) — dos modos de datos, tabla de comparables, ratios, matriz de sensibilidad, gráfico de escenarios |
 | 7 — Validación contra consenso | — | ⚠️ **Hecha, pero con una conclusión que hay que decir con claridad** (sección 2 de este documento) |
-| 8 — Despliegue | GitHub + Streamlit Cloud | ❌ **No iniciado** — repo sin remoto configurado (`git remote -v` vacío), nunca subido a GitHub, no desplegado en ningún sitio |
+| 8 — Despliegue | GitHub + Streamlit Cloud | ✅ **Completo** (sesión 16, continuación) — repo público en [GitHub](https://github.com/alvarosalasmasso-ship-it/equity-valuation-agent), desplegado y verificado en vivo en [equity-valuation-agent.streamlit.app](https://equity-valuation-agent.streamlit.app/) |
 | 9 — Sentiment (extensión) | `EARNINGS_CALL_TRANSCRIPT` | ❌ No iniciado (extensión opcional, prioridad más baja por diseño del blueprint) |
 
 **21 commits**, 126 tests, ~2.360 líneas de Python en `engine/`+`ai/`+`app/`.
@@ -137,11 +137,9 @@ forma suficientemente visible en la propia interfaz.
   es un riesgo no verificado antes del despliegue (Fase 8): un error de
   formato del prompt, un límite de `max_tokens` insuficiente, o un
   fallo de la propia API nunca se ha visto en la práctica.
-- **Fase 8 completamente sin empezar.** Sin repo remoto en GitHub
-  siquiera (`git remote -v` no devuelve nada) — el proyecto vive solo
-  en este equipo. Para un proyecto de portfolio, esto es más urgente
-  que seguir puliendo hallazgos moderados: sin una URL pública, no hay
-  nada que enseñar en una entrevista o en el CV.
+- ~~**Fase 8 completamente sin empezar.**~~ ✅ Resuelto (sesión 16,
+  continuación): repo público en GitHub y app desplegada y verificada en
+  vivo en Streamlit Community Cloud. Ver sección 7.
 - **Sin script de validación reutilizable.** La cifra de desviación
   agregada (sección 2) se ha tenido que reconstruir a mano con Python
   interactivo en cada sesión que la necesita — no hay un
@@ -185,23 +183,24 @@ técnica:
    resultado directo de pararse a responder "¿para qué sirve un DCF de
    verdad, y qué información aporta?" antes de seguir desarrollando —
    ver el intercambio que lo motivó, resumido en la sección 6.
-2. **Desplegar (Fase 8).** Crear el repo en GitHub (público, con el
-   Excel ya incluido porque el autor permite su uso libre) y desplegar
-   en Streamlit Community Cloud. Sin esto, nada de lo construido es
-   demostrable con una URL — sigue siendo el paso de mayor retorno
-   pendiente ahora mismo.
+2. ~~**Desplegar (Fase 8).**~~ ✅ **Hecho** (sesión 16, continuación) —
+   repo público en [GitHub](https://github.com/alvarosalasmasso-ship-it/equity-valuation-agent),
+   desplegado y verificado en vivo (captura de pantalla real) en
+   [equity-valuation-agent.streamlit.app](https://equity-valuation-agent.streamlit.app/).
+   Ver sección 7 para el detalle del proceso (incluyó depurar un problema
+   real de permisos de la GitHub App de Streamlit sobre el repo).
 3. **Probar la capa generativa con una llamada real** (aunque sea una
-   sola vez, con una `ANTHROPIC_API_KEY` de prueba) antes de desplegar
-   — verificar que el memo (ahora con la sección de expectativas
-   implícitas) se genera correctamente end-to-end, no solo que el
-   payload se ensambla bien.
+   sola vez, con una `ANTHROPIC_API_KEY` de prueba) — verificar que el
+   memo (ahora con la sección de expectativas implícitas) se genera
+   correctamente end-to-end, no solo que el payload se ensambla bien.
+   Puede probarse directamente en la app ya desplegada.
 4. **Crear `scripts/validate_universe.py`** que reproduzca la
    medición de la sección 2 de forma reproducible y la guarde con
    fecha (p. ej. `data/validation_history/2026-09-06.json`) — para que
    la cifra de "desviación media" del CV se pueda regenerar y
    defender en cualquier momento, no reconstruir a mano. Candidato
-   natural para incluir también las expectativas implícitas del punto 1
-   en el mismo historial fechado.
+   natural para incluir también las expectativas implícitas del reverse
+   DCF en el mismo historial fechado.
 5. **Decidir M2 como una decisión de producto, no dejarlo pendiente
    indefinidamente:** o se justifica `gordon_weight=0.8` como default
    razonado (p. ej. documentando por qué es razonable para el caso
@@ -209,9 +208,7 @@ técnica:
    (p. ej. 0.5) con su propia justificación. Cualquiera de las dos
    opciones cierra el hallazgo; dejarlo abierto indefinidamente no.
 6. **Fase 9 (sentiment en earnings calls)** — extensión opcional, solo
-   después de lo anterior. Añade superficie nueva a un proyecto que
-   todavía no está desplegado ni con su capa generativa verificada en
-   vivo; no es la prioridad correcta ahora mismo.
+   después de lo anterior.
 
 **Principio de fondo, sin cambios respecto a sesiones anteriores:**
 seguir sin ajustar supuestos para acercar el precio implícito al de
@@ -244,3 +241,48 @@ información aprovechable. Se construyó en la misma sesión: ver
 (bisección pura sobre `run_dcf()`, sin segunda metodología) y la
 verificación con datos reales. El roadmap de la sección 5 se actualizó
 para reflejar esto como hecho — item 1, no ya pendiente.
+
+---
+
+## 7. Addendum — Despliegue (Fase 8, sesión 16, continuación)
+
+Sin `gh` CLI instalado en el entorno, así que primero se instaló
+(`winget install GitHub.cli`) y se autenticó vía flujo de device-code
+en el navegador del usuario. Con `gh` autenticado:
+
+1. **Repo creado y código subido:** `gh repo create equity-valuation-agent
+   --private --source=. --remote=origin --push` (privado en primera
+   instancia, por elección explícita del usuario). `gh auth setup-git`
+   fue necesario para que el `git push` en sí usara las credenciales de
+   `gh` en vez de fallar por falta de terminal interactiva para el
+   prompt de credenciales de Windows.
+2. **Verificación de higiene antes y después de cualquier cambio de
+   visibilidad:** `git log --all --diff-filter=A --name-only` sobre
+   TODO el historial (no solo el HEAD actual) para confirmar que nunca
+   se commiteó `.env`, ninguna clave ni credencial — limpio.
+3. **Bloqueo real encontrado, no anticipado:** Streamlit Community
+   Cloud no encontraba el repo al desplegar. Diagnóstico por descarte
+   guiado (cuenta de GitHub correcta confirmada, la GitHub App de
+   Streamlit sí estaba instalada, pero su página de "Configure" no
+   ofrecía selector de repos, solo revocar acceso) — consistente con
+   que el repo, al ser privado, no estaba en la lista de acceso de la
+   instalación y esa cuenta/app en concreto no exponía la UI esperada
+   para añadirlo. Se resolvió cambiando el repo a **público**
+   (`gh repo edit --visibility public --accept-visibility-change-consequences`,
+   tras repetir la comprobación de higiene del historial completo) en
+   vez de seguir depurando permisos de la GitHub App — más rápido y
+   igual de correcto para un proyecto de portfolio que de todas formas
+   debía ser público a medio plazo (ver pregunta 2 del blueprint).
+4. **Desplegado y verificado en vivo:** el usuario completó el
+   formulario de deploy en share.streamlit.io (repo, rama `master`,
+   `app/streamlit_app.py`, secret `ALPHA_VANTAGE_API_KEY` vía TOML).
+   Verificado con una captura de pantalla real (Playwright, sin sesión
+   ni cookies) contra `https://equity-valuation-agent.streamlit.app/`:
+   la app carga completa, con los mismos datos y cifras que la versión
+   local (AMZN, WACC 9.10%, risk-free rate en vivo, escenarios) — no
+   solo un "no ha dado error", una verificación visual real de que el
+   contenido es correcto.
+
+**Fase 8 completa.** README.md actualizado con el enlace a la app en
+vivo. Repositorio: https://github.com/alvarosalasmasso-ship-it/equity-valuation-agent
+(público). App: https://equity-valuation-agent.streamlit.app/

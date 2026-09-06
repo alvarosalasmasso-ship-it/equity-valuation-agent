@@ -1,5 +1,7 @@
 # Agente de valoración DCF
 
+**App en vivo:** [equity-valuation-agent.streamlit.app](https://equity-valuation-agent.streamlit.app/)
+
 Agente de valoración de equities: extrae estados financieros
 automáticamente, ejecuta un motor de DCF determinista (traducido de un
 modelo profesional real de banca de inversión) y usa un LLM únicamente

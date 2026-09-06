@@ -273,8 +273,11 @@ igualar el rigor con el que se trató a Big Tech.
   confirmado con `git check-ignore`).
 - Repositorio git local inicializado, primer commit hecho (2026-09-05).
   Identidad configurada solo local a este repo (Álvaro Salas Massó /
-  alvarosalasmasso@gmail.com), no en la config global de git. Sin remoto
-  todavía — el push a GitHub es la Fase 8 del plan.
+  alvarosalasmasso@gmail.com), no en la config global de git. **Remoto
+  configurado (sesión 16, continuación):** `origin` ->
+  https://github.com/alvarosalasmasso-ship-it/equity-valuation-agent
+  (público). `gh` CLI instalado y autenticado en este entorno
+  (`gh auth setup-git` configurado como credential helper de git).
 - Estructura de carpetas: `engine/` (`valuation.py`, `data_provider.py`),
   `ai/prompts/`, `app/`, `tests/`, `docs/`, `data/cache/` (gitignored).
 
@@ -963,15 +966,50 @@ Detalle técnico completo en `docs/METHODOLOGY.md` sección 20;
 `docs/PROGRESS_REVIEW.md` actualizado (sección 6, roadmap ítem 1 ya
 hecho).
 
-## 8. Próximo paso inmediato
+## 8. Sesión 16 (continuación) — Fase 8: despliegue completo
 
-1. **Desplegar (Fase 8):** repo en GitHub + Streamlit Community Cloud —
-   máxima prioridad pendiente.
-2. **Probar la capa generativa con una llamada real** (ahora con la
-   sección de expectativas implícitas incluida en el memo).
-3. **Crear `scripts/validate_universe.py`** reproducible, con historial
+Repo público en GitHub y app desplegada y verificada en vivo:
+
+- **Repo:** https://github.com/alvarosalasmasso-ship-it/equity-valuation-agent (público)
+- **App:** https://equity-valuation-agent.streamlit.app/
+
+Proceso (con obstáculos reales, no trivial):
+
+1. Sin `gh` CLI instalado — se instaló vía `winget install GitHub.cli`
+   y se autenticó con device-code flow en el navegador del usuario.
+2. `gh repo create --private --source=. --remote=origin --push` creó el
+   repo y subió el código. `gh auth setup-git` fue necesario para que
+   `git push` en sí usara las credenciales de `gh` (sin él, fallaba por
+   falta de terminal interactiva para el prompt de Windows).
+3. Verificado el historial completo de commits (`git log --all
+   --diff-filter=A --name-only`, no solo el HEAD) sin ningún `.env` ni
+   credencial — limpio, antes y después del cambio de visibilidad.
+4. **Bloqueo real:** Streamlit Community Cloud no encontraba el repo al
+   desplegar. Diagnosticado por descarte (cuenta correcta, GitHub App
+   de Streamlit instalada pero sin selector de repos en "Configure",
+   solo opción de revocar) — consistente con que el repo privado no
+   estaba en la lista de acceso de esa instalación. Resuelto pasando el
+   repo a **público** (`gh repo edit --visibility public
+   --accept-visibility-change-consequences`) en vez de seguir depurando
+   permisos de la GitHub App — más rápido y correcto de todas formas
+   para un proyecto de portfolio.
+5. **Verificado en vivo con una captura de pantalla real** (Playwright,
+   sin sesión/cookies) contra la URL pública: la app carga completa, con
+   los mismos datos que la versión local (AMZN, WACC 9.10%, risk-free
+   rate en vivo, escenarios) — no solo "no dio error", confirmación
+   visual real de contenido correcto.
+
+`README.md` actualizado con el enlace a la app en vivo. Detalle completo
+en `docs/PROGRESS_REVIEW.md` sección 7.
+
+## 9. Próximo paso inmediato
+
+1. **Probar la capa generativa con una llamada real** (ahora con la
+   sección de expectativas implícitas incluida en el memo) — puede
+   probarse directamente en la app ya desplegada.
+2. **Crear `scripts/validate_universe.py`** reproducible, con historial
    fechado de la desviación media y las expectativas implícitas.
-4. Hallazgos técnicos moderados que siguen abiertos, sin urgencia: M2
+3. Hallazgos técnicos moderados que siguen abiertos, sin urgencia: M2
    (`gordon_weight=0.8` sin justificación propia), M5 (sin verificación
    de divisa de reporte), I2/I4 (estructurales).
-5. Fase 9 (sentiment en earnings calls) — extensión opcional, al final.
+4. Fase 9 (sentiment en earnings calls) — extensión opcional, al final.

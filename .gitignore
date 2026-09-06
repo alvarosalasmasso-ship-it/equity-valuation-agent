@@ -7,3 +7,4 @@ env/
 .env
 data/cache/
 .DS_Store
+.claude/
