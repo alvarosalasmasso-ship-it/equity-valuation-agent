@@ -115,7 +115,7 @@ def test_build_memo_input_includes_ratios_when_provided():
 
     snapshot = RatioSnapshot(
         fiscal_year=2025, net_margin=0.1, asset_turnover=0.5, equity_multiplier=4.0,
-        roe=0.20, roic=0.15, creates_value=True, debt_to_ebitda=1.5,
+        roe=0.20, roic=0.15, creates_value=True, debt_to_ebitda=1.5, net_debt_to_ebitda=1.0,
         interest_coverage=7.5, current_ratio=1.5,
     )
     memo_input = build_memo_input(
@@ -125,7 +125,7 @@ def test_build_memo_input_includes_ratios_when_provided():
     assert memo_input.ratios == {
         "fiscal_year": 2025, "roe": 0.20, "roic": 0.15,
         "crea_valor_roic_mayor_que_wacc": True, "debt_to_ebitda": 1.5,
-        "interest_coverage": 7.5, "current_ratio": 1.5,
+        "net_debt_to_ebitda": 1.0, "interest_coverage": 7.5, "current_ratio": 1.5,
     }
     assert type(memo_input.ratios["crea_valor_roic_mayor_que_wacc"]) is bool
 
@@ -139,7 +139,7 @@ def test_build_memo_input_converts_numpy_bool_to_native_bool():
 
     snapshot = RatioSnapshot(
         fiscal_year=2025, net_margin=0.1, asset_turnover=0.5, equity_multiplier=4.0,
-        roe=0.20, roic=0.15, creates_value=np.True_, debt_to_ebitda=1.5,
+        roe=0.20, roic=0.15, creates_value=np.True_, debt_to_ebitda=1.5, net_debt_to_ebitda=1.0,
         interest_coverage=7.5, current_ratio=1.5,
     )
     memo_input = build_memo_input(
@@ -157,7 +157,7 @@ def test_build_memo_input_represents_infinite_interest_coverage_as_text():
 
     snapshot = RatioSnapshot(
         fiscal_year=2025, net_margin=0.1, asset_turnover=0.5, equity_multiplier=4.0,
-        roe=0.20, roic=0.15, creates_value=True, debt_to_ebitda=0.0,
+        roe=0.20, roic=0.15, creates_value=True, debt_to_ebitda=0.0, net_debt_to_ebitda=-0.5,
         interest_coverage=float("inf"), current_ratio=1.5,
     )
     memo_input = build_memo_input(

@@ -278,6 +278,24 @@ def test_arbitrary_ticker_mode_with_empty_history_shows_actionable_error():
     assert "ZZZZINVALID" in at.error[0].value
 
 
+def test_arbitrary_ticker_mode_warns_proactively_for_incompatible_sector():
+    """Regresión sesión 17 (hallazgo I11): bancos/REITs/aseguradoras
+    reciben un aviso explícito ANTES de que la valoración probablemente
+    falle (I9) o no sea significativa -- no solo un mensaje de error
+    reactivo, sino contexto de por qué."""
+    def bank_snapshot(ticker):
+        symbol = getattr(ticker, "symbol", "TEST")
+        return {**_fake_snapshot(symbol), "sector": "Financial Services"}
+
+    at = _run_app(
+        extra_patches=[patch("engine.yfinance_provider.market_snapshot", side_effect=bank_snapshot)],
+        interact=lambda at: _switch_to_arbitrary_ticker(at, "FAKEBANK"),
+    )
+    assert not at.exception
+    warnings_shown = [w.value for w in at.warning]
+    assert any("Financial Services" in w and "REITs" in w for w in warnings_shown)
+
+
 def test_arbitrary_ticker_mode_with_missing_capex_shows_actionable_error():
     """Regresión sesión 17: prueba de estrés con tickers reales (JPM,
     banco sin CapEx/EBIT tradicionales; PLD, REIT sin CapEx; XOM, sin

@@ -1397,10 +1397,47 @@ probados.
 **187 tests en total, todos en verde.** Documentado en
 `docs/METHODOLOGY.md` sección 27 y `docs/AUDIT.md` (I9, I10, I11).
 
-## 19. Próximo paso inmediato
+## 19. Sesión 17 (continuación) — DAFO y Lote A de mejoras (Net Debt/EBITDA, aviso de sector)
 
-0. M6/M7 (recién abiertos) — investigar el tipo impositivo a largo
-   plazo y añadir/aclarar Net Debt/EBITDA, con el mismo rigor que M2.
+Petición: DAFO del estado de la herramienta (entregado en el chat, no
+en un doc), y luego trabajar las debilidades/oportunidades del DAFO en
+lotes A→B→C→D. Lote A completado:
+
+- **M7 cerrado**: `net_debt_to_ebitda()` nueva, `RatioSnapshot` expone
+  deuda bruta y neta por separado, UI con etiquetas explícitas ("Deuda
+  bruta/EBITDA" / "Deuda neta/EBITDA"), memo usa la neta como cifra
+  principal.
+- **Aviso proactivo de sector incompatible** (I11, mejora): `st.warning`
+  antes del cómputo si el sector contiene "financial"/"real estate"/
+  "bank"/"insurance" — verificado con JPM y PLD reales.
+
+191 tests en total, todos en verde.
+
+## 20. Sesión 17 (continuación) — Lote B: M6 cerrado con evidencia del Excel real, aviso de hiper-crecimiento (I12)
+
+**M6 resuelto con la evidencia más fuerte del proyecto hasta ahora**:
+se abrió `Advanced DCF.xlsx` con `openpyxl` y se leyó el tipo
+impositivo REAL que el analista de JPM proyecta para AMZN
+(2024-2029): 17.75%→15.28%→16.13%→17.03%→17.03%→16.64% — sin converger
+al 25% estatutario. Confirma que el enfoque actual (media histórica
+plana) ya coincide con la práctica del banco de referencia. Se
+descartó primero la alternativa (fade hacia 25%) tras medir su impacto
+real: -8.5% a -19.0% en Big Tech, habría empeorado la brecha ya
+documentada.
+
+**I12 (hiper-crecimiento extremo, NVDA)**: sin umbral objetivo para
+"corregir" el número, se añadió un aviso (regla de pulgar, 50%/año)
+que menciona el múltiplo real de composición hacia el año N. NVDA
+dispara el aviso ("multiplica los ingresos por 32.0x"); AMZN/MSFT/TSLA/
+BA no.
+
+**Con esto, no queda ningún hallazgo crítico, importante o moderado
+abierto en `docs/AUDIT.md`** — todos corregidos, decididos con
+evidencia, o aceptados como limitación estructural. 193 tests en
+total, todos en verde. Documentado en `docs/METHODOLOGY.md` sección 28.
+
+## 21. Próximo paso inmediato
+
 0.5. SEC EDGAR — retomar si se quiere reducir la dependencia de la
    cuota de Alpha Vantage: falta D&A fiable (sin resolver) y construir
    el módulo completo con lo ya validado para el resto de campos.

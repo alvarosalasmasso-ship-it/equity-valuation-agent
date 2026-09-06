@@ -361,6 +361,28 @@ if reported_currency and reported_currency != "USD":
     )
     st.stop()
 
+# --- Aviso de sector estructuralmente incompatible con un DCF FCFF genérico --
+#
+# Auditoría sesión 17 (hallazgo I11, docs/AUDIT.md): probando la herramienta
+# con tickers reales fuera del universo piloto, JPM (banco) y PLD (REIT)
+# confirmaron que un DCF de flujo de caja libre genérico no encaja con estos
+# sectores -- los bancos no separan financiación de operación de la misma
+# forma (los intereses SON el negocio) y los REITs se valoran en la práctica
+# real con FFO/AFFO, no UFCF. No es solo un hueco de datos: es un límite de
+# la metodología aplicada fuera de su dominio. Aviso, no bloqueo -- alguna
+# empresa concreta del sector puede tener datos suficientes para no crashear
+# (ver I9), así que se avisa del riesgo en vez de impedir el intento.
+_INCOMPATIBLE_SECTOR_KEYWORDS = ("financial", "real estate", "bank", "insurance")
+sector_lower = (snap.get("sector") or "").lower()
+if any(kw in sector_lower for kw in _INCOMPATIBLE_SECTOR_KEYWORDS):
+    st.warning(
+        f"Sector '{snap.get('sector')}': un DCF de flujo de caja libre genérico no encaja bien "
+        "con bancos, aseguradoras o REITs -- suelen faltar EBIT/CapEx en el formato tradicional "
+        "(los intereses son el negocio en un banco; un REIT se valora en la práctica real con "
+        "FFO/AFFO, no con UFCF). Es probable que la valoración de abajo falle o no sea "
+        "significativa. Ver hallazgo I11, `docs/AUDIT.md`."
+    )
+
 # --- Múltiplo de salida: mediana de comparables, no el propio de la empresa ---
 
 from engine.comps import build_comps_table, comps_implied_share_price, peer_average_multiple
@@ -807,7 +829,7 @@ with tab_supuestos:
 with tab_fundamentales:
     st.subheader("Ratios financieros (último ejercicio disponible)")
     if ratio_snapshot is not None:
-        ratio_cols = st.columns(5)
+        ratio_cols = st.columns(6)
         ratio_cols[0].metric("ROE", f"{ratio_snapshot.roe*100:.1f}%")
         ratio_cols[1].metric(
             "ROIC vs. WACC", f"{ratio_snapshot.roic*100:.1f}%",
@@ -818,10 +840,17 @@ with tab_fundamentales:
             # llevar un "-" delante), lo cual sería activamente engañoso.
             delta_color="normal" if ratio_snapshot.creates_value else "inverse",
         )
-        ratio_cols[2].metric("Debt/EBITDA", f"{ratio_snapshot.debt_to_ebitda:.2f}x")
-        ratio_cols[3].metric("Cobertura de intereses",
+        # M7 (docs/AUDIT.md, sesión 17): antes solo se mostraba la versión
+        # bruta sin aclarar que lo era -- Net Debt/EBITDA es al menos
+        # igual de común en la práctica bancaria real (distingue una
+        # empresa con caja neta positiva de una genuinamente apalancada).
+        ratio_cols[2].metric("Deuda bruta/EBITDA", f"{ratio_snapshot.debt_to_ebitda:.2f}x")
+        ratio_cols[3].metric("Deuda neta/EBITDA", f"{ratio_snapshot.net_debt_to_ebitda:.2f}x",
+                              help="Deuda total menos caja, dividido por EBITDA. Puede salir negativo "
+                                   "(caja neta positiva) -- no es un error, significa que la caja supera a la deuda.")
+        ratio_cols[4].metric("Cobertura de intereses",
                               f"{ratio_snapshot.interest_coverage:.1f}x" if ratio_snapshot.interest_coverage != float("inf") else "∞")
-        ratio_cols[4].metric("Current ratio", f"{ratio_snapshot.current_ratio:.2f}")
+        ratio_cols[5].metric("Current ratio", f"{ratio_snapshot.current_ratio:.2f}")
         st.caption(f"Ejercicio fiscal {ratio_snapshot.fiscal_year}")
     else:
         st.caption(f"No se pudieron calcular los ratios: {ratio_error}")

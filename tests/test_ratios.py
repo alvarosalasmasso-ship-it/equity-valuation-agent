@@ -9,6 +9,7 @@ from engine.ratios import (
     interest_coverage,
     invested_capital,
     latest_ratio_snapshot,
+    net_debt_to_ebitda,
     roe_dupont,
     roic,
 )
@@ -58,6 +59,25 @@ def test_debt_to_ebitda_raises_on_negative_ebitda():
         debt_to_ebitda(total_debt=400, ebitda=-50)
 
 
+def test_net_debt_to_ebitda():
+    assert net_debt_to_ebitda(total_debt=400, cash=100, ebitda=200) == pytest.approx(1.5)
+
+
+def test_net_debt_to_ebitda_can_be_negative_with_net_cash_position():
+    """A diferencia de Debt/EBITDA bruto negativo (señal de EBITDA<=0,
+    no interpretable), aquí un valor negativo SÍ es interpretable:
+    caja neta positiva (más caja que deuda), p.ej. AAPL en ciertos
+    ejercicios."""
+    assert net_debt_to_ebitda(total_debt=100, cash=400, ebitda=200) == pytest.approx(-1.5)
+
+
+def test_net_debt_to_ebitda_raises_on_non_positive_ebitda():
+    with pytest.raises(ValueError):
+        net_debt_to_ebitda(total_debt=400, cash=100, ebitda=0)
+    with pytest.raises(ValueError):
+        net_debt_to_ebitda(total_debt=400, cash=100, ebitda=-50)
+
+
 def test_interest_coverage():
     assert interest_coverage(ebit=100, interest_expense=20) == pytest.approx(5.0)
 
@@ -96,6 +116,7 @@ def test_compute_ratio_snapshot_matches_individual_functions():
     assert snapshot.roic == pytest.approx(120 / 700)  # invested_capital = 300+500-100=700
     assert snapshot.creates_value is True
     assert snapshot.debt_to_ebitda == pytest.approx(1.5)
+    assert snapshot.net_debt_to_ebitda == pytest.approx(1.0)  # (300-100)/200
     assert snapshot.interest_coverage == pytest.approx(7.5)
     assert snapshot.current_ratio == pytest.approx(1.5)
 

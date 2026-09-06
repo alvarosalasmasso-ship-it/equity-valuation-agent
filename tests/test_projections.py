@@ -167,6 +167,46 @@ def test_default_assumptions_revenue_growth_is_flat_not_faded_to_terminal_rate()
     assert all(g == pytest.approx(path[0]) for g in path)
 
 
+def test_default_assumptions_does_not_warn_on_moderate_growth():
+    """21% de CAGR sostenido (caso de arriba) está por debajo del umbral
+    de aviso (50%) -- no debe disparar el aviso de hiper-crecimiento."""
+    import warnings as warnings_module
+    revenue = [1000.0, 1210.0, 1464.1, 1771.56]
+    history = pd.DataFrame({
+        "fiscal_year": [2020, 2021, 2022, 2023],
+        "revenue": revenue,
+        "ebit": [r * 0.20 for r in revenue],
+        "d_and_a": [r * 0.05 for r in revenue],
+        "capex": [r * 0.08 for r in revenue],
+        "change_in_nwc": [None] + [r * 0.02 for r in revenue[1:]],
+        "tax_rate": [0.25] * 4,
+    })
+    with warnings_module.catch_warnings():
+        warnings_module.simplefilter("error")
+        default_assumptions_from_history(history, lookback_years=3)
+
+
+def test_default_assumptions_warns_on_extreme_flat_growth():
+    """Auditoría sesión 17: caso real encontrado con NVDA (CAGR reciente
+    ~100%/año, mantenido plano 5 años -> valor terminal de $21.7
+    billones, económicamente implausible). Un histórico con CAGR
+    sostenido del 100% debe disparar el aviso -- regla de pulgar, no
+    ajusta ningún número."""
+    revenue = [1000.0, 2000.0, 4000.0, 8000.0]  # CAGR = 100%
+    history = pd.DataFrame({
+        "fiscal_year": [2020, 2021, 2022, 2023],
+        "revenue": revenue,
+        "ebit": [r * 0.20 for r in revenue],
+        "d_and_a": [r * 0.05 for r in revenue],
+        "capex": [r * 0.08 for r in revenue],
+        "change_in_nwc": [None] + [r * 0.02 for r in revenue[1:]],
+        "tax_rate": [0.25] * 4,
+    })
+    with pytest.warns(UserWarning, match="hiper-crecimiento|excepcional"):
+        assumptions = default_assumptions_from_history(history, lookback_years=3)
+    assert assumptions.revenue_growth.start == pytest.approx(1.0, rel=1e-3)
+
+
 def test_default_assumptions_fades_margin_from_recent_actual_to_historical_average():
     """Histórico con tendencia de margen: 0.05, 0.05, 0.10, 0.20 (últimos
     3 años usados: 0.05, 0.10, 0.20 -> media = 0.1166...).

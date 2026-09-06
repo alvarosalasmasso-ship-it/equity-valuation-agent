@@ -30,21 +30,19 @@ reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
 y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
-**1 hallazgo crítico (✅ corregido), 11 importantes (8 ✅ corregidos —
-I6/I7/I8 de la auditoría matemática/financiera a fondo, más I9/I10 de
-una prueba de estrés con 11 tickers reales fuera del universo piloto
-("como si un banco fuese a usarla"): dos crashes de división por cero,
-una inconsistencia real de datos yfinance, un crash de índice con
-empresas cuyo esquema de estados financieros no encaja (banco, REIT,
-energía) y un valor terminal negativo/nulo sin aviso —, 3 ✅ aceptados
-como limitación documentada — I2, I4, I11, este último nuevo: DCF FCFF
-no encaja con bancos/REITs), 7 moderados (4 ✅ corregidos, 1 ✅ decisión
-explícita investigada y mantenida, 2 ⏳ abiertos — M6/M7, pendientes de
-investigar/decidir), 3 informativos (1 ✅ corregido — N2, tests
-automatizados de la app —, 2 sin acción necesaria). Además, 1 hallazgo
-real dejado deliberadamente abierto (crecimiento plano económicamente
-absurdo en hiper-crecimiento extremo, ver sección Importante) por no
-tener todavía un umbral objetivo verificado con datos.**
+**1 hallazgo crítico (✅ corregido), 12 importantes (9 ✅ corregidos —
+I6/I7/I8 de la auditoría matemática/financiera a fondo, I9/I10 de una
+prueba de estrés con 11 tickers reales ("como si un banco fuese a
+usarla"), I12 (aviso de hiper-crecimiento extremo, corrección parcial:
+avisa, no ajusta el número) —, 3 ✅ aceptados como limitación
+documentada — I2, I4, I11: DCF FCFF no encaja con bancos/REITs), 7
+moderados (**todos cerrados**: 6 ✅ corregidos incluido M7 en el Lote A,
+1 ✅ decisión explícita investigada — M2, y M6 recién investigado con
+evidencia directa del Excel de referencia y también cerrado), 3
+informativos (1 ✅ corregido — N2 —, 2 sin acción necesaria). Con esto,
+**no queda ningún hallazgo moderado o importante abierto** — I12 se
+corrigió parcialmente (aviso, sin umbral de ajuste automático por falta
+de evidencia objetiva, mismo criterio que el resto del proyecto).**
 La sesión 17 añadió una auditoría explícita del rigor matemático y
 financiero del motor (`engine/valuation.py`, `wacc_builder.py`,
 `ratios.py`, `comps.py`) verificado fórmula a fórmula contra teoría
@@ -536,7 +534,7 @@ FCF positivo no avisa). Re-verificado con datos reales vía `AppTest`
 contra la app real: el aviso aparece en el panel "Aviso técnico del
 modelo" para TSLA y BA, sin excepciones.
 
-### Hallazgo abierto (no corregido): "flat CAGR" se vuelve económicamente absurdo en compañías de hiper-crecimiento extremo
+### I12. "flat CAGR" se vuelve económicamente absurdo en compañías de hiper-crecimiento extremo — ✅ CORREGIDO parcialmente (sesión 17, Lote B): aviso añadido, sin umbral de corrección automática
 
 **NVDA** mostró un "Gordon Growth" de **$21.7 billones** (trillion en
 inglés) — más que el PIB mundial. Investigado: el CAGR reciente de
@@ -551,13 +549,22 @@ AMZN, ~10-11% de crecimiento) es correcta para el caso que la motivó,
 pero se rompe en el extremo opuesto: ningún analista real modelaría 5
 años seguidos de +90% de crecimiento sin ninguna desaceleración.
 
-**Por qué no se ha corregido todavía:** no hay un umbral objetivo,
+**Por qué no se corrige el número:** no hay un umbral objetivo,
 verificable con datos, de "a partir de qué tasa de crecimiento el flat
-CAGR deja de ser razonable" — inventar uno sin el mismo rigor que M2
-(medir el impacto real, no solo intuirlo) sería exactamente el tipo de
-ajuste sin verificar que este proyecto ha evitado siempre. Queda
-documentado como hallazgo real y abierto, no como pendiente de
-"corrección obvia".
+CAGR deja de ser razonable" — inventar uno con precisión falsa sería
+exactamente el tipo de ajuste sin verificar que este proyecto ha
+evitado siempre.
+
+**Lo que sí se añadió (Lote B, mismo día):**
+`default_assumptions_from_history()` avisa cuando el CAGR reciente
+plano supera el 50%/año — regla de pulgar deliberadamente conservadora
+(mismo espíritu que `MIN_PRUDENT_WACC_GROWTH_SPREAD`, no una ley
+exacta), mencionando el múltiplo real al que compone hacia el año N
+(NVDA real: "multiplica los ingresos por 32.0x hacia el año 5"). No
+cambia el precio ni la tasa asumida — solo hace explícito, en el propio
+resultado, lo que antes solo se veía desglosando el DCF a mano.
+Verificado con datos reales: NVDA dispara el aviso, AMZN/MSFT/TSLA/BA
+(crecimiento normal, 5-21%) no.
 
 ---
 
@@ -584,6 +591,15 @@ criterio que I2/I4: limitación estructural aceptada, señalada con
 claridad (ahora con un mensaje de error específico, ver I9) en vez de
 dejar que la herramienta finja que puede valorar cualquier sector por
 igual.
+
+**Mejora añadida (mismo día, Lote A de la sesión 17):** además del
+mensaje de error reactivo de I9, la app ahora muestra un `st.warning`
+proactivo en cuanto detecta `sector` conteniendo "financial", "real
+estate", "bank" o "insurance" (case-insensitive) — ANTES de que el
+cómputo llegue a fallar, no solo después. Verificado con datos reales:
+JPM ("Financial Services") y PLD ("Real Estate") muestran el aviso;
+AMZN no. Aviso, no bloqueo — alguna empresa concreta del sector puede
+tener datos suficientes para no fallar.
 
 ---
 
@@ -779,7 +795,7 @@ igual que antes. 4 tests de regresión nuevos (2 por proveedor).
 
 ---
 
-### M6. Tipo impositivo: media histórica plana, incluso en el valor terminal a perpetuidad — ⏳ ABIERTO (sesión 17), pendiente de investigar y decidir
+### M6. Tipo impositivo: media histórica plana, incluso en el valor terminal a perpetuidad — ✅ DECISIÓN EXPLÍCITA E INVESTIGADA (sesión 17): se mantiene plano, con evidencia directa del Excel de referencia
 
 **Qué es:** `default_assumptions_from_history()` fija `tax_rate` como la
 media de los últimos `lookback_years` años, y ese valor se mantiene
@@ -814,14 +830,39 @@ baja el precio? ¿en qué magnitud? ¿agrava o alivia la brecha ya
 documentada con Big Tech?) antes de decidir, no una intuición sin
 verificar.
 
-**Pendiente:** investigar con datos reales y decidir explícitamente —
-mantener el tipo plano con motivo justificado, o introducir un fade
-hacia el tipo marginal/estatutario para el tramo de largo plazo,
-documentando el impacto medido en cualquiera de los dos casos.
+**Investigado con datos reales, dos pasos:**
+
+1. **Impacto de un fade hacia el 25% estatutario** (bump-and-reprice
+   sobre los 5 tickers de Big Tech, mismo método que M2): baja el
+   precio implícito entre **-8.5% (AAPL) y -19.0% (GOOGL)** —
+   empeoraría la brecha ya documentada frente al mercado en Big Tech,
+   no la mejora. Por sí solo, esto NO seria motivo suficiente para
+   descartar el cambio (el proyecto nunca decide por "qué acerca más al
+   precio de mercado") — pero exigía buscar evidencia independiente de
+   qué es lo metodológicamente correcto, no solo el efecto.
+
+2. **Evidencia directa del propio Excel de referencia** (la fuente de
+   verdad del proyecto): se abrió `Advanced DCF.xlsx` y se leyeron las
+   celdas reales de tipo impositivo proyectado para AMZN, hoja
+   "Operating Model" (fila 52, "% tax rate") y "North America" (fila
+   19) — el analista de JPM proyecta **17.75% (2024), 15.28% (2025),
+   16.13% (2026), 17.03% (2027), 17.03% (2028), 16.64% (2029)**: una
+   banda estrecha de ~15-18%, sin ninguna tendencia de convergencia
+   hacia el ~25% estatutario/marginal, ni siquiera en los años más
+   lejanos del horizonte. El propio banco de referencia ancla el tipo
+   impositivo cerca del nivel reciente observado, no de un tipo
+   normativo de largo plazo.
+
+**Decisión: se mantiene el tipo histórico plano, sin fade.** No es una
+intuición ni una constante heredada sin justificar (como se temía al
+abrir este hallazgo) — es la misma práctica que usa literalmente "el
+modelo a seguir" (principio del blueprint), verificada celda a celda,
+no solo citada de memoria. Documentado en `docs/METHODOLOGY.md` sección
+28.
 
 ---
 
-### M7. `Debt/EBITDA` usa deuda bruta, no neta, sin aclararlo en la interfaz — ⏳ ABIERTO (sesión 17)
+### M7. `Debt/EBITDA` usa deuda bruta, no neta, sin aclararlo en la interfaz — ✅ CORREGIDO (sesión 17)
 
 **Qué es:** `debt_to_ebitda()` usa deuda BRUTA (`total_debt`), no deuda
 NETA (`total_debt - cash`) — y tanto el nombre de la función como la
@@ -838,10 +879,14 @@ la etiqueta sí es una brecha real de claridad frente al estándar de un
 informe bancario, donde ambas versiones suelen aparecer explícitamente
 diferenciadas.
 
-**Pendiente:** renombrar la métrica existente a "Deuda bruta/EBITDA" (o
-similar) para eliminar la ambigüedad, y evaluar añadir "Deuda
-neta/EBITDA" como métrica adicional — el dato (`cash`) ya está
-disponible en el mismo snapshot, coste de implementación bajo.
+**Cómo se corrigió:** `engine.ratios.net_debt_to_ebitda()` (nueva
+función, mismo guard de EBITDA<=0 que `debt_to_ebitda()`, pero un valor
+negativo aquí SÍ es interpretable — caja neta positiva). `RatioSnapshot`
+expone ambos campos; la UI ahora muestra "Deuda bruta/EBITDA" y "Deuda
+neta/EBITDA" como métricas separadas y explícitamente rotuladas, y el
+memo usa la neta como cifra principal de apalancamiento. Verificado con
+3 tests nuevos en `test_ratios.py` (cálculo, caja neta positiva da
+negativo, EBITDA no positivo lanza `ValueError` en ambas versiones).
 
 ---
 
@@ -914,7 +959,7 @@ aviso en la interfaz.
 - **El múltiplo de salida se corrigió** de "propio de la empresa" a
   "mediana de comparables" (sesión 14), con el efecto mixto reportado
   con honestidad en vez de maquillado.
-- **187 tests, cero dependen de red** — toda la suite corre offline con
+- **193 tests, cero dependen de red** — toda la suite corre offline con
   fixtures fieles al formato real de las APIs, incluidos 12 tests de la
   app en sí (`streamlit.testing.v1.AppTest`, sesión 16-17) y CI en
   GitHub Actions corriéndolos en cada push. Complementado con una
@@ -1003,16 +1048,25 @@ aviso en la interfaz.
     `IndexError`; TSLA y BA mostraban valores terminales negativos
     (hasta -$184 mil millones) sin ningún aviso.
 16. **I11 (DCF FCFF no encaja con bancos/REITs)** — ✅ documentado como
-    limitación estructural (sesión 17), mismo criterio que I2/I4.
-17. **Hallazgo abierto**: crecimiento plano (sección 14) se vuelve
-    económicamente absurdo en hiper-crecimiento extremo (NVDA, valor
-    terminal de $21.7 billones) — sin corregir a propósito, no hay
-    todavía un umbral objetivo verificado con datos reales.
+    limitación estructural (sesión 17), mismo criterio que I2/I4;
+    mejorado con un aviso proactivo por sector en el Lote A (JPM/PLD
+    verificados reales).
+17. ~~**M7 (Debt/EBITDA bruto sin aclarar)**~~ — ✅ corregido (Lote A,
+    sesión 17): `net_debt_to_ebitda()` nueva, UI con ambas versiones
+    explícitamente rotuladas.
+18. ~~**M6 (tipo impositivo plano en el valor terminal)**~~ — ✅
+    decisión explícita e investigada (Lote B, sesión 17): evidencia
+    directa del propio Excel de referencia (celdas reales de tipo
+    impositivo proyectado para AMZN, 15-18% en 2024-2029, sin converger
+    al 25% estatutario) confirma que el enfoque actual ya coincide con
+    la práctica del banco de referencia.
+19. ~~**I12 (hiper-crecimiento extremo)**~~ — ✅ corregido parcialmente
+    (Lote B, sesión 17): aviso cuando el CAGR plano supera 50%/año,
+    verificado con NVDA real (dispara), AMZN/MSFT/TSLA/BA (no).
 
-**Quedan dos hallazgos moderados abiertos a propósito** (M6, M7) —
-requieren investigación con datos reales antes de decidir, no una
-intuición sin verificar, mismo estándar que M2. El resto de esta
-auditoría (más allá de N1/N3, informativos sin acción necesaria) tiene
-un estado cerrado. Próximos pasos del proyecto en
-`docs/PROGRESS_REVIEW.md` y `estado.md` sección "Próximo paso
-inmediato".
+**Con esto, no queda ningún hallazgo crítico, importante o moderado
+abierto** — todos corregidos, decididos explícitamente con evidencia, o
+aceptados como limitación estructural documentada (I2, I4, I11). El
+resto (N1/N3, informativos sin acción necesaria) no requiere más
+trabajo. Próximos pasos del proyecto en `docs/PROGRESS_REVIEW.md` y
+`estado.md` sección "Próximo paso inmediato".

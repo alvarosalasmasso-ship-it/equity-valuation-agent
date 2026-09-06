@@ -1798,3 +1798,66 @@ se diseñó sobre tickers nunca antes probados. BABA confirmó M5
 (fuera de la suite de CI por diseño, ya que depende de red real) —
 documentada aquí para que sea reproducible sin tener que rehacerla
 desde cero.
+
+## 28. DAFO y lotes de mejora: Net Debt/EBITDA, aviso de sector, tipo impositivo (Excel real), aviso de hiper-crecimiento (sesión 17)
+
+Petición del usuario: un DAFO del estado de la herramienta (entregado
+en el chat), y trabajar sus debilidades/oportunidades en lotes,
+priorizados de mayor a menor certeza/menor riesgo.
+
+### Lote A — ganancias rápidas
+
+**M7 cerrado**: `engine.ratios.net_debt_to_ebitda()` nueva (mismo guard
+de EBITDA<=0 que la versión bruta, pero un resultado negativo aquí SÍ
+es interpretable — caja neta positiva). `RatioSnapshot` expone ambas
+versiones; la UI las rotula explícitamente ("Deuda bruta/EBITDA" /
+"Deuda neta/EBITDA"); el memo usa la neta como cifra principal de
+apalancamiento.
+
+**Aviso proactivo de sector incompatible** (mejora sobre I11): la app
+ahora muestra un `st.warning` en cuanto detecta `sector` conteniendo
+"financial", "real estate", "bank" o "insurance" — ANTES de que el
+cómputo llegue a fallar (I9), no solo después. Verificado con JPM
+("Financial Services") y PLD ("Real Estate") reales.
+
+### Lote B — decisiones investigadas con el mismo rigor que M2
+
+**M6 (tipo impositivo a largo plazo) — resuelto con la evidencia más
+fuerte de todo el proyecto hasta ahora.** Primero se midió el impacto
+de un fade hacia el 25% estatutario en los 5 tickers de Big Tech:
+-8.5% (AAPL) a -19.0% (GOOGL) — empeoraría la brecha ya documentada, lo
+cual por sí solo no es motivo para descartarlo (el proyecto nunca
+decide por "qué acerca más al precio de mercado"). Así que se buscó
+evidencia independiente: se abrió `Advanced DCF.xlsx` con `openpyxl` y
+se leyeron las celdas REALES de tipo impositivo proyectado para AMZN
+(hoja "Operating Model", fila 52 "% tax rate"; hoja "North America",
+fila 19) — el analista de JPM proyecta **17.75% (2024) → 15.28% (2025)
+→ 16.13% (2026) → 17.03% (2027) → 17.03% (2028) → 16.64% (2029)**: una
+banda estrecha de ~15-18%, SIN ninguna convergencia hacia el ~25%
+estatutario, ni en los años más lejanos del horizonte. El propio banco
+de referencia ancla el tipo impositivo cerca del nivel reciente
+observado. **Decisión: se mantiene el tipo histórico plano, sin fade**
+— no por intuición, sino porque es literalmente lo que hace "el modelo
+a seguir" (principio del blueprint), verificado celda a celda.
+
+**I12 (hiper-crecimiento extremo, NVDA) — corrección parcial: aviso,
+no umbral de ajuste.** No existe un umbral objetivo verificable con
+datos de "a partir de qué CAGR el flat-growth deja de ser razonable" —
+inventar uno con precisión falsa habría repetido el error que el
+proyecto evitó con M2. Se añadió `EXTREME_FLAT_GROWTH_WARNING_THRESHOLD
+= 0.50` (50%/año) en `engine/projections.py`, una regla de pulgar
+deliberadamente conservadora (mismo espíritu que
+`MIN_PRUDENT_WACC_GROWTH_SPREAD`) que avisa —sin ajustar ningún
+número— mencionando el múltiplo real al que compone el CAGR plano hacia
+el año N. Verificado con datos reales: NVDA ("100%/año... multiplica
+los ingresos por 32.0x hacia el año 5") dispara el aviso; AMZN, MSFT,
+TSLA y BA (5%-21% de CAGR) no.
+
+### Verificación
+
+193 tests en total, todos en verde (187 + 6: 3 en `test_ratios.py`
+para Net Debt/EBITDA, 1 en `test_app.py` para el aviso de sector, 2 en
+`test_projections.py` para el aviso de hiper-crecimiento). Ambos avisos
+nuevos verificados con `AppTest` contra la app real (JPM/PLD para el
+aviso de sector, NVDA para el de hiper-crecimiento) — aparecen en el
+panel "Aviso técnico del modelo" tal como se diseñaron.

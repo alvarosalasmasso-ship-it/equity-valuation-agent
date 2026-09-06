@@ -100,6 +100,20 @@ def _is_nan(value) -> bool:
 # Kenvue): da z=21.3, muy por encima del umbral.
 OUTLIER_MODIFIED_Z_THRESHOLD = 3.5
 
+# Sesión 17 (prueba de estrés, docs/AUDIT.md hallazgo abierto): NVDA
+# mostró un valor terminal de $21.7 billones (trillion) manteniendo su
+# CAGR real reciente (~100%/año) plano durante los 5 años del horizonte
+# -- económicamente implausible, pese a que el crecimiento observado es
+# real (demanda de chips de IA, no un error de datos). Regla de pulgar
+# (no una ley exacta, igual que MIN_PRUDENT_WACC_GROWTH_SPREAD): no hay
+# un umbral objetivo verificado con datos de que a partir de qué tasa
+# el "flat CAGR" deja de ser razonable -- inventar uno con precisión
+# falsa repetiría el error que se evitó con M2. 50%/año es un punto de
+# corte defendible (pocas compañías reales sostienen eso varios años
+# seguidos sin desacelerar) pero deliberadamente conservador, solo para
+# avisar, nunca para bloquear ni ajustar el número.
+EXTREME_FLAT_GROWTH_WARNING_THRESHOLD = 0.50
+
 
 def _detect_anchor_outlier(chronological_ratios: Sequence[float]) -> tuple[bool, float]:
     """Compara el último valor de la serie (candidato a ancla `start` del
@@ -285,6 +299,19 @@ def default_assumptions_from_history(history: pd.DataFrame, n_years: int = 5,
 
     revenue_series = revenue_window["revenue"].tolist()
     initial_growth = cagr(revenue_series[0], revenue_series[-1], len(revenue_series) - 1)
+    if initial_growth > EXTREME_FLAT_GROWTH_WARNING_THRESHOLD:
+        terminal_year_multiple = (1 + initial_growth) ** n_years
+        warnings.warn(
+            f"Crecimiento de ingresos plano ({initial_growth:.0%}/año, el CAGR reciente real) "
+            f"mantenido sin desacelerar durante los {n_years} años del horizonte explícito "
+            f"(sección 14, verificado contra el Excel de referencia para crecimiento normal) "
+            f"multiplica los ingresos por {terminal_year_multiple:.1f}x hacia el año {n_years} -- "
+            "un ritmo sostenido excepcional incluso en hiper-crecimiento real (regla de pulgar, no "
+            "una ley exacta: pocas compañías reales sostienen esto varios años seguidos sin "
+            "desacelerar). El precio resultante puede salir económicamente implausible -- revisa "
+            "si conviene modelar una desaceleración explícita en vez de aceptar el valor por defecto.",
+            stacklevel=2,
+        )
 
     margin_window = history.tail(lookback_years)
     if margin_window.empty or pd.isna(margin_window.iloc[-1].get("revenue")):

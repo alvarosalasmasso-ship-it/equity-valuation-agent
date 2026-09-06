@@ -126,6 +126,7 @@ def build_memo_input(ticker: str, wacc: float, terminal_growth_rate: float,
             "roic": ratios.roic,
             "crea_valor_roic_mayor_que_wacc": bool(ratios.creates_value),
             "debt_to_ebitda": ratios.debt_to_ebitda,
+            "net_debt_to_ebitda": ratios.net_debt_to_ebitda,
             "interest_coverage": interest_coverage,
             "current_ratio": ratios.current_ratio,
         }

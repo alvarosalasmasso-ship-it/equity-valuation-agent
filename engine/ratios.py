@@ -81,7 +81,12 @@ def creates_value(roic_: float, wacc: float) -> bool:
 # ---------------------------------------------------------------------------
 
 def debt_to_ebitda(total_debt: float, ebitda: float) -> float:
-    """Auditoría (sesión 17): con EBITDA<=0 (un año de break-even o
+    """Deuda BRUTA / EBITDA (M7, `docs/AUDIT.md`: el nombre y la
+    etiqueta antes no aclaraban que es deuda bruta, no neta -- Net
+    Debt/EBITDA es al menos igual de común en la práctica bancaria real,
+    ver `net_debt_to_ebitda()`).
+
+    Auditoría (sesión 17): con EBITDA<=0 (un año de break-even o
     pérdida operativa antes de D&A) esta función hacía `crashear` con
     ZeroDivisionError, o devolvía un ratio negativo sin sentido (un
     Debt/EBITDA "negativo" no significa "menos apalancado" -- significa
@@ -98,6 +103,22 @@ def debt_to_ebitda(total_debt: float, ebitda: float) -> float:
             "de la forma habitual (un año de break-even o pérdida operativa antes de D&A)."
         )
     return total_debt / ebitda
+
+
+def net_debt_to_ebitda(total_debt: float, cash: float, ebitda: float) -> float:
+    """Deuda NETA (deuda total - caja) / EBITDA (M7, sesión 17). Puede
+    salir negativo de forma legítima (caja neta positiva, p.ej. AAPL en
+    ciertos ejercicios) -- a diferencia de un Debt/EBITDA bruto negativo
+    (que señala EBITDA<=0, no interpretable), aquí un valor negativo SÍ
+    es interpretable: significa que la caja supera a la deuda total.
+    Mismo guard que debt_to_ebitda() para EBITDA<=0 -- ninguna versión
+    del ratio es interpretable con una base nula o negativa."""
+    if ebitda <= 0:
+        raise ValueError(
+            f"EBITDA no positivo ({ebitda:,.0f}) -- Net Debt/EBITDA no es un ratio interpretable "
+            "de la forma habitual (un año de break-even o pérdida operativa antes de D&A)."
+        )
+    return (total_debt - cash) / ebitda
 
 
 def interest_coverage(ebit: float, interest_expense: float) -> float:
@@ -136,6 +157,7 @@ class RatioSnapshot:
     roic: float
     creates_value: bool
     debt_to_ebitda: float
+    net_debt_to_ebitda: float
     interest_coverage: float
     current_ratio: float
 
@@ -156,6 +178,7 @@ def compute_ratio_snapshot(row, wacc: float) -> RatioSnapshot:
         roic=r,
         creates_value=creates_value(r, wacc),
         debt_to_ebitda=debt_to_ebitda(row["total_debt"], row["ebitda"]),
+        net_debt_to_ebitda=net_debt_to_ebitda(row["total_debt"], row["cash"], row["ebitda"]),
         interest_coverage=interest_coverage(row["ebit"], row["interest_expense"]),
         current_ratio=current_ratio(row["current_assets"], row["current_liabilities"]),
     )
