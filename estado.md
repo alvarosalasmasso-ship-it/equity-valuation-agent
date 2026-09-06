@@ -1603,16 +1603,40 @@ abierto en todo `docs/AUDIT.md` tras esta sesión.
 **227 tests en total** (sin cambios de código en esta sección — I15 es
 un hallazgo documentado, no corregido).
 
-## 27. Próximo paso inmediato
+## 27. Sesión 17 (continuación) — Grupo small/mid-cap de consumo (MCRI/SHOO/BOOT/FIZZ), vía yfinance: M9 corregido
 
-0. Commitear la documentación de I15 (biotech/farma) con confirmación
-   explícita del usuario.
+Último grupo de esta ronda de "sigue analizando empresas", elegido
+para probar el límite inferior de cobertura de datos (menos analistas,
+menos liquidez). Resultados de valoración: MCRI casi en valor justo
+(+0.9%), SHOO y BOOT infravalorados según el modelo pero con avisos
+técnicos reales (SHOO no crea valor: ROIC=4.6%<WACC=9.1%, margen 2024
+comprimido a un outlier estadístico).
+
+**M9 (nuevo, ✅ corregido)**: **FIZZ** (National Beverage, empresa real
+conocida por operar SIN deuda) crasheaba un script de evaluación con
+un `IndexError` crudo de pandas — `interest_expense` 100% vacío en su
+histórico. Investigado contra la app real: el modo "cualquier ticker"
+ya tenía un guard explícito para este caso exacto (mensaje claro), pero
+`build_peer_wacc()` (modo "universo cacheado", el que usa cualquier
+visitante por defecto) no lo tenía — misma inconsistencia de robustez
+que M7/M8, aunque no explotable hoy porque ningún `CACHED_GROUPS`
+actual incluye una empresa sin deuda. Corregido con el mismo guard
+explícito ya usado en el otro modo. 1 test de regresión nuevo.
+
+**228 tests en total, todos en verde.**
+
+## 28. Próximo paso inmediato
+
+0. Commitear M9 + el grupo small/mid-cap con confirmación explícita del
+   usuario.
 1. Investigar/corregir I15 con más casos reales antes de decidir el
    guard correcto para `tax_rate` — candidato concreto para la próxima
    sesión.
 2. Seguir analizando más empresas/sectores si el usuario lo pide —
-   candidato natural: small-caps para probar el límite inferior de
-   cobertura de datos.
+   sectores ya cubiertos: Big Tech (MSFT dogfooding), semiconductores,
+   utilities reguladas, biotech/farma, small/mid-cap consumo.
+   Candidatos naturales sin cubrir: financiero/cíclico internacional
+   (divisa no-USD), energía/materias primas.
 0.5. SEC EDGAR — retomar si se quiere reducir la dependencia de la
    cuota de Alpha Vantage: falta D&A fiable (sin resolver) y construir
    el módulo completo con lo ya validado para el resto de campos.

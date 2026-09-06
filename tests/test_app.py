@@ -291,6 +291,32 @@ def test_alpha_vantage_error_shows_actionable_message_not_a_traceback():
     assert "25 peticiones" in at.error[0].value
 
 
+def test_cached_group_mode_with_missing_interest_expense_shows_actionable_error():
+    """Regresión (sesión 17, evaluación del grupo Utilities/biotech):
+    FIZZ (National Beverage, sin deuda) tiene `interest_expense` vacío
+    en TODO su histórico -- antes de este fix, `build_peer_wacc()`
+    (modo "universo cacheado", el que usa cualquier visitante por
+    defecto) no comprobaba esto y dejaba escapar un IndexError crudo de
+    pandas hacia el except genérico -- el usuario veía el texto interno
+    de pandas ("single positional indexer is out-of-bounds") en vez de
+    un mensaje accionable. El modo "cualquier ticker" ya tenía este
+    guard (ver test_arbitrary_ticker_mode más abajo); ahora ambos
+    caminos lo comparten."""
+    def history_without_interest_expense(client, symbol, use_cache=True):
+        df = _fake_av_historical_financials(client, symbol, use_cache)
+        if symbol == "AMZN":
+            df = df.assign(interest_expense=[None, None])
+        return df
+
+    at = _run_app(extra_patches=[
+        patch("engine.data_provider.historical_financials", side_effect=history_without_interest_expense),
+    ])
+    assert not at.exception
+    assert len(at.error) >= 1
+    assert "gasto financiero" in at.error[0].value
+    assert "AMZN" in at.error[0].value
+
+
 def test_generic_loader_failure_shows_actionable_message_not_a_traceback():
     def raise_network_error(*args, **kwargs):
         raise ConnectionError("network down")

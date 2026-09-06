@@ -174,12 +174,29 @@ def build_peer_wacc(target: str, hist_data: dict, snap_data: dict,
     en vez de reconstruir la lista de comparables aquí."""
     hist, snap = hist_data[target], snap_data[target]
     peers = build_peer_set(target, hist_data, snap_data)
+
+    # Auditoría sesión 17: FIZZ (National Beverage, sin deuda) tiene
+    # `interest_expense` vacío en TODO su histórico -- `.iloc[-1]` sobre
+    # una Serie vacía lanza IndexError crudo de pandas. El modo "cualquier
+    # ticker" ya tenía este mismo guard con un mensaje claro (líneas
+    # 302-308 más abajo); este modo ("universo cacheado") no lo tenía,
+    # pese a compartir el mismo riesgo si algún grupo cacheado futuro
+    # incluye una empresa sin deuda. Sin este guard no crashea (el
+    # try/except del llamador ya lo cubre), pero el mensaje que llega al
+    # usuario es el texto interno de pandas, no uno accionable.
+    tax_rate_series = hist["tax_rate"].dropna()
+    if tax_rate_series.empty:
+        raise ValueError(f"Sin tipo impositivo disponible para '{target}'.")
+    interest_expense_series = hist["interest_expense"].dropna()
+    if interest_expense_series.empty:
+        raise ValueError(f"Sin dato de gasto financiero disponible para '{target}'.")
+
     return build_wacc(
-        peers=peers, target_tax_rate=float(hist["tax_rate"].dropna().iloc[-1]),
+        peers=peers, target_tax_rate=float(tax_rate_series.iloc[-1]),
         target_net_debt=(snap.get("total_debt") or 0) - (snap.get("cash") or 0),
         target_market_cap=snap["market_cap"], risk_free_rate=risk_free_rate,
         market_risk_premium=market_risk_premium,
-        target_interest_expense=float(hist["interest_expense"].dropna().iloc[-1]),
+        target_interest_expense=float(interest_expense_series.iloc[-1]),
         target_total_debt=snap.get("total_debt") or 0,
     )
 

@@ -43,13 +43,16 @@ encaja con bancos/REITs), I14 (reverse DCF solo resuelve crecimiento,
 no margen — hallazgo real con AMD)), **1 abierto — I15** (`tax_rate`
 proyectado sin detección de outliers, a diferencia de margen/CapEx/
 D&A/ΔNWC — hallazgo real con VRTX, precio implícito negativo pese a
-ROIC=25.4%>>WACC), 8 moderados (**todos
-cerrados**: 7 ✅ corregidos incluido M7 en el Lote A y M8 (evaluación
+ROIC=25.4%>>WACC), 9 moderados (**todos
+cerrados**: 8 ✅ corregidos incluido M7 en el Lote A, M8 (evaluación
 del sector Utilities: yfinance no reportaba D&A para D bajo la etiqueta
-estándar), 1 ✅ decisión explícita investigada — M2 (con nueva evidencia
-de fragilidad sistemática de Gordon Growth en todo el sector Utilities,
-no solo un caso puntual), y M6 recién investigado con evidencia
-directa del Excel de referencia y también cerrado), 3 informativos (1
+estándar) y M9 (grupo small/mid-cap: `build_peer_wacc()` sin el mismo
+guard de `interest_expense`/`tax_rate` vacíos que ya tenía el modo
+"cualquier ticker"), 1 ✅ decisión explícita investigada — M2 (con nueva
+evidencia de fragilidad sistemática de Gordon Growth en todo el sector
+Utilities, no solo un caso puntual), y M6 recién investigado con
+evidencia directa del Excel de referencia y también cerrado), 3
+informativos (1
 ✅ corregido — N2 —, 2 sin acción necesaria). Con esto, **queda un
 único hallazgo importante abierto (I15)** — candidato concreto para la
 próxima sesión, dejado sin corregir a propósito por falta de evidencia
@@ -1165,6 +1168,44 @@ el mensaje de error genérico de la sección 490-499 de
 I2/I11, pero potencialmente engañoso para futuros huecos de datos de
 proveedor no relacionados con el sector. Queda como mejora de mensaje,
 no como bug, fuera del alcance de esta corrección puntual.
+
+---
+
+### M9. `build_peer_wacc()` (modo "universo cacheado") sin guard de `interest_expense`/`tax_rate` vacíos, a diferencia del modo "cualquier ticker" — ✅ CORREGIDO (sesión 17, evaluación del grupo small/mid-cap)
+
+**Qué es:** evaluando un grupo real de small/mid-caps de consumo
+(MCRI, SHOO, BOOT, FIZZ, vía yfinance), **FIZZ** (National Beverage,
+una compañía real y conocida por operar SIN deuda) hizo crashear un
+script de evaluación con un `IndexError` crudo de pandas
+(`hist["interest_expense"].dropna().iloc[-1]` sobre una Serie 100%
+vacía). Investigado contra `app/streamlit_app.py`: el modo "cualquier
+ticker" (línea 260+) YA tenía un guard explícito para este caso exacto
+(`if interest_expense_series.empty: raise ValueError(...)`, con
+mensaje claro) — pero `build_peer_wacc()` (línea 171, usado por el modo
+"universo cacheado", el que usa cualquier visitante por defecto) NO lo
+tenía, pese a resolver el mismo cálculo.
+
+**Por qué importa aunque no sea explotable hoy:** los `CACHED_GROUPS`
+actuales (Big Tech, Consumo defensivo: KO/PG/JNJ) no incluyen ninguna
+empresa sin deuda, así que esta ruta concreta no es alcanzable por un
+usuario real de la app HOY. Pero es una inconsistencia de robustez
+real entre dos funciones que hacen literalmente el mismo cálculo: si
+una futura sesión añade un grupo cacheado que incluya una empresa sin
+deuda (defensivo/consumo básico es precisamente el tipo de sector
+candidato), el usuario vería el texto interno de pandas
+("single positional indexer is out-of-bounds") en vez de un mensaje
+accionable — no un crash (el `try/except` del llamador ya lo cubre),
+pero sí una regresión de calidad silenciosa frente al estándar ya
+establecido por el otro modo.
+
+**Cómo se corrigió:** `build_peer_wacc()` ahora comprueba
+`tax_rate`/`interest_expense` vacíos ANTES de construir el WACC, con el
+mismo mensaje específico y accionable que ya usaba el modo "cualquier
+ticker" ("Sin dato de gasto financiero disponible para '{target}'.").
+
+**Verificado:** 1 test de regresión nuevo en `test_app.py` (AMZN con
+`interest_expense` vacío en el modo "universo cacheado" por defecto →
+mensaje accionable, no traceback). 228 tests en total, todos en verde.
 
 ---
 
