@@ -27,16 +27,18 @@ reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
 y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
-**1 hallazgo crítico (✅ corregido), 4 importantes (2 ✅ corregidos, 2 ✅
-aceptados como limitación documentada), 5 moderados (4 ✅ corregidos, 1
-✅ decisión explícita investigada y mantenida), 3 informativos (sin
-acción necesaria).** Con esto, **todos los hallazgos no informativos de
-esta auditoría tienen un estado cerrado** — corregidos con código, o
-decididos y documentados explícitamente en vez de dejados pendientes
-sin más. "Cerrado" no significa "arreglado con código" en todos los
-casos: I2 e I4 son limitaciones estructurales aceptadas (sin fuente de
-datos gratuita para resolverlas), y M2 es una constante que se investigó
-a fondo y se decidió mantener, no cambiar.
+**1 hallazgo crítico (✅ corregido), 5 importantes (3 ✅ corregidos, 2 ✅
+aceptados como limitación documentada — I5 añadido en sesión 16), 5
+moderados (4 ✅ corregidos, 1 ✅ decisión explícita investigada y
+mantenida), 3 informativos (1 ✅ corregido — N2, tests automatizados de
+la app —, 2 sin acción necesaria).**
+Con esto, **todos los hallazgos no informativos de esta auditoría tienen
+un estado cerrado** — corregidos con código, o decididos y documentados
+explícitamente en vez de dejados pendientes sin más. "Cerrado" no
+significa "arreglado con código" en todos los casos: I2 e I4 son
+limitaciones estructurales aceptadas (sin fuente de datos gratuita para
+resolverlas), y M2 es una constante que se investigó a fondo y se
+decidió mantener, no cambiar.
 
 ---
 
@@ -274,6 +276,47 @@ Ya está señalado en la propia UI (`app/streamlit_app.py`, tabla de
 comparables) que el múltiplo es la mediana de un grupo concreto, no de
 un universo exhaustivo.
 
+### I5. Sin manejo de errores en modo "universo cacheado" — ✅ CORREGIDO (sesión 16)
+
+**Qué es:** a diferencia del modo "cualquier ticker" (I3, con manejo de
+errores desde la sesión 15), el modo por defecto de la app —el que usa
+cualquier visitante que no toque nada, y el que comparte la cuota de 25
+peticiones/día de Alpha Vantage entre TODOS los visitantes de la app ya
+pública— no tenía ningún `try/except` alrededor de `load_av_universe()`
+ni de la construcción del WACC. Encontrado y verificado por inspección
+directa del código, no por especulación: `AlphaVantageError` (cuota
+agotada) o cualquier fallo de red se propagaban sin capturar.
+
+**Por qué importa:** con la app ya desplegada y pública, esto dejó de
+ser un riesgo teórico — un visitante cualquiera agotando la cuota
+compartida (o un fallo de red puntual de Alpha Vantage) vería un
+traceback crudo de Streamlit en el camino principal de la herramienta,
+no en un caso límite.
+
+**Cómo se corrigió:** `try/except` alrededor de `loader(tuple(tickers))`
++ `build_peer_wacc(...)`, con un mensaje específico para
+`AlphaVantageError` (menciona la cuota compartida y sugiere el grupo
+"Consumo defensivo" o "Cualquier ticker" como alternativas que no
+dependen de Alpha Vantage) y uno genérico para cualquier otro fallo.
+Mismo principio que I3: límite del sistema (API externa que no
+controlamos), excepción amplia deliberada.
+
+**De paso, en la misma revisión de robustez:** `load_av_universe()` y
+`load_yf_universe()` no tenían `ttl` en su `@st.cache_data` — el
+resultado vivía tanto como el proceso de Streamlit Cloud (potencialmente
+días sin reiniciar), dejando el precio de mercado y el consenso de
+analistas congelados por accidente en una herramienta que presume de
+"risk-free rate en vivo". Añadido `ttl=3600` (1h, consistente con
+`get_live_risk_free_rate()`) — no agota la cuota de Alpha Vantage porque
+su propio caché en disco (24h) sigue absorbiendo la mayoría de las
+re-peticiones.
+
+**Verificado:** 2 tests de regresión nuevos en `tests/test_app.py`
+(`AlphaVantageError` y un `ConnectionError` genérico, cada uno
+confirmando un `st.error` accionable y cero excepciones sin capturar) +
+verificación visual con Playwright de que el camino feliz (AMZN) sigue
+funcionando exactamente igual tras el cambio.
+
 ---
 
 ## Moderado
@@ -479,14 +522,34 @@ R²=0.001** (sin tendencia real, pura variación año a año alrededor de
 (tendencia débil, pero rango muy estrecho, -3.4% a -2.9%). Sin cambios
 necesarios en ninguno de los dos.
 
-### N2. Sin tests automatizados de `app/streamlit_app.py`
+### N2. Sin tests automatizados de `app/streamlit_app.py` — ✅ CORREGIDO (sesión 16)
 
-Ningún test de `pytest` ejercita el script de Streamlit directamente
-(es la práctica estándar de la industria para apps Streamlit, dado su
-modelo de ejecución) — se ha verificado cada sesión con smoke-tests
+Ningún test de `pytest` ejercitaba el script de Streamlit directamente
+(era la práctica estándar de la industria para apps Streamlit, dado su
+modelo de ejecución) — se verificaba cada sesión con smoke-tests
 manuales (arranque del servidor + réplica de la ruta de cómputo exacta
-con datos reales). Aceptable, pero merece constar como límite conocido
-del enfoque de testing.
+con datos reales, más capturas de pantalla vía Playwright).
+
+**Cerrado con `tests/test_app.py`**, usando `streamlit.testing.v1.AppTest`
+(framework de test headless de Streamlit, sin navegador ni red). Detalle
+no obvio, encontrado escribiendo la suite: `AppTest` re-ejecuta el
+script COMPLETO desde cero en cada `.run()` (imita de verdad el modelo
+de rerun de Streamlit) — parchear `app.streamlit_app.load_av_universe`
+no intercepta nada, porque esa referencia queda obsoleta en cuanto el
+script se re-ejecuta; hay que parchear en el módulo de ORIGEN
+(`engine.data_provider`, `engine.yfinance_provider`), de donde el
+script vuelve a importar en cada ejecución. Segundo detalle encontrado:
+`@st.cache_data` sobrevive entre tests dentro del mismo proceso (por
+diseño, para sobrevivir reruns) — sin limpiar el caché entre tests, un
+test exitoso anterior deja el resultado cacheado y los tests de fallo
+de API nunca vuelven a invocar la función parcheada.
+
+9 tests que fijan como regresión automática lo que antes solo se
+verificaba a mano: el camino feliz por defecto, el fix del delta
+"Crea valor" (verde) de esta misma sesión, el manejo de errores de
+Alpha Vantage en modo "universo cacheado" (ver el nuevo hallazgo de la
+sección de Importantes más abajo), I3 (ticker inválido, beta ausente) y
+M5 (divisa no USD, con contraprueba de que USD no bloquea).
 
 ### N3. Degradación silenciosa de la ventana de histórico
 
@@ -517,8 +580,10 @@ aviso en la interfaz.
 - **El múltiplo de salida se corrigió** de "propio de la empresa" a
   "mediana de comparables" (sesión 14), con el efecto mixto reportado
   con honestidad en vez de maquillado.
-- **148 tests, cero dependen de red** — toda la suite corre offline con
-  fixtures fieles al formato real de las APIs.
+- **157 tests, cero dependen de red** — toda la suite corre offline con
+  fixtures fieles al formato real de las APIs, incluidos 9 tests de la
+  app en sí (`streamlit.testing.v1.AppTest`, sesión 16) y CI en GitHub
+  Actions corriéndolos en cada push.
 - **Capa generativa desacoplada del cálculo por diseño**, no como
   parche — el LLM nunca ve datos crudos, solo un paquete ya cerrado.
 
@@ -553,8 +618,15 @@ aviso en la interfaz.
    limitaciones estructurales (sesión 16), sin fuente de datos gratuita
    disponible para resolverlos de verdad — señalados ahora en la propia
    UI, no solo en este documento.
+10. ~~**I5 (sin manejo de errores en modo "universo cacheado")**~~ — ✅
+    corregido (sesión 16, tras cerrar la auditoría original) — hallazgo
+    nuevo encontrado al pedir "que la herramienta sea perfecta" y seguir
+    auditando; incluye también fijar un `ttl` en el caché de universo
+    (antes vivía tanto como el proceso).
+11. ~~**N2 (sin tests automatizados de la app)**~~ — ✅ corregido (sesión
+    16) con `streamlit.testing.v1.AppTest` + CI en GitHub Actions.
 
 **Con esto, no quedan hallazgos abiertos de esta auditoría** (más allá
-de los informativos, que no requieren acción). Próximos pasos del
+de N1/N3, informativos sin acción necesaria). Próximos pasos del
 proyecto en `docs/PROGRESS_REVIEW.md` — probar la capa generativa en
 vivo, Fase 9 (sentiment), o lo que el usuario priorice a continuación.

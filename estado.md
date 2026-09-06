@@ -1135,11 +1135,53 @@ decididos y documentados explícitamente. 4 tests de regresión nuevos.
 **148 tests en total, todos en verde.** Verificado end-to-end con
 Playwright contra la app real (TM bloqueado, AMZN sigue funcionando).
 
-## 12. Próximo paso inmediato
+## 12. Sesión 16 (continuación) — "Que la herramienta sea perfecta": 4 mejoras de robustez
+
+El usuario pidió seguir consolidando "hasta la mayor pulcritud" y que
+analizara qué incluir. Se verificaron tres huecos reales (no
+especulados) antes de proponerlos, y se ejecutaron los cuatro en
+secuencia sin pausar entre uno y otro (petición explícita: "en cuanto
+acabes y compruebes que está resuelto pasa al siguiente").
+
+1. **I5 (nuevo hallazgo) — manejo de errores en modo "universo
+   cacheado".** A diferencia de "cualquier ticker" (I3), el modo por
+   defecto —el que usa cualquier visitante de la app ya pública, y
+   comparte la cuota de 25 peticiones/día de Alpha Vantage entre
+   todos— no tenía ningún `try/except`. Corregido con un mensaje
+   específico para `AlphaVantageError` (menciona la cuota compartida) y
+   uno genérico para cualquier otro fallo.
+2. **CI en GitHub Actions** (`.github/workflows/tests.yml`): corre
+   `pytest tests/ -v` en cada push/PR a `master`, Python 3.12, sin
+   secrets (toda la suite es offline). Badge añadido al README.
+3. **Tests automatizados de la app** (`tests/test_app.py`, cierra N2)
+   con `streamlit.testing.v1.AppTest`. Dos detalles no obvios
+   encontrados escribiéndolos, documentados en el propio archivo: (a)
+   `AppTest` re-ejecuta el script completo en cada `.run()` -- parchear
+   `app.streamlit_app.X` no sirve, hay que parchear en el módulo de
+   ORIGEN (`engine.data_provider`/`engine.yfinance_provider`); (b)
+   `@st.cache_data` sobrevive entre tests del mismo proceso -- sin
+   limpiar el caché entre tests, un test exitoso anterior contamina los
+   tests de fallo de API posteriores. 9 tests nuevos, cubren el camino
+   feliz, el fix del delta "Crea valor" de esta sesión, I3, I5 y M5.
+4. **TTL en el caché de universo** (`load_av_universe`/`load_yf_universe`,
+   antes sin `ttl` -- vivían tanto como el proceso, potencialmente días
+   en Streamlit Cloud). Añadido `ttl=3600`, consistente con
+   `get_live_risk_free_rate()`.
+
+De paso, limpiados los avisos de deprecación de Streamlit
+(`use_container_width` → `width="stretch"`) que aparecieron en los
+logs de los tests nuevos.
+
+**157 tests en total, todos en verde** (148 + 9 de la app). Verificado
+end-to-end con Playwright contra la app real corriendo (AMZN sigue
+funcionando exactamente igual). `docs/AUDIT.md` actualizado: I5 y N2
+añadidos/cerrados, contadores del resumen ejecutivo al día.
+
+## 13. Próximo paso inmediato
 
 1. Fase 9 (sentiment en earnings calls) — extensión opcional.
 2. Probar la capa generativa con una llamada real — aparcado por ahora
    a petición del usuario, no es una prioridad activa.
 3. Universo de comparables más amplio/mejor segmentado — se evaluó como
-   opción de "rigor técnico" pero no se priorizó frente a M2/M5/I2/I4
-   esta sesión; sigue disponible como línea futura si se retoma.
+   opción de "rigor técnico" pero no se priorizó frente a lo demás esta
+   sesión; sigue disponible como línea futura si se retoma.

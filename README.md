@@ -1,5 +1,7 @@
 # Agente de valoración DCF
 
+[![Tests](https://github.com/alvarosalasmasso-ship-it/equity-valuation-agent/actions/workflows/tests.yml/badge.svg)](https://github.com/alvarosalasmasso-ship-it/equity-valuation-agent/actions/workflows/tests.yml)
+
 **App en vivo:** [equity-valuation-agent.streamlit.app](https://equity-valuation-agent.streamlit.app/)
 
 Agente de valoración de equities: extrae estados financieros

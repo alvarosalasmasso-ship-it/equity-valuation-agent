@@ -18,7 +18,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from ai.memo_generator import build_memo_input, build_prompt, run_scenarios_capturing_warnings
-from engine.data_provider import AlphaVantageClient
+from engine.data_provider import AlphaVantageClient, AlphaVantageError
 from engine.data_provider import historical_financials as av_historical_financials
 from engine.data_provider import market_snapshot as av_market_snapshot
 from engine.validation import build_peer_set
@@ -136,7 +136,19 @@ def get_live_risk_free_rate() -> tuple[float, str]:
         )
 
 
-@st.cache_data(show_spinner="Cargando datos cacheados de Alpha Vantage...")
+# Sesión 16 (continuación), "rigor técnico restante": sin ttl, el caché de
+# Streamlit (distinto del caché en disco de 24h de AlphaVantageClient, una
+# capa por debajo) vivía tanto como el propio proceso -- en Streamlit Cloud
+# eso son potencialmente días sin reiniciar. Una herramienta que presume de
+# "risk-free rate en vivo" (get_live_risk_free_rate, arriba, sí con ttl=3600)
+# no debería tener el precio de mercado y el consenso de analistas congelados
+# por accidente durante ese tiempo. 3600s (1h) por consistencia con esa misma
+# función -- no agota la cuota de Alpha Vantage porque su propio caché en
+# disco (24h) sigue absorbiendo la mayoría de las re-peticiones.
+UNIVERSE_CACHE_TTL_SECONDS = 3600
+
+
+@st.cache_data(ttl=UNIVERSE_CACHE_TTL_SECONDS, show_spinner="Cargando datos cacheados de Alpha Vantage...")
 def load_av_universe(tickers: tuple) -> tuple[dict, dict]:
     client = AlphaVantageClient()
     hist = {t: av_historical_financials(client, t, use_cache=True) for t in tickers}
@@ -144,7 +156,7 @@ def load_av_universe(tickers: tuple) -> tuple[dict, dict]:
     return hist, snap
 
 
-@st.cache_data(show_spinner="Descargando datos de yfinance...")
+@st.cache_data(ttl=UNIVERSE_CACHE_TTL_SECONDS, show_spinner="Descargando datos de yfinance...")
 def load_yf_universe(tickers: tuple) -> tuple[dict, dict]:
     hist, snap = {}, {}
     for t in tickers:
@@ -211,8 +223,32 @@ with st.sidebar:
         tickers = CACHED_GROUPS[group_name]
         target = st.selectbox("Ticker", tickers)
         loader = load_av_universe if "Alpha Vantage" in group_name else load_yf_universe
-        hist_data, snap_data = loader(tuple(tickers))
-        wacc_result = build_peer_wacc(target, hist_data, snap_data, risk_free_rate, market_risk_premium)
+        # A diferencia del modo "cualquier ticker" (I3, auditoría sesión 15),
+        # este camino -- el que usa cualquier visitante por defecto -- no tenía
+        # manejo de errores: un fallo de Alpha Vantage (cuota de 25 peticiones/día
+        # agotada, COMPARTIDA entre todos los visitantes de esta app ya pública) o
+        # de red se propagaba como un traceback crudo de Streamlit en vez de un
+        # mensaje accionable. Mismo principio que I3: límite del sistema (API
+        # externa que no controlamos), no un error interno -- excepción amplia
+        # deliberada, con un mensaje específico para el caso de cuota agotada.
+        try:
+            hist_data, snap_data = loader(tuple(tickers))
+            wacc_result = build_peer_wacc(target, hist_data, snap_data, risk_free_rate, market_risk_premium)
+        except AlphaVantageError as e:
+            st.error(
+                f"Alpha Vantage no pudo responder para el grupo '{group_name}': {e}\n\n"
+                "El free tier limita a 25 peticiones/día, compartidas entre todos los "
+                "visitantes de esta app — puede que la cuota esté agotada por hoy. Prueba "
+                "con 'Consumo defensivo (yfinance)' o con 'Cualquier ticker', que no "
+                "dependen de Alpha Vantage."
+            )
+            st.stop()
+        except Exception as e:
+            st.error(
+                f"No se pudo cargar el grupo '{group_name}': {e}\n\n"
+                "Prueba con otro grupo de comparables o con 'Cualquier ticker'."
+            )
+            st.stop()
         wacc_value = wacc_result.wacc
         wacc_detail = wacc_result
     else:
@@ -460,7 +496,7 @@ with tab_valoracion:
         xaxis=dict(title="Precio implícito ($)", range=[0, max_x], gridcolor=COLORS["border"], zeroline=False),
         yaxis=dict(gridcolor=COLORS["border"], automargin=True),
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
     if warnings_text:
         for w in warnings_text:
@@ -489,7 +525,7 @@ with tab_valoracion:
             xaxis=dict(title="g terminal", side="bottom"),
             yaxis=dict(title="WACC", autorange="reversed"),
         )
-        st.plotly_chart(fig_matrix, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig_matrix, width="stretch", config={"displayModeBar": False})
     else:
         st.caption("Rango de WACC insuficiente para la matriz con la g elegida (sube el WACC o baja g).")
 
@@ -507,7 +543,7 @@ with tab_supuestos:
         {"Driver": "Δ NWC (% ventas)", "Año 1": f"{assumptions.nwc_change_pct_revenue.start*100:.2f}%",
          "Año N": f"{assumptions.nwc_change_pct_revenue.end*100:.2f}%"},
     ])
-    st.dataframe(assumptions_df, hide_index=True, use_container_width=True)
+    st.dataframe(assumptions_df, hide_index=True, width="stretch")
 
     st.subheader("Expectativas implícitas del mercado (reverse DCF)")
     st.caption(
@@ -532,7 +568,7 @@ with tab_supuestos:
                 "Gap vs. asumido": gap_cell,
                 "g terminal implícita": g_cell,
             })
-        st.dataframe(pd.DataFrame(implied_rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(implied_rows), hide_index=True, width="stretch")
         st.caption(
             f"Crecimiento de ingresos asumido (escenario conservador, CAGR reciente): "
             f"**{assumptions.revenue_growth.start*100:.1f}%**. Tasa de crecimiento terminal asumida: "
@@ -566,7 +602,7 @@ with tab_fundamentales:
 
     st.subheader("Comparables")
     if comps_table is not None:
-        st.dataframe(comps_table, use_container_width=True)
+        st.dataframe(comps_table, width="stretch")
         st.caption(
             f"Múltiplo EV/EBITDA de salida usado en el valor terminal: **{terminal_multiple:.2f}x** "
             f"(mediana de {len(comps_table) - 1} comparables, excluyendo {target} — no el múltiplo de "
