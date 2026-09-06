@@ -1,11 +1,14 @@
 # Auditoría técnica — Agente de valoración DCF
 
-**Fecha:** 2026-09-05 (sesión 15). **Alcance:** todo `engine/`, `ai/`,
-`app/`, `tests/`, comparado sistemáticamente contra `Advanced DCF.xlsx`
-(el modelo profesional de referencia). Metodología: relectura completa
-del código (no solo memoria de sesiones anteriores) + verificación
-puntual de cada hallazgo con datos reales antes de reportarlo — mismo
-estándar que se ha aplicado en toda la sesión.
+**Fecha:** 2026-09-05 (sesión 15), extendida 2026-09-06 (sesión 17).
+**Alcance:** todo `engine/`, `ai/`, `app/`, `tests/`, comparado
+sistemáticamente contra `Advanced DCF.xlsx` (el modelo profesional de
+referencia). Metodología: relectura completa del código (no solo
+memoria de sesiones anteriores) + verificación puntual de cada hallazgo
+con datos reales antes de reportarlo — mismo estándar que se ha
+aplicado en toda la sesión. La sesión 17 añadió un pase específico de
+rigor matemático/financiero (fórmula a fórmula contra teoría estándar,
+no solo revisión de código) a petición explícita del usuario.
 
 Cada hallazgo indica: qué es, por qué importa, y si se ha verificado
 con evidencia concreta (no solo inspección de código).
@@ -27,18 +30,28 @@ reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
 y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
-**1 hallazgo crítico (✅ corregido), 5 importantes (3 ✅ corregidos, 2 ✅
-aceptados como limitación documentada — I5 añadido en sesión 16), 5
-moderados (4 ✅ corregidos, 1 ✅ decisión explícita investigada y
-mantenida), 3 informativos (1 ✅ corregido — N2, tests automatizados de
-la app —, 2 sin acción necesaria).**
-Con esto, **todos los hallazgos no informativos de esta auditoría tienen
-un estado cerrado** — corregidos con código, o decididos y documentados
-explícitamente en vez de dejados pendientes sin más. "Cerrado" no
-significa "arreglado con código" en todos los casos: I2 e I4 son
-limitaciones estructurales aceptadas (sin fuente de datos gratuita para
-resolverlas), y M2 es una constante que se investigó a fondo y se
-decidió mantener, no cambiar.
+**1 hallazgo crítico (✅ corregido), 7 importantes (5 ✅ corregidos —
+I6/I7 añadidos en sesión 17, dos crashes reales de división por cero
+encontrados en la auditoría técnica/matemática a fondo del motor—, 2 ✅
+aceptados como limitación documentada), 7 moderados (4 ✅ corregidos, 1
+✅ decisión explícita investigada y mantenida, 2 ⏳ abiertos — M6/M7,
+sesión 17, pendientes de investigar/decidir), 3 informativos (1 ✅
+corregido — N2, tests automatizados de la app —, 2 sin acción
+necesaria).**
+La sesión 17 añadió una auditoría explícita del rigor matemático y
+financiero del motor (`engine/valuation.py`, `wacc_builder.py`,
+`ratios.py`, `comps.py`) verificado fórmula a fórmula contra teoría
+financiera estándar y contra el propio Excel de referencia — confirmó
+correcto lo más crítico (convención mid-year + stub, fórmula de Gordon
+Growth, ausencia de circularidad en WACC, ausencia de doble conteo del
+escudo fiscal, consistencia de EBITDA entre módulos) y encontró dos
+bugs reales no detectados hasta entonces (I6, I7) más dos puntos de
+diseño que merecen una decisión explícita, no silenciosa (M6, M7).
+"Cerrado" no significa "arreglado con código" en todos los casos: I2 e
+I4 son limitaciones estructurales aceptadas (sin fuente de datos
+gratuita para resolverlas), M2 es una constante que se investigó a
+fondo y se decidió mantener, y M6/M7 siguen abiertos a propósito hasta
+investigarlos con el mismo rigor.
 
 ---
 
@@ -319,6 +332,85 @@ funcionando exactamente igual tras el cambio.
 
 ---
 
+### I6. `cost_of_debt()` sin proteger `total_debt<=0` — ✅ CORREGIDO (sesión 17)
+
+**Qué es:** auditoría en profundidad de `engine/valuation.py` a petición
+del usuario ("revisa que todo tenga sentido... acorde a los estándares
+de bancos de primer nivel"), verificando cada fórmula contra teoría
+financiera estándar y el propio Excel de referencia. `cost_of_debt()`
+(`interest_expense / total_debt`) no tenía guarda para `total_debt<=0`
+— una empresa sin deuda hacía `crashear` la función con
+`ZeroDivisionError`. Confirmado con reproducción directa
+(`cost_of_debt(0.0, 0.0)` → `ZeroDivisionError`), no solo por
+inspección.
+
+**Por qué importa:** alcanzable en modo "universo cacheado"
+(`build_peer_wacc()` en `app/streamlit_app.py`, sin ninguna guarda) —
+a diferencia del modo "cualquier ticker", que ya usaba `... or 1` como
+parche defensivo en el mismo punto, una protección **inconsistente**
+entre las dos rutas de cálculo de WACC. Ninguno de los 8 tickers piloto
+lo dispara hoy (todos tienen deuda), por lo que quedó sin detectar hasta
+esta revisión explícita — pero una empresa sin deuda es un caso real,
+no hipotético, y el manejo de errores de I5 solo lo habría capturado de
+forma genérica (mensaje poco claro: "float division by zero"), no
+evitado.
+
+**Cómo se corrigió:** `cost_of_debt()` devuelve `0.0` cuando
+`total_debt<=0`, con el motivo documentado en el propio docstring: es
+seguro porque `wacc()` pondera el coste de la deuda por
+`total_debt/(total_debt+market_cap)`, que también es 0 en ese caso — el
+valor devuelto nunca influye en el resultado final, no es un ajuste
+silencioso de nada que importe. Se simplificó también el parche `or 1`
+de `app.py` (ya innecesario) a `or 0`, consistente con el resto del
+código, y `build_peer_wacc()` ahora usa `snap.get("total_debt") or 0`
+en vez de `snap["total_debt"]` sin guarda (protege además contra
+`None`, no solo contra `0`).
+
+**Verificado:** test de regresión en `tests/test_valuation.py`
+(`cost_of_debt(0.0, 0.0) == 0.0`); suite completa (180 tests) y
+`tests/test_app.py` en verde tras el cambio.
+
+---
+
+### I7. `debt_to_ebitda()` sin proteger `EBITDA<=0` — ✅ CORREGIDO (sesión 17)
+
+**Qué es:** mismo pase de auditoría que I6. `debt_to_ebitda()`
+(`total_debt / ebitda`) no protegía `ebitda<=0` — un año de
+break-even o pérdida operativa antes de D&A hacía `crashear` la función
+con `ZeroDivisionError` (`ebitda=0`) o devolvía un ratio negativo sin
+sentido interpretable (`ebitda<0`, un Debt/EBITDA "negativo" no
+significa "menos apalancado").
+
+**Por qué importa — el hallazgo más serio de los dos:**
+`ZeroDivisionError` **no es una subclase de `ValueError`** en Python.
+`latest_ratio_snapshot()` se llama en `app.py` dentro de un
+`except ValueError:` que ya existe (pensado para "no hay ningún año
+con datos completos") — ese `except` **no habría capturado** el
+`ZeroDivisionError` de un año con EBITDA exactamente 0. Habría sido un
+traceback real y sin capturar en la pestaña "Fundamentales" en
+producción, no un mensaje de error controlado — confirmado
+reproduciendo el camino completo (`latest_ratio_snapshot()` con
+`ebitda=0` en el último año, que sí pasa el `dropna()` porque 0 no es
+`NaN`).
+
+**Cómo se corrigió:** `debt_to_ebitda()` ahora lanza `ValueError`
+explícito con `ebitda<=0` (mensaje: "EBITDA no positivo... no es un
+ratio interpretable de la forma habitual"), en vez de devolver un valor
+trivial seguro — a diferencia de I6, aquí no hay un "0.0 inofensivo"
+posible porque el ratio se muestra directamente al usuario, no se
+pondera a cero en ningún sitio. `ValueError` es exactamente el
+contrato que `app.py` ya espera de esta ruta, así que no hizo falta
+tocar `app.py` — el `except ValueError` ya existente ahora sí lo
+captura.
+
+**Verificado:** 3 tests de regresión nuevos en `tests/test_ratios.py`
+(EBITDA=0 lanza `ValueError`; EBITDA negativo lanza `ValueError`; y un
+test de punta a punta vía `latest_ratio_snapshot()` con un año de
+EBITDA=0 real, confirmando que el `ValueError` sale limpio de todo el
+pipeline, no solo de la función aislada).
+
+---
+
 ## Moderado
 
 ### M1. `requirements.txt` sin versiones fijadas — ✅ CORREGIDO (sesión 15)
@@ -511,6 +603,72 @@ igual que antes. 4 tests de regresión nuevos (2 por proveedor).
 
 ---
 
+### M6. Tipo impositivo: media histórica plana, incluso en el valor terminal a perpetuidad — ⏳ ABIERTO (sesión 17), pendiente de investigar y decidir
+
+**Qué es:** `default_assumptions_from_history()` fija `tax_rate` como la
+media de los últimos `lookback_years` años, y ese valor se mantiene
+plano durante todo el horizonte explícito Y dentro del valor terminal
+Gordon Growth (que representa flujos a perpetuidad) — a diferencia de
+margen/D&A/CapEx, `tax_rate` no tiene fade hacia ningún valor de largo
+plazo distinto (documentado como decisión deliberada en el docstring:
+"fade de tipo impositivo no es práctica estándar").
+
+**Por qué podría importar:** el tipo impositivo EFECTIVO histórico de
+Big Tech es muy volátil año a año y sistemáticamente inferior al tipo
+estatutario/marginal de EE.UU. (~21% federal + estatal ≈ 24-27%) —
+verificado con datos reales: AMZN 54.2%/19.0%/13.5%/19.7% en los
+últimos 4 ejercicios, META 19.5%/17.6%/11.8%/29.6%. Estas oscilaciones
+grandes reflejan ítems no recurrentes (beneficios fiscales de
+stock-based comp, créditos I+D, arbitraje de tipo entre jurisdicciones)
+que un banco de primer nivel no asumiría que se mantienen sin cambios
+para siempre en la perpetuidad — sobre todo con el impuesto mínimo
+global (Pilar Dos de la OCDE, en despliegue progresivo desde 2024)
+apuntando específicamente a reducir ese tipo de arbitraje. Nuestra
+media de `lookback_years` (típicamente 3) ya suaviza buena parte del
+ruido año a año, pero sigue sin distinguir "nivel normalizado actual"
+de "nivel sostenible a perpetuidad".
+
+**Por qué NO se ha tocado todavía:** cambiar esto sin investigar
+primero repetiría exactamente el error que el proyecto ya evitó una vez
+con M2 (`gordon_weight`) — parecer una mejora obvia sobre el papel y
+resultar, con datos reales, en un efecto distinto o incluso contrario
+al esperado. Requiere el mismo tratamiento que M2: medir el impacto
+real en los 8 tickers piloto (¿un fade hacia el tipo estatutario sube o
+baja el precio? ¿en qué magnitud? ¿agrava o alivia la brecha ya
+documentada con Big Tech?) antes de decidir, no una intuición sin
+verificar.
+
+**Pendiente:** investigar con datos reales y decidir explícitamente —
+mantener el tipo plano con motivo justificado, o introducir un fade
+hacia el tipo marginal/estatutario para el tramo de largo plazo,
+documentando el impacto medido en cualquiera de los dos casos.
+
+---
+
+### M7. `Debt/EBITDA` usa deuda bruta, no neta, sin aclararlo en la interfaz — ⏳ ABIERTO (sesión 17)
+
+**Qué es:** `debt_to_ebitda()` usa deuda BRUTA (`total_debt`), no deuda
+NETA (`total_debt - cash`) — y tanto el nombre de la función como la
+etiqueta "Debt/EBITDA" en la pestaña "Fundamentales" no dejan claro
+cuál de las dos versiones se está mostrando.
+
+**Por qué importa:** Net Debt/EBITDA es, si acaso, más común que la
+versión bruta en informes de crédito bancarios reales — precisamente
+porque distingue a una empresa con caja neta positiva (deuda bruta alta
+pero riesgo de crédito bajo, p.ej. AAPL en ciertos ejercicios) de una
+genuinamente apalancada. No es un cálculo incorrecto (deuda bruta/EBITDA
+es una métrica legítima y también de uso común), pero la ambigüedad de
+la etiqueta sí es una brecha real de claridad frente al estándar de un
+informe bancario, donde ambas versiones suelen aparecer explícitamente
+diferenciadas.
+
+**Pendiente:** renombrar la métrica existente a "Deuda bruta/EBITDA" (o
+similar) para eliminar la ambigüedad, y evaluar añadir "Deuda
+neta/EBITDA" como métrica adicional — el dato (`cash`) ya está
+disponible en el mismo snapshot, coste de implementación bajo.
+
+---
+
 ## Informativo (sin acción necesaria, pero documentado)
 
 ### N1. Tipo impositivo y ΔNWC: forma de fade verificada contra el Excel
@@ -580,12 +738,22 @@ aviso en la interfaz.
 - **El múltiplo de salida se corrigió** de "propio de la empresa" a
   "mediana de comparables" (sesión 14), con el efecto mixto reportado
   con honestidad en vez de maquillado.
-- **157 tests, cero dependen de red** — toda la suite corre offline con
-  fixtures fieles al formato real de las APIs, incluidos 9 tests de la
-  app en sí (`streamlit.testing.v1.AppTest`, sesión 16) y CI en GitHub
-  Actions corriéndolos en cada push.
+- **180 tests, cero dependen de red** — toda la suite corre offline con
+  fixtures fieles al formato real de las APIs, incluidos 11 tests de la
+  app en sí (`streamlit.testing.v1.AppTest`, sesión 16-17) y CI en
+  GitHub Actions corriéndolos en cada push.
 - **Capa generativa desacoplada del cálculo por diseño**, no como
   parche — el LLM nunca ve datos crudos, solo un paquete ya cerrado.
+- **Auditoría matemática/financiera a fondo (sesión 17) confirmó
+  correctos los puntos donde un DCF amateur suele fallar**: la
+  convención mid-year+stub descuenta el valor terminal con el mismo
+  periodo que el último flujo explícito (n-0.5, no n); Gordon Growth
+  usa `FCFF_n×(1+g)/(WACC-g)`, no el error de "off-by-one" de omitir el
+  `×(1+g)`; el WACC no tiene la circularidad clásica (usa market cap
+  actual, no el equity value que el propio DCF produce); FCFF no cuenta
+  dos veces el escudo fiscal de la deuda; el EBITDA es consistente
+  entre `ratios.py`, `valuation.py` y `comps.py` (verificado con datos
+  reales de 6 tickers, 0% de diferencia).
 
 ---
 
@@ -625,8 +793,23 @@ aviso en la interfaz.
     (antes vivía tanto como el proceso).
 11. ~~**N2 (sin tests automatizados de la app)**~~ — ✅ corregido (sesión
     16) con `streamlit.testing.v1.AppTest` + CI en GitHub Actions.
+12. ~~**I6 (`cost_of_debt()` sin proteger `total_debt<=0`)**~~ y
+    ~~**I7 (`debt_to_ebitda()` sin proteger `EBITDA<=0`)**~~ — ✅
+    corregidos (sesión 17) — dos crashes reales de división por cero
+    encontrados en una auditoría técnica/matemática a fondo pedida
+    explícitamente por el usuario, no disparados por el universo piloto
+    actual pero alcanzables con inputs reales (empresa sin deuda, año
+    de EBITDA nulo). I7 en particular podía saltarse el `except
+    ValueError` ya existente en `app.py`, porque `ZeroDivisionError` no
+    es su subclase.
+13. **M6 (tipo impositivo plano en el valor terminal)** y **M7
+    (Debt/EBITDA bruto sin aclarar)** — ⏳ abiertos (sesión 17),
+    pendientes de investigar/decidir con el mismo rigor que M2.
 
-**Con esto, no quedan hallazgos abiertos de esta auditoría** (más allá
-de N1/N3, informativos sin acción necesaria). Próximos pasos del
-proyecto en `docs/PROGRESS_REVIEW.md` — probar la capa generativa en
-vivo, Fase 9 (sentiment), o lo que el usuario priorice a continuación.
+**Quedan dos hallazgos moderados abiertos a propósito** (M6, M7) —
+requieren investigación con datos reales antes de decidir, no una
+intuición sin verificar, mismo estándar que M2. El resto de esta
+auditoría (más allá de N1/N3, informativos sin acción necesaria) tiene
+un estado cerrado. Próximos pasos del proyecto en
+`docs/PROGRESS_REVIEW.md` y `estado.md` sección "Próximo paso
+inmediato".

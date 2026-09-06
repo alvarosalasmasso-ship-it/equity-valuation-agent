@@ -1292,8 +1292,46 @@ disponibles sin coste adicional en Alpha Vantage/yfinance.
 AMZN y JNJ fuera de la suite. Documentado en `docs/METHODOLOGY.md`
 sección 24.
 
-## 16. Próximo paso inmediato
+## 16. Sesión 17 (continuación) — Auditoría matemática y financiera a fondo del motor
 
+El usuario pidió, en vez de seguir añadiendo funciones, revisar en
+profundidad lo que ya existe "a nivel técnico y matemático y de
+análisis financiero y económico... acorde a los estándares de calidad
+de bancos de primer nivel". Releídos `valuation.py`, `wacc_builder.py`,
+`ratios.py`, `comps.py` completos, verificando cada fórmula contra
+teoría financiera estándar y contra el propio Excel de referencia.
+
+**Confirmado correcto** (no solo por lectura, con verificación
+explícita): convención mid-year+stub del valor terminal (descuenta con
+`n-0.5`, no `n` — evita un error clásico); Gordon Growth usa
+`FCFF_n×(1+g)/(WACC-g)` (evita el off-by-one de omitir el `×(1+g)`);
+WACC sin circularidad (usa market cap actual, no el equity value del
+propio DCF); FCFF sin doble conteo del escudo fiscal; EBITDA consistente
+en todo el pipeline (0.0% de diferencia verificado con 6 tickers
+reales entre `ebit+d_and_a` y el `ebitda` reportado por el proveedor).
+
+**Dos bugs reales corregidos** (I6, I7 en `docs/AUDIT.md`) — división
+por cero sin proteger en `cost_of_debt()` (empresa sin deuda) y
+`debt_to_ebitda()` (EBITDA nulo/negativo). El segundo era serio de
+verdad: `ZeroDivisionError` no es subclase de `ValueError`, así que el
+`except ValueError` ya existente en `app.py` no lo habría capturado —
+hubiera sido un traceback real en producción. Ninguno de los 8 tickers
+piloto lo dispara hoy, pero ambos son casos reales alcanzables.
+
+**Dos puntos de diseño dejados abiertos a propósito** (M6, M7) —
+tipo impositivo plano en el valor terminal a perpetuidad, y
+Debt/EBITDA bruto sin aclarar en la etiqueta. Mismo estándar que M2:
+pendientes de investigar con datos reales antes de decidir, no de
+cambiar por intuición.
+
+**180 tests en total, todos en verde.** Documentado en
+`docs/METHODOLOGY.md` sección 25 y `docs/AUDIT.md` (hallazgos I6, I7,
+M6, M7, resumen ejecutivo y prioridad recomendada actualizados).
+
+## 17. Próximo paso inmediato
+
+0. M6/M7 (recién abiertos) — investigar el tipo impositivo a largo
+   plazo y añadir/aclarar Net Debt/EBITDA, con el mismo rigor que M2.
 1. C — Monte Carlo: bandas de confianza probabilísticas (P10/P50/P90)
    sobre el precio implícito, muestreando WACC/margen/CapEx desde su
    propia varianza histórica. La palanca de mayor rigor que queda de las

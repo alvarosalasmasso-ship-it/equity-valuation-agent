@@ -179,7 +179,7 @@ def build_peer_wacc(target: str, hist_data: dict, snap_data: dict,
         target_market_cap=snap["market_cap"], risk_free_rate=risk_free_rate,
         market_risk_premium=market_risk_premium,
         target_interest_expense=float(hist["interest_expense"].dropna().iloc[-1]),
-        target_total_debt=snap["total_debt"],
+        target_total_debt=snap.get("total_debt") or 0,
     )
 
 
@@ -309,7 +309,7 @@ with st.sidebar:
                 hist_data, snap_data = {target: hist}, {target: snap}
                 from engine.valuation import cost_of_debt, cost_of_equity, wacc as wacc_fn
                 re = cost_of_equity(risk_free_rate, beta, market_risk_premium)
-                rd = cost_of_debt(interest_expense_series.iloc[-1] or 0, snap.get("total_debt") or 1)
+                rd = cost_of_debt(interest_expense_series.iloc[-1] or 0, snap.get("total_debt") or 0)
                 wacc_value = wacc_fn(snap.get("market_cap") or 0, snap.get("total_debt") or 0, re, rd,
                                       float(tax_rate_series.iloc[-1]))
                 st.caption("⚠️ WACC simplificado: beta propio, sin releverage por comparables.")

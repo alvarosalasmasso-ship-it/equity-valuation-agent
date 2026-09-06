@@ -35,7 +35,18 @@ def cost_of_equity(risk_free_rate: float, beta: float, market_risk_premium: floa
 
 
 def cost_of_debt(interest_expense: float, total_debt: float) -> float:
-    """WACC!F17 = gasto financiero anualizado / deuda total"""
+    """WACC!F17 = gasto financiero anualizado / deuda total.
+
+    Auditoría (sesión 17): una empresa sin deuda (total_debt<=0) hacía
+    `crashear` esta función con ZeroDivisionError -- alcanzable en modo
+    "universo cacheado" (`build_peer_wacc` en app/streamlit_app.py, sin
+    guarda) aunque no en el universo piloto actual (los 8 tickers tienen
+    deuda). Devolver 0.0 es seguro: en `wacc()`, el peso de la deuda
+    (`total_debt / (total_debt + market_cap)`) también es 0 en ese caso,
+    así que este valor nunca influye en el resultado -- no es un ajuste
+    silencioso de nada que importe, solo evita el crash."""
+    if total_debt <= 0:
+        return 0.0
     return interest_expense / total_debt
 
 

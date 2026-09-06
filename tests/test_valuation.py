@@ -89,6 +89,15 @@ def test_wacc_build_matches_excel():
     assert w == pytest.approx(TARGET_WACC, rel=1e-9)
 
 
+def test_cost_of_debt_returns_zero_for_debt_free_company():
+    """Auditoría sesión 17: antes hacía crashear con ZeroDivisionError.
+    0.0 es seguro porque wacc() pondera por total_debt/(total_debt+
+    market_cap), que también es 0 en este caso -- nunca influye en el
+    resultado final."""
+    assert cost_of_debt(0.0, 0.0) == 0.0
+    assert cost_of_debt(100.0, -5.0) == 0.0  # deuda neta negativa no debería llegar aquí, pero no debe crashear
+
+
 # --- Acciones diluidas (Treasury Stock Method) ------------------------------
 
 def test_diluted_shares_no_dilutive_options():

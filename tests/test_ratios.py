@@ -40,6 +40,24 @@ def test_debt_to_ebitda():
     assert debt_to_ebitda(total_debt=400, ebitda=200) == pytest.approx(2.0)
 
 
+def test_debt_to_ebitda_raises_on_zero_ebitda():
+    """Auditoría sesión 17: antes hacía crashear con ZeroDivisionError,
+    que NO es una subclase de ValueError -- el except ValueError ya
+    existente en app.py (latest_ratio_snapshot) no lo habría capturado.
+    ValueError explícito es el contrato correcto: mismo tipo de fallo
+    que ya maneja esa ruta."""
+    with pytest.raises(ValueError):
+        debt_to_ebitda(total_debt=400, ebitda=0)
+
+
+def test_debt_to_ebitda_raises_on_negative_ebitda():
+    """Un Debt/EBITDA 'negativo' no significa menos apalancado -- el
+    ratio deja de ser interpretable de la forma habitual, igual que un
+    P/E con beneficios negativos."""
+    with pytest.raises(ValueError):
+        debt_to_ebitda(total_debt=400, ebitda=-50)
+
+
 def test_interest_coverage():
     assert interest_coverage(ebit=100, interest_expense=20) == pytest.approx(5.0)
 
@@ -93,5 +111,17 @@ def test_latest_ratio_snapshot_picks_last_year_with_complete_data():
 
 def test_latest_ratio_snapshot_raises_when_no_complete_year():
     history = pd.DataFrame([{**ROW, "ebitda": None}])
+    with pytest.raises(ValueError):
+        latest_ratio_snapshot(history, wacc=0.09)
+
+
+def test_latest_ratio_snapshot_raises_value_error_not_crash_on_zero_ebitda_year():
+    """Auditoría sesión 17: ebitda=0 (a diferencia de None) SÍ pasa el
+    dropna() de latest_ratio_snapshot() -- un año de break-even real
+    llegaría hasta debt_to_ebitda() y antes hacía crashear con
+    ZeroDivisionError, no capturado por el `except ValueError` que ya
+    usa app.py. Verifica que ahora sale como ValueError de punta a
+    punta, no solo en la función aislada."""
+    history = pd.DataFrame([{**ROW, "ebitda": 0}])
     with pytest.raises(ValueError):
         latest_ratio_snapshot(history, wacc=0.09)

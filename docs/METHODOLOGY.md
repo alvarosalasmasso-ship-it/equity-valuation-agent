@@ -1569,3 +1569,66 @@ en total, todos en verde.** Verificado con datos reales de AMZN
 (Alpha Vantage) y JNJ (yfinance) fuera de la suite de tests para
 confirmar que los campos nuevos traen valores sensatos y ningún `None`
 no gestionado rompe el formateo de la UI.
+
+## 25. Auditoría matemática y financiera a fondo del motor (sesión 17)
+
+Petición explícita del usuario: en vez de seguir añadiendo funciones,
+revisar en profundidad lo que ya existe — "a nivel técnico y matemático
+y de análisis financiero y económico... acorde a los estándares de
+calidad que se piden en estas herramientas en bancos de primer nivel".
+Se releyó `engine/valuation.py`, `wacc_builder.py`, `ratios.py` y
+`comps.py` completos, verificando cada fórmula contra teoría financiera
+estándar (Damodaran, Rosenbaum & Pearl) y contra el propio Excel de
+referencia — no una lista de "cosas que suenan a banco", una revisión
+línea a línea. Detalle completo de cada hallazgo en `docs/AUDIT.md`
+(I6, I7, M6, M7); resumen aquí:
+
+**Confirmado correcto, con verificación explícita, no solo lectura:**
+- Convención mid-year + stub: el valor terminal se descuenta con el
+  mismo periodo que el último flujo explícito (`n-0.5`, no `n`) — la
+  convención estándar de banca de inversión, y uno de los puntos donde
+  un DCF construido sin cuidado suele fallar.
+- Gordon Growth usa `FCFF_n × (1+g) / (WACC-g)`, no `FCFF_n / (WACC-g)`
+  — evita el error de "off-by-one" más común de esta fórmula (olvidar
+  crecer el último flujo antes de aplicar la perpetuidad).
+- El WACC no tiene la circularidad clásica de un DCF (usa `market_cap`
+  actual, observable y externo — no el equity value que el propio DCF
+  produce, que crearía una referencia circular).
+- FCFF no cuenta dos veces el escudo fiscal de la deuda: tributa sobre
+  EBIT desapalancado, no sobre EBT — el ahorro fiscal de los intereses
+  ya está capturado en el término `Rd×(1-t)` del propio WACC.
+- El EBITDA es consistente en todo el pipeline: verificado con datos
+  reales de 6 tickers (AMZN, MSFT, AAPL vía Alpha Vantage; KO, PG, JNJ
+  vía yfinance) que `ebit + d_and_a` (usado en `run_dcf`/`comps.py`)
+  coincide EXACTO (0.0% de diferencia) con el campo `ebitda` reportado
+  por cada proveedor (usado en `ratios.py`) — no son dos definiciones
+  divergentes por casualidad.
+
+**Dos bugs reales encontrados y corregidos** (ninguno disparado por el
+universo piloto actual, ambos alcanzables con inputs reales — empresa
+sin deuda, año de EBITDA nulo): `cost_of_debt()` y `debt_to_ebitda()`
+no protegían división por cero. El segundo era el más serio:
+`ZeroDivisionError` no es subclase de `ValueError` en Python, así que
+el `except ValueError` ya existente en `app.py` no lo habría capturado
+— un traceback real en producción, no un mensaje controlado. Detalle
+completo, incluida la reproducción exacta de cada bug antes de
+corregirlo, en `docs/AUDIT.md` hallazgos I6/I7.
+
+**Dos puntos de diseño abiertos, pendientes de decidir con datos
+reales** (mismo estándar que M2 en su momento): (1) el tipo impositivo
+se proyecta plano —media histórica de `lookback_years`— incluso dentro
+del valor terminal a perpetuidad, pese a que el tipo EFECTIVO histórico
+de Big Tech es muy volátil y sistemáticamente inferior al estatutario
+(AMZN: 54.2%/19.0%/13.5%/19.7% en los últimos 4 ejercicios); (2)
+`Debt/EBITDA` usa deuda bruta sin aclararlo en la etiqueta, cuando Net
+Debt/EBITDA es al menos igual de común en la práctica bancaria real.
+Ninguno de los dos se ha cambiado todavía — deliberadamente: cambiar
+una calibración sin medir primero el impacto real repetiría el error
+que ya se evitó una vez con `gordon_weight` (M2). Detalle completo en
+`docs/AUDIT.md` hallazgos M6/M7.
+
+**180 tests en total, todos en verde** (176 + 4: 1 en
+`test_valuation.py`, 3 en `test_ratios.py`, incluida una verificación
+de punta a punta de que el `ValueError` de `debt_to_ebitda()` sale
+limpio desde `latest_ratio_snapshot()`, no solo desde la función
+aislada).

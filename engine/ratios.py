@@ -81,6 +81,22 @@ def creates_value(roic_: float, wacc: float) -> bool:
 # ---------------------------------------------------------------------------
 
 def debt_to_ebitda(total_debt: float, ebitda: float) -> float:
+    """Auditoría (sesión 17): con EBITDA<=0 (un año de break-even o
+    pérdida operativa antes de D&A) esta función hacía `crashear` con
+    ZeroDivisionError, o devolvía un ratio negativo sin sentido (un
+    Debt/EBITDA "negativo" no significa "menos apalancado" -- significa
+    que el ratio no es interpretable). A diferencia de cost_of_debt()
+    (donde 0.0 es un valor seguro porque el peso de la deuda también es
+    0), aquí no hay un valor trivial seguro: el ratio se muestra
+    directamente al usuario, así que se falla explícito -- mismo
+    contrato que espera latest_ratio_snapshot() (ya captura ValueError,
+    no ZeroDivisionError, que NO es una subclase de ValueError en
+    Python)."""
+    if ebitda <= 0:
+        raise ValueError(
+            f"EBITDA no positivo ({ebitda:,.0f}) -- Debt/EBITDA no es un ratio interpretable "
+            "de la forma habitual (un año de break-even o pérdida operativa antes de D&A)."
+        )
     return total_debt / ebitda
 
 
