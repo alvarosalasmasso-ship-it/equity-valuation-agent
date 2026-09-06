@@ -13,6 +13,7 @@ input (revenue, ebit, tax_rate, d_and_a, capex, change_in_nwc).
 import json
 import os
 import time
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -304,6 +305,42 @@ def historical_financials(client: AlphaVantageClient, symbol: str,
     return df
 
 
+def _validate_derived_price(derived_price: Optional[float], week_52_high: Optional[float],
+                             week_52_low: Optional[float], symbol: str) -> Optional[float]:
+    """Auditoría sesión 17: investigando un backtest walk-forward se
+    encontró que `MarketCapitalization / SharesOutstanding` de Alpha
+    Vantage puede salir muy por encima del precio real -- verificado con
+    GOOGL real (2.08x inflado: `SharesOutstanding` de AV solo cuenta una
+    de las dos clases de acciones de Alphabet, mientras
+    `MarketCapitalization` sí refleja la compañía completa). Detectado
+    aquí comparando contra `52WeekHigh`/`52WeekLow`, ya en el mismo
+    payload sin coste adicional -- cobertura PARCIAL, documentada como
+    tal: no detecta el caso META (1.155x inflado, pero dentro del rango
+    de 52 semanas igualmente -- ahí `MarketCapitalization` parece
+    desincronizado en el tiempo respecto al resto del snapshot, no un
+    problema de clases de acciones, y no hay forma fiable de detectarlo
+    solo con campos de Alpha Vantage).
+
+    Cuando el precio derivado se marca como no fiable, se descarta
+    (`None`) en vez de dejarlo pasar -- mismo principio que
+    `_clean_interest_expense()`: un valor conocido como incorrecto es
+    peor que ausente. El llamador (`app.py`) recurre a
+    `engine.yfinance_provider.live_price()` como fuente de cotización en
+    vivo cuando esto pasa, igual que ya hace con el risk-free rate."""
+    if derived_price is None or week_52_high is None or week_52_low is None:
+        return derived_price
+    if derived_price > week_52_high * 1.5 or derived_price < week_52_low * 0.5:
+        warnings.warn(
+            f"{symbol}: precio derivado de MarketCapitalization/SharesOutstanding (${derived_price:,.2f}) "
+            f"queda muy fuera del rango de 52 semanas (${week_52_low:,.2f}-${week_52_high:,.2f}) -- "
+            "probablemente SharesOutstanding no cuenta todas las clases de acciones (verificado con "
+            "GOOGL real, sesión 17). Se descarta como no fiable.",
+            stacklevel=3,
+        )
+        return None
+    return derived_price
+
+
 def market_snapshot(client: AlphaVantageClient, symbol: str, use_cache: bool = True) -> dict:
     """Datos de mercado puntuales desde COMPANY_OVERVIEW: precio implícito
     vía market cap / shares, beta, deuda y caja más recientes, múltiplo
@@ -317,6 +354,9 @@ def market_snapshot(client: AlphaVantageClient, symbol: str, use_cache: bool = T
 
     shares_outstanding = _to_float(overview.get("SharesOutstanding"))
     market_cap = _to_float(overview.get("MarketCapitalization"))
+    week_52_high = _to_float(overview.get("52WeekHigh"))
+    week_52_low = _to_float(overview.get("52WeekLow"))
+    derived_price = (market_cap / shares_outstanding) if (market_cap and shares_outstanding) else None
 
     return {
         "symbol": symbol.upper(),
@@ -324,7 +364,7 @@ def market_snapshot(client: AlphaVantageClient, symbol: str, use_cache: bool = T
         "industry": overview.get("Industry"),
         "market_cap": market_cap,
         "shares_outstanding": shares_outstanding,
-        "price": (market_cap / shares_outstanding) if (market_cap and shares_outstanding) else None,
+        "price": _validate_derived_price(derived_price, week_52_high, week_52_low, symbol),
         "beta": _to_float(overview.get("Beta")),
         "ev_to_ebitda": _to_float(overview.get("EVToEBITDA")),
         "ev_to_revenue": _to_float(overview.get("EVToRevenue")),
@@ -337,8 +377,8 @@ def market_snapshot(client: AlphaVantageClient, symbol: str, use_cache: bool = T
         # Sesión 17: rango de 52 semanas, para el football field bancario
         # (docs/METHODOLOGY.md sección 23) -- expuesto directamente en
         # OVERVIEW, sin coste de petición adicional.
-        "week_52_high": _to_float(overview.get("52WeekHigh")),
-        "week_52_low": _to_float(overview.get("52WeekLow")),
+        "week_52_high": week_52_high,
+        "week_52_low": week_52_low,
         # Sesión 17: distribución de recomendaciones de analistas, ya
         # expuesta en OVERVIEW sin coste adicional -- complementa el
         # precio de consenso con "cuántos" analistas opinan qué, útil

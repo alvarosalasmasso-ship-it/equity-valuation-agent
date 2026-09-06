@@ -15,15 +15,15 @@
           "ticker": "AMZN",
           "wacc": 0.09095631538694325,
           "implied_price": 112.74291907480777,
-          "market_price": 258.50998691489974,
+          "market_price": 258.51,
           "analyst_target_price": 328.17,
-          "deviation_vs_market": -0.563874028929017,
+          "deviation_vs_market": -0.5638740510045732,
           "deviation_vs_consensus": -0.6564496478203133,
           "peer_ev_ebitda_multiple": 15.865,
           "implied_expectations": [
             {
               "target_label": "Mercado",
-              "target_price": 258.50998691489974,
+              "target_price": 258.51,
               "assumed_revenue_growth": 0.11731283601806397,
               "assumed_terminal_growth": 0.025,
               "implied_revenue_growth": 0.318145751953125,
@@ -45,15 +45,15 @@
           "ticker": "MSFT",
           "wacc": 0.09627984081711738,
           "implied_price": 330.2767901457464,
-          "market_price": 499.70006201565,
+          "market_price": 499.7,
           "analyst_target_price": 572.92,
-          "deviation_vs_market": -0.33904993164599095,
+          "deviation_vs_market": -0.3390498496182781,
           "deviation_vs_consensus": -0.42352022944608947,
           "peer_ev_ebitda_multiple": 13.135000000000002,
           "implied_expectations": [
             {
               "target_label": "Mercado",
-              "target_price": 499.70006201565,
+              "target_price": 499.7,
               "assumed_revenue_growth": 0.1612397915820203,
               "assumed_terminal_growth": 0.025,
               "implied_revenue_growth": 0.26267852783203127,
@@ -75,20 +75,20 @@
           "ticker": "GOOGL",
           "wacc": 0.09547440967177126,
           "implied_price": 336.564060809611,
-          "market_price": 705.5110985629153,
+          "market_price": 338.46,
           "analyst_target_price": 428.07,
-          "deviation_vs_market": -0.5229500124162862,
+          "deviation_vs_market": -0.005601663979167282,
           "deviation_vs_consensus": -0.21376396194638492,
           "peer_ev_ebitda_multiple": 15.865,
           "implied_expectations": [
             {
               "target_label": "Mercado",
-              "target_price": 705.5110985629153,
+              "target_price": 338.46,
               "assumed_revenue_growth": 0.12511745609215974,
               "assumed_terminal_growth": 0.025,
-              "implied_revenue_growth": 0.3105857849121093,
-              "implied_terminal_growth": 0.07129246263001454,
-              "terminal_growth_fragile": true
+              "implied_revenue_growth": 0.12642059326171876,
+              "implied_terminal_growth": 0.02568641833132745,
+              "terminal_growth_fragile": false
             },
             {
               "target_label": "Consenso analistas",
@@ -105,19 +105,19 @@
           "ticker": "META",
           "wacc": 0.09302598559396905,
           "implied_price": 525.53618796959,
-          "market_price": 712.5322232848963,
+          "market_price": 616.77,
           "analyst_target_price": 754.77,
-          "deviation_vs_market": -0.2624387069166113,
+          "deviation_vs_market": -0.1479219352925889,
           "deviation_vs_consensus": -0.30371346506937213,
           "peer_ev_ebitda_multiple": 14.95,
           "implied_expectations": [
             {
               "target_label": "Mercado",
-              "target_price": 712.5322232848963,
+              "target_price": 616.77,
               "assumed_revenue_growth": 0.19893831442939258,
               "assumed_terminal_growth": 0.025,
-              "implied_revenue_growth": 0.27337646484375,
-              "implied_terminal_growth": 0.052853277786078665,
+              "implied_revenue_growth": 0.23745803833007811,
+              "implied_terminal_growth": 0.04219518863137034,
               "terminal_growth_fragile": false
             },
             {
@@ -135,15 +135,15 @@
           "ticker": "AAPL",
           "wacc": 0.0969835072956718,
           "implied_price": 109.18354240793421,
-          "market_price": 319.97001866497465,
+          "market_price": 319.97,
           "analyst_target_price": 323.86,
-          "deviation_vs_market": -0.6587694595153457,
+          "deviation_vs_market": -0.6587694396101691,
           "deviation_vs_consensus": -0.6628680837153887,
           "peer_ev_ebitda_multiple": 13.135000000000002,
           "implied_expectations": [
             {
               "target_label": "Mercado",
-              "target_price": 319.97001866497465,
+              "target_price": 319.97,
               "assumed_revenue_growth": 0.01812535743479393,
               "assumed_terminal_growth": 0.025,
               "implied_revenue_growth": 0.2719757080078125,
@@ -179,8 +179,8 @@
       },
       "summary": {
         "n": 5,
-        "mean_abs_deviation_vs_market": 0.4694164278846502,
-        "median_abs_deviation_vs_market": 0.5229500124162862,
+        "mean_abs_deviation_vs_market": 0.3430433879009553,
+        "median_abs_deviation_vs_market": 0.3390498496182781,
         "mean_abs_deviation_vs_consensus": 0.4520630775995097,
         "median_abs_deviation_vs_consensus": 0.42352022944608947
       }
@@ -300,8 +300,8 @@
   },
   "combined_summary": {
     "n": 8,
-    "mean_abs_deviation_vs_market": 0.4210776539120892,
-    "median_abs_deviation_vs_market": 0.41855436618165787,
+    "mean_abs_deviation_vs_market": 0.3420945039222799,
+    "median_abs_deviation_vs_market": 0.31958041920813696,
     "mean_abs_deviation_vs_consensus": 0.400265013619307,
     "median_abs_deviation_vs_consensus": 0.3348076896654176
   }

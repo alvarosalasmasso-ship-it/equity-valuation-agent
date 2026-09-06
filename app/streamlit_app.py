@@ -341,6 +341,32 @@ if not target:
 hist = hist_data[target]
 snap = snap_data[target]
 
+# --- Cotización en vivo vía yfinance, preferida sobre el precio derivado de --
+# --- Alpha Vantage (auditoría sesión 17) -------------------------------------
+#
+# engine.data_provider.market_snapshot() (Alpha Vantage) deriva "price" como
+# MarketCapitalization/SharesOutstanding, y ya descarta ese cociente a None
+# cuando queda muy fuera del rango de 52 semanas (caso real: GOOGL,
+# SharesOutstanding solo cuenta una de las dos clases de acciones de Alphabet
+# -- 2.08x inflado). Pero esa detección es parcial: verificado con datos
+# reales que META también sale mal (1.155x inflado, $712.53 vs $616.77 real)
+# sin disparar la comprobación, porque el precio erróneo cae igualmente
+# dentro del rango de 52 semanas -- no hay forma fiable de detectarlo solo
+# con campos de Alpha Vantage. yfinance ya es una dependencia transversal de
+# la app (el risk-free rate en vivo se usa sin importar el modo) y ha dado el
+# precio correcto en el 100% de los tickers verificados -- se usa como fuente
+# PREFERIDA para la cotización, con el precio derivado de Alpha Vantage solo
+# como último recurso si yfinance no responde.
+from engine.yfinance_provider import get_ticker as _yf_get_ticker_for_price
+from engine.yfinance_provider import live_price as _yf_live_price
+
+try:
+    live_market_price = _yf_live_price(_yf_get_ticker_for_price(target))
+except Exception:
+    live_market_price = None
+if live_market_price is not None:
+    snap["price"] = live_market_price
+
 # --- Verificación de divisa de reporte (auditoría sesión 15/16, hallazgo M5) --
 #
 # risk_free_rate y market_risk_premium están calibrados en USD (Treasury

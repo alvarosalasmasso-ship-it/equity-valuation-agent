@@ -45,6 +45,37 @@ def treasury_yield_10y(ticker) -> float:
     return float(hist["Close"].iloc[-1]) / 100.0
 
 
+def live_price(ticker) -> Optional[float]:
+    """Cotización actual real, vía `.info` (mismo campo que ya usa
+    `market_snapshot()` de este módulo) -- pensada para usarse como
+    fuente de precio fiable incluso cuando los datos FUNDAMENTALES
+    vienen de Alpha Vantage.
+
+    Auditoría (sesión 17): investigando el backtest walk-forward se
+    encontró que `engine.data_provider.market_snapshot()` deriva
+    "price" como `MarketCapitalization / SharesOutstanding` de Alpha
+    Vantage, y ese cociente resultó estar mal para 2 de 5 tickers reales
+    de Big Tech -- GOOGL (2.08x inflado: `SharesOutstanding` de AV solo
+    cuenta una de las dos clases de acciones de Alphabet, mientras
+    `MarketCapitalization` sí refleja la compañía completa) y META
+    (1.155x inflado, con `SharesOutstanding`/`SharesFloat` consistentes
+    entre sí -- aquí `MarketCapitalization` parece desincronizado en el
+    tiempo respecto al resto del snapshot, no un problema de clases de
+    acciones). Ninguno de los dos patrones es detectable de forma
+    genérica y fiable solo con los campos de Alpha Vantage. yfinance ya
+    es una dependencia transversal de la app (el risk-free rate en vivo,
+    `treasury_yield_10y()`, se usa sin importar el modo) -- extenderla
+    a la cotización en vivo no añade una categoría nueva de fragilidad."""
+    info = ticker.info
+    price = _clean(info.get("currentPrice")) or _clean(info.get("regularMarketPrice"))
+    if price is None:
+        market_cap = _clean(info.get("marketCap"))
+        shares = _clean(info.get("sharesOutstanding"))
+        if market_cap and shares:
+            price = market_cap / shares
+    return price
+
+
 def _clean(value) -> Optional[float]:
     if value is None:
         return None

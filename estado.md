@@ -1462,16 +1462,46 @@ total, todos en verde. Verificado de punta a punta con AppTest + red
 real: 2.1s de carga total de página. Documentado en
 `docs/METHODOLOGY.md` sección 29.
 
-## 22. Próximo paso inmediato
+## 22. Sesión 17 (continuación) — Backtesting walk-forward, y un bug de precio real (GOOGL/META)
+
+`engine/backtest.py` + `scripts/run_backtest.py` (nuevos): backtesting
+walk-forward viable sin fuente "point-in-time" especializada —
+truncar el histórico ya disponible por fecha (con margen de retraso
+de reporting) basta para evitar look-ahead bias. Corriendo el backtest
+sobre Big Tech (fecha 2024-09-06), GOOGL mostró una desviación absurda
+(+188%) que llevó a investigar a fondo en vez de descartarla.
+
+**Hallazgo real, más allá del backtest**: `market_snapshot()` de
+Alpha Vantage deriva "price" como `MarketCapitalization/
+SharesOutstanding`, y ese cociente sale **2.08x inflado para GOOGL**
+($705.51 vs. $338.46 reales — `SharesOutstanding` solo cuenta una de
+las dos clases de acciones de Alphabet) y **1.155x inflado para META**
+($712.53 vs. $616.77 reales, otra causa: `MarketCapitalization`
+desincronizada en el tiempo). Este precio alimenta `deviation_vs_market`
+en TODAS las sesiones de validación del proyecto desde el principio.
+Corregido en dos capas: detección propia contra el rango de 52 semanas
+de Alpha Vantage (parcial, detecta GOOGL no META) + yfinance como
+fuente PREFERIDA de cotización para todos los tickers (ya era
+dependencia transversal vía el risk-free rate en vivo).
+
+**Efecto real, verificado**: la desviación media del universo piloto
+completo pasa de 41.82% a **34.21%**. GOOGL de -52.3% a -0.56%
+(esencialmente en su valor justo). Backtest final (n=5, Big Tech):
+correlación r=+0.844 entre desviación en 2024 y retorno real
+posterior — una infravaloración marcada por el modelo tendió a
+preceder un retorno MAYOR, sugerente pero muestra pequeña.
+
+**225 tests en total, todos en verde.** Documentado en
+`docs/METHODOLOGY.md` sección 30 y `docs/AUDIT.md` hallazgo I13.
+
+## 23. Próximo paso inmediato
 
 0.5. SEC EDGAR — retomar si se quiere reducir la dependencia de la
    cuota de Alpha Vantage: falta D&A fiable (sin resolver) y construir
    el módulo completo con lo ya validado para el resto de campos.
-1. D — Backtesting walk-forward: valor muy alto si es viable, pero
-   pendiente de investigar si Alpha Vantage/yfinance free tier dan
-   fundamentales histórico punto-en-el-tiempo (riesgo de restatements).
-3. E — Intervalo de confianza (bootstrap) sobre la desviación agregada
-   del universo piloto (n=8) — complementa a C, bajo esfuerzo.
+1. E — Intervalo de confianza (bootstrap) sobre la desviación agregada
+   del universo piloto (n=8) — la única pieza del lote de rigor
+   matemático que queda sin construir; bajo esfuerzo.
 4. Fase 9 (sentiment en earnings calls) — extensión opcional.
 5. Probar la capa generativa con una llamada real — aparcado por ahora
    a petición del usuario, no es una prioridad activa.

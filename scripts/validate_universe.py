@@ -41,6 +41,7 @@ from engine.data_provider import market_snapshot as av_market_snapshot
 from engine.validation import summarize_deviation, value_ticker
 from engine.yfinance_provider import get_ticker as yf_get_ticker
 from engine.yfinance_provider import historical_financials as yf_historical_financials
+from engine.yfinance_provider import live_price as yf_live_price
 from engine.yfinance_provider import market_snapshot as yf_market_snapshot
 from engine.yfinance_provider import treasury_yield_10y
 
@@ -66,6 +67,17 @@ def _load_universe(provider: str, tickers: list[str]) -> tuple[dict, dict]:
         client = AlphaVantageClient()
         hist = {t: av_historical_financials(client, t, use_cache=True) for t in tickers}
         snap = {t: av_market_snapshot(client, t, use_cache=True) for t in tickers}
+        # Auditoría sesión 17: el precio derivado de Alpha Vantage
+        # (MarketCapitalization/SharesOutstanding) resultó mal para 2 de 5
+        # tickers reales de Big Tech (GOOGL 2.08x, META 1.155x -- este
+        # segundo no detectable solo con campos de Alpha Vantage, ver
+        # engine.data_provider._validate_derived_price). yfinance se usa
+        # como fuente PREFERIDA de cotización, con el precio derivado de AV
+        # solo como último recurso -- mismo criterio que app/streamlit_app.py.
+        for t in tickers:
+            fallback = yf_live_price(yf_get_ticker(t))
+            if fallback is not None:
+                snap[t]["price"] = fallback
         return hist, snap
     hist, snap = {}, {}
     for t in tickers:

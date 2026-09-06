@@ -1,0 +1,62 @@
+{
+  "backtest_date": "2024-09-06",
+  "risk_free_rate_at_backtest": 0.037100000381469725,
+  "correlation_deviation_vs_actual_return": 0.8441179345603285,
+  "results": [
+    {
+      "ticker": "AMZN",
+      "backtest_date": "2024-09-06",
+      "price_at_backtest": 171.38999938964844,
+      "price_today": 258.51,
+      "implied_price_at_backtest": 18.552411144425616,
+      "wacc_at_backtest": 0.08966081990518233,
+      "years_of_history_used": 18,
+      "deviation_at_backtest": -0.8917532457524115,
+      "actual_return": 0.5083143761048021
+    },
+    {
+      "ticker": "MSFT",
+      "backtest_date": "2024-09-06",
+      "price_at_backtest": 395.4530944824219,
+      "price_today": 499.7,
+      "implied_price_at_backtest": 346.56496404169735,
+      "wacc_at_backtest": 0.079155621777223,
+      "years_of_history_used": 17,
+      "deviation_at_backtest": -0.12362561103412384,
+      "actual_return": 0.26361383175928577
+    },
+    {
+      "ticker": "GOOGL",
+      "backtest_date": "2024-09-06",
+      "price_at_backtest": 149.66900634765625,
+      "price_today": 338.46,
+      "implied_price_at_backtest": 431.40104799525824,
+      "wacc_at_backtest": 0.08162563870392266,
+      "years_of_history_used": 18,
+      "deviation_at_backtest": 1.882367288476448,
+      "actual_return": 1.2613900383210508
+    },
+    {
+      "ticker": "META",
+      "backtest_date": "2024-09-06",
+      "price_at_backtest": 496.93414306640625,
+      "price_today": 616.77,
+      "implied_price_at_backtest": 439.8261553816962,
+      "wacc_at_backtest": 0.08165002879379935,
+      "years_of_history_used": 15,
+      "deviation_at_backtest": -0.11492063582573875,
+      "actual_return": 0.2411503789901186
+    },
+    {
+      "ticker": "AAPL",
+      "backtest_date": "2024-09-06",
+      "price_at_backtest": 218.98812866210938,
+      "price_today": 319.97,
+      "implied_price_at_backtest": 218.60310328362598,
+      "wacc_at_backtest": 0.07940830465796261,
+      "years_of_history_used": 18,
+      "deviation_at_backtest": -0.0017582020579639535,
+      "actual_return": 0.46112943178624066
+    }
+  ]
+}

@@ -174,6 +174,40 @@ def test_market_snapshot_derives_price_from_market_cap_and_shares():
     assert snapshot["analyst_rating_strong_sell"] == pytest.approx(0)
 
 
+def test_market_snapshot_discards_derived_price_far_above_52_week_high():
+    """Auditoría sesión 17: caso real de GOOGL (SharesOutstanding de
+    Alpha Vantage cuenta solo una de las dos clases de acciones de
+    Alphabet, MarketCapitalization sí refleja la compañía completa) --
+    el precio derivado (2.08x el real) queda muy por encima del propio
+    52WeekHigh de Alpha Vantage. Reproducido con las mismas proporciones:
+    market_cap/shares = 300 (>1.5x el 52WeekHigh de 135 = 202.5) debe
+    descartarse a None con un aviso, no pasar tal cual."""
+    client = make_fake_client()
+    client.company_overview.return_value = {
+        **OVERVIEW_FIXTURE, "MarketCapitalization": "3000", "SharesOutstanding": "10",  # 3000/10=300
+    }
+    with pytest.warns(UserWarning, match="52 semanas"):
+        snapshot = market_snapshot(client, "TEST")
+    assert snapshot["price"] is None
+
+
+def test_market_snapshot_keeps_derived_price_within_52_week_range():
+    client = make_fake_client()
+    snapshot = market_snapshot(client, "TEST")
+    assert snapshot["price"] == pytest.approx(100.0)  # dentro de 82-135, sin aviso
+
+
+def test_market_snapshot_keeps_derived_price_when_52_week_range_missing():
+    """Sin 52WeekHigh/Low no hay forma de validar -- se deja pasar el
+    precio derivado tal cual, no se descarta por precaución (no hay
+    evidencia de que esté mal, solo ausencia de un dato de contraste)."""
+    client = make_fake_client()
+    overview_without_range = {k: v for k, v in OVERVIEW_FIXTURE.items() if k not in ("52WeekHigh", "52WeekLow")}
+    client.company_overview.return_value = overview_without_range
+    snapshot = market_snapshot(client, "TEST")
+    assert snapshot["price"] == pytest.approx(100.0)
+
+
 def test_market_snapshot_exposes_non_usd_currency():
     """Auditoría sesión 15/16, hallazgo M5: una compañía que reporta en
     otra divisa debe quedar expuesta tal cual, sin normalizar ni

@@ -11,6 +11,7 @@ import pytest
 from engine.yfinance_provider import (
     HISTORICAL_FINANCIALS_COLUMNS,
     historical_financials,
+    live_price,
     market_snapshot,
     treasury_yield_10y,
 )
@@ -267,6 +268,28 @@ def test_treasury_yield_10y_raises_when_history_empty():
     ticker = FakeIndexTicker([])
     with pytest.raises(ValueError):
         treasury_yield_10y(ticker)
+
+
+# --- live_price (auditoría sesión 17, fuente de cotización fiable para AV) --
+
+def test_live_price_prefers_current_price():
+    ticker = FakeTicker(FINANCIALS, BALANCE_SHEET, CASHFLOW, {"currentPrice": 123.45, "regularMarketPrice": 999.0})
+    assert live_price(ticker) == pytest.approx(123.45)
+
+
+def test_live_price_falls_back_to_regular_market_price():
+    ticker = FakeTicker(FINANCIALS, BALANCE_SHEET, CASHFLOW, {"regularMarketPrice": 88.0})
+    assert live_price(ticker) == pytest.approx(88.0)
+
+
+def test_live_price_falls_back_to_market_cap_over_shares():
+    ticker = FakeTicker(FINANCIALS, BALANCE_SHEET, CASHFLOW, {"marketCap": 1000.0, "sharesOutstanding": 10.0})
+    assert live_price(ticker) == pytest.approx(100.0)
+
+
+def test_live_price_returns_none_when_nothing_available():
+    ticker = FakeTicker(FINANCIALS, BALANCE_SHEET, CASHFLOW, {})
+    assert live_price(ticker) is None
 
 
 def test_historical_financials_returns_empty_dataframe_for_invalid_ticker():

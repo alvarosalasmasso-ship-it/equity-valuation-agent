@@ -288,6 +288,15 @@ analistas** (mediana 55.4% / 51.6%). Parámetros: `n_years=5`,
 `terminal_growth_rate=2.5%`, `lookback_years=3`, `gordon_weight=0.8`
 (80% Gordon Growth / 20% múltiplo de salida).
 
+> **Nota (sesión 17, posterior):** esta tabla se deja tal cual para que
+> el diagnóstico de causa raíz de abajo (CapEx >> D&A) siga siendo
+> trazable con los números originales. La sección 30 encontró y
+> corrigió un bug real en el precio de mercado de GOOGL/META (derivado
+> mal de Alpha Vantage) — la cifra agregada vigente del universo piloto
+> completo (8 tickers) es **34.21%**, no la que aparece más abajo en la
+> sección 14 (42.8%, que ya corregía la forma del fade pero seguía
+> heredando el precio de mercado erróneo de GOOGL/META).
+
 ### Diagnóstico: causa raíz identificada, no una lista de bugs
 
 Que las 5 compañías —independientes entre sí— salgan infravaloradas en
@@ -1941,3 +1950,113 @@ verde.** Verificado de punta a punta con datos reales de AMZN vía
 incluidas las 2.000 simulaciones — rendimiento aceptable para
 recalcularse en cada interacción de Streamlit (el modelo de rerun
 completo del framework).
+
+## 30. Backtesting walk-forward, y un bug de precio real encontrado por el camino (sesión 17, Lote C)
+
+Última pieza del lote de rigor matemático: ¿el modelo tiene señal
+predictiva real, o solo se ajusta transversalmente al precio de hoy?
+La validación de la Fase 7 (secciones 7-16) nunca puede responder esto
+por sí sola — mide "¿coincide con el precio de HOY?", nunca "¿tenía
+razón sobre hacia dónde iba el precio?". Se había aparcado por
+considerarlo poco viable (sección 26, investigación de SEC EDGAR) hasta
+comprobar con datos reales que NO hace falta una fuente "point-in-time"
+especializada: truncar el histórico ya disponible a fechas anteriores
+al punto de backtest, con un margen de retraso de reporting
+conservador (90 días), evita el componente más grave de look-ahead
+bias sin coste adicional.
+
+### `engine/backtest.py` + `scripts/run_backtest.py`
+
+`known_history_as_of()` filtra un histórico a solo los años cuyo 10-K
+ya habría sido publicado en una fecha dada. El script congela cada
+ticker "como si" se valorara 2 años atrás (WACC simplificado con beta
+de HOY pero risk-free rate y precio de mercado REALES de esa fecha,
+ambos vía yfinance gratis — simplificaciones documentadas, no
+descuidos) y compara la dirección de la desviación entonces contra el
+retorno real posterior.
+
+### El hallazgo real: un bug de precio de Alpha Vantage, no solo del backtest
+
+Corriendo el backtest sobre Big Tech, GOOGL mostró una desviación
+absurda (+188%) frente al resto. Investigado a fondo en vez de
+descartado como ruido: `engine.data_provider.market_snapshot()` deriva
+`"price"` como `MarketCapitalization / SharesOutstanding` del
+`OVERVIEW` de Alpha Vantage — y ese cociente sale **2.08x inflado para
+GOOGL** ($705.51 en vez de $338.46 reales, confirmado con yfinance Y
+con el propio `52WeekHigh`/`AnalystTargetPrice` de Alpha Vantage, ambos
+en el rango correcto). Causa: `SharesOutstanding` de Alpha Vantage
+(5.867bn) solo cuenta una de las dos clases de acciones de Alphabet,
+mientras `MarketCapitalization` ($4.139T) sí refleja la compañía
+completa (`SharesFloat`, 10.88bn, casi el doble, lo confirma). **META
+tiene el mismo problema, más leve y de otra naturaleza** (1.155x
+inflado, $712.53 en vez de $616.77 reales) — ahí `SharesOutstanding`/
+`SharesFloat` SÍ son consistentes entre sí, así que
+`MarketCapitalization` parece desincronizada en el tiempo, no un
+problema de clases de acciones.
+
+**Por qué importa más allá del backtest**: este precio alimenta
+`deviation_vs_market` en TODAS las sesiones de validación de este
+proyecto — GOOGL y META llevan en el universo piloto desde las
+primeras sesiones, y nunca se había contrastado el precio derivado
+contra una fuente independiente. Con el precio corregido: GOOGL pasa
+de -52.3% a **-0.56%** de desviación (esencialmente en su valor justo,
+no infravalorada como el resto de Big Tech), META de -26.2% a
+**-14.8%**, y la **desviación media combinada del universo piloto de
+41.82% a 34.21%** — la cifra citada repetidamente en las secciones
+7/14/16/23/24 de este documento y en el borrador de uso para CV
+(sección 7) queda desactualizada por este bug, no solo por el
+movimiento normal de precios día a día. Las tablas históricas de esas
+secciones se dejan tal cual para que el diagnóstico original (CapEx >>
+D&A, spread WACC-g estrecho) siga siendo trazable — la cifra agregada
+vigente es la de este apartado y la de `data/validation_history/2026-09-06.json`.
+
+**Corregido en dos capas** (una sola no bastaba): (1)
+`engine.data_provider._validate_derived_price()` descarta el precio a
+`None` cuando cae fuera de 1.5x/0.5x el rango de 52 semanas de la
+propia Alpha Vantage — detecta GOOGL, no detecta META (cobertura
+parcial, documentada); (2) yfinance (`engine.yfinance_provider
+.live_price()`, nueva) pasa a ser la fuente PREFERIDA de cotización
+para todos los tickers en `app/streamlit_app.py`,
+`scripts/validate_universe.py` y `scripts/run_backtest.py`, con el
+precio derivado de Alpha Vantage solo como último recurso — ya era una
+dependencia transversal de la app (el risk-free rate en vivo se usa
+sin importar el modo), así que esto no añade una categoría nueva de
+fragilidad.
+
+### Resultado real del backtest (una vez con el precio correcto)
+
+Fecha de backtest: 2024-09-06 (2 años atrás). Big Tech (Alpha Vantage,
+15-20 años de histórico, suficiente para la ventana de truncado);
+Consumo defensivo (yfinance, solo ~4 años de histórico total) se omite
+automáticamente por no tener suficiente historia disponible A ESA
+fecha — limitación honesta, no un fallo silencioso (cada omisión sale
+en el log con su motivo).
+
+| Ticker | Desviación en 2024-09-06 | Retorno real hasta hoy |
+|---|---|---|
+| AMZN | -89.2% | +50.8% |
+| MSFT | -12.4% | +26.4% |
+| GOOGL | +188.2% | +126.1% |
+| META | -11.5% | +24.1% |
+| AAPL | -0.2% | +46.1% |
+
+**Correlación (n=5): r = +0.844** — una infravaloración marcada por el
+modelo en 2024 tendió a preceder un retorno posterior MAYOR, no menor:
+el mercado, en la dirección promedio, corrigió HACIA el modelo
+conservador en vez de alejarse más de él. Lectura honesta, con las
+limitaciones puestas por delante, no detrás: n=5 es una muestra
+pequeña (un único punto, GOOGL, con una desviación atípica muy grande
+respecto a los demás, domina la correlación con un peso desproporcionado);
+el resultado es sugerente, no una prueba estadística robusta de que el
+modelo "tenga razón" — pero es exactamente el tipo de evidencia que
+antes no existía, y que la validación transversal nunca podría dar.
+
+### Verificación
+
+9 tests en `test_backtest.py` (truncado por fecha de reporting, límite
+exacto, `BacktestResult`/validación de precios positivos) + 4 en
+`test_data_provider.py` y 4 en `test_yfinance_provider.py` para el bug
+de precio. **225 tests en total, todos en verde.** Verificado de punta
+a punta con datos reales: `scripts/run_backtest.py` sobre Big Tech
+completo, y `AppTest` confirmando que GOOGL en modo "Big Tech" ahora
+muestra el precio de mercado correcto ($338.46) en la app real.

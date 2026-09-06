@@ -30,19 +30,21 @@ reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
 y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
-**1 hallazgo crítico (✅ corregido), 12 importantes (9 ✅ corregidos —
+**1 hallazgo crítico (✅ corregido), 13 importantes (10 ✅ corregidos —
 I6/I7/I8 de la auditoría matemática/financiera a fondo, I9/I10 de una
 prueba de estrés con 11 tickers reales ("como si un banco fuese a
 usarla"), I12 (aviso de hiper-crecimiento extremo, corrección parcial:
-avisa, no ajusta el número) —, 3 ✅ aceptados como limitación
-documentada — I2, I4, I11: DCF FCFF no encaja con bancos/REITs), 7
-moderados (**todos cerrados**: 6 ✅ corregidos incluido M7 en el Lote A,
-1 ✅ decisión explícita investigada — M2, y M6 recién investigado con
-evidencia directa del Excel de referencia y también cerrado), 3
-informativos (1 ✅ corregido — N2 —, 2 sin acción necesaria). Con esto,
-**no queda ningún hallazgo moderado o importante abierto** — I12 se
-corrigió parcialmente (aviso, sin umbral de ajuste automático por falta
-de evidencia objetiva, mismo criterio que el resto del proyecto).**
+avisa, no ajusta el número), I13 (precio de mercado de Alpha Vantage
+mal para GOOGL/META, corrige la desviación media del universo piloto de
+41.82% a 34.21%) —, 3 ✅ aceptados como limitación documentada — I2, I4,
+I11: DCF FCFF no encaja con bancos/REITs), 7 moderados (**todos
+cerrados**: 6 ✅ corregidos incluido M7 en el Lote A, 1 ✅ decisión
+explícita investigada — M2, y M6 recién investigado con evidencia
+directa del Excel de referencia y también cerrado), 3 informativos (1
+✅ corregido — N2 —, 2 sin acción necesaria). Con esto, **no queda
+ningún hallazgo moderado o importante abierto** — I12 se corrigió
+parcialmente (aviso, sin umbral de ajuste automático por falta de
+evidencia objetiva, mismo criterio que el resto del proyecto).**
 La sesión 17 añadió una auditoría explícita del rigor matemático y
 financiero del motor (`engine/valuation.py`, `wacc_builder.py`,
 `ratios.py`, `comps.py`) verificado fórmula a fórmula contra teoría
@@ -603,6 +605,73 @@ tener datos suficientes para no fallar.
 
 ---
 
+### I13. Precio de mercado de Alpha Vantage mal para GOOGL/META — afecta a hallazgos ya documentados en varias sesiones — ✅ CORREGIDO (sesión 17)
+
+**Qué es:** construyendo el backtest walk-forward (Lote C, ítem D), al
+comparar el precio de mercado de hoy contra el precio histórico de
+GOOGL salió una desviación absurda (+188% de "infravaloración" de
+nuestro propio modelo, un valor atípico frente al resto de Big Tech).
+Investigado a fondo (no descartado como "ruido"): `engine.data_provider
+.market_snapshot()` deriva `"price"` como `MarketCapitalization /
+SharesOutstanding` del `OVERVIEW` de Alpha Vantage — y ese cociente
+sale **2.08x inflado para GOOGL** ($705.51 en vez de $338.46 reales,
+confirmado con yfinance Y con el propio `52WeekHigh` de Alpha Vantage,
+$408.10, y `AnalystTargetPrice`, $428.07 — ambos en el rango correcto).
+Causa: `SharesOutstanding` de Alpha Vantage (5.867bn) solo cuenta una
+de las dos clases de acciones de Alphabet (GOOGL/GOOG), mientras
+`MarketCapitalization` ($4.139T) sí refleja la compañía completa
+(`SharesFloat`, 10.88bn, casi el doble de `SharesOutstanding`, lo
+confirma). **META tiene el mismo problema, más leve y de otra
+naturaleza** (1.155x inflado, $712.53 en vez de $616.77 reales) — ahí
+`SharesOutstanding`/`SharesFloat` son consistentes entre sí (no es un
+problema de clases de acciones), así que `MarketCapitalization` parece
+desincronizada en el tiempo respecto al resto del snapshot.
+
+**Por qué importa — más allá del backtest:** este precio de mercado
+alimenta `deviation_vs_market` en TODAS las sesiones de validación
+anteriores. Con el precio corregido, la desviación de GOOGL frente al
+mercado pasa de **-52.3% a -0.56%** (esencialmente en su valor justo,
+no infravalorada como el resto de Big Tech) y la de META de **-26.2% a
+-14.8%**. La desviación media combinada del universo piloto (8
+tickers) pasa de **41.82% a 34.21%** — una cifra citada repetidamente
+en `docs/METHODOLOGY.md` (secciones 7, 14, 16, 23, 24) y en el
+borrador de uso para CV (sección 7) queda desactualizada por este bug,
+no solo por el ajuste normal de precios de mercado día a día.
+
+**Por qué no se detectó antes:** GOOGL y META llevan en el universo
+piloto desde las primeras sesiones, pero nunca se había contrastado el
+precio de mercado derivado contra una fuente independiente — se
+confiaba en que `MarketCapitalization`/`SharesOutstanding` de un
+proveedor de pago fueran mutuamente consistentes, sin verificarlo.
+
+**Cómo se corrigió, en dos capas:**
+1. `engine.data_provider._validate_derived_price()` (nueva): descarta
+   el precio derivado a `None` cuando cae fuera de 1.5x/0.5x el rango
+   de 52 semanas de la propia Alpha Vantage — cobertura PARCIAL,
+   documentada como tal (detecta GOOGL, no detecta META, cuyo precio
+   erróneo cae igualmente dentro del rango de 52 semanas).
+2. `app/streamlit_app.py`, `scripts/validate_universe.py` y
+   `scripts/run_backtest.py`: yfinance (`engine.yfinance_provider
+   .live_price()`, nueva) pasa a ser la fuente PREFERIDA de cotización
+   para TODOS los tickers, con el precio derivado de Alpha Vantage solo
+   como último recurso si yfinance no responde — no una capa 1 sin la
+   capa 2, porque la capa 1 por sí sola no habría arreglado META.
+   yfinance ya era una dependencia transversal de la app (el risk-free
+   rate en vivo se usa sin importar el modo) — extenderla a la
+   cotización no añade una categoría nueva de fragilidad.
+
+**Verificado:** 4 tests nuevos en `test_data_provider.py` (descarta el
+precio fuera de rango con aviso; lo mantiene dentro de rango; lo deja
+pasar sin rango de 52 semanas disponible) + 4 en `test_yfinance_provider.py`
+(`live_price()` con sus 3 fuentes en cascada y el caso sin ninguna
+disponible). Re-verificado de punta a punta con `AppTest` + red real:
+GOOGL en modo "Big Tech" (Alpha Vantage) ahora muestra
+`Precio de mercado: $338.46`, el valor correcto. `scripts/validate_universe.py`
+re-corrido con datos reales: universo completo recalculado con el
+precio correcto (ver `data/validation_history/2026-09-06.json`).
+
+---
+
 ## Moderado
 
 ### M1. `requirements.txt` sin versiones fijadas — ✅ CORREGIDO (sesión 15)
@@ -959,7 +1028,7 @@ aviso en la interfaz.
 - **El múltiplo de salida se corrigió** de "propio de la empresa" a
   "mediana de comparables" (sesión 14), con el efecto mixto reportado
   con honestidad en vez de maquillado.
-- **193 tests, cero dependen de red** — toda la suite corre offline con
+- **225 tests, cero dependen de red** — toda la suite corre offline con
   fixtures fieles al formato real de las APIs, incluidos 12 tests de la
   app en sí (`streamlit.testing.v1.AppTest`, sesión 16-17) y CI en
   GitHub Actions corriéndolos en cada push. Complementado con una
@@ -1063,6 +1132,12 @@ aviso en la interfaz.
 19. ~~**I12 (hiper-crecimiento extremo)**~~ — ✅ corregido parcialmente
     (Lote B, sesión 17): aviso cuando el CAGR plano supera 50%/año,
     verificado con NVDA real (dispara), AMZN/MSFT/TSLA/BA (no).
+20. ~~**I13 (precio de mercado de Alpha Vantage mal para GOOGL/META)**~~
+    — ✅ corregido (Lote C, sesión 17) — encontrado construyendo el
+    backtest walk-forward. yfinance pasa a ser la fuente preferida de
+    cotización para todos los tickers. Corrige la desviación media del
+    universo piloto de 41.82% a 34.21% — un bug real presente desde
+    sesiones anteriores, no solo del backtest.
 
 **Con esto, no queda ningún hallazgo crítico, importante o moderado
 abierto** — todos corregidos, decididos explícitamente con evidencia, o
