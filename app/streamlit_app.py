@@ -17,7 +17,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from ai.memo_generator import build_memo_input, build_prompt, run_scenarios_capturing_warnings
+from ai.memo_generator import CONSERVATIVE_SCENARIO_NAME, build_memo_input, build_prompt, run_scenarios_capturing_warnings
 from engine.data_provider import AlphaVantageClient, AlphaVantageError
 from engine.data_provider import historical_financials as av_historical_financials
 from engine.data_provider import market_snapshot as av_market_snapshot
@@ -362,12 +362,24 @@ if reported_currency and reported_currency != "USD":
 
 # --- Múltiplo de salida: mediana de comparables, no el propio de la empresa ---
 
-from engine.comps import build_comps_table, peer_average_multiple
+from engine.comps import build_comps_table, comps_implied_share_price, peer_average_multiple
 
 comps_table = None
+comps_valuation = None
 if len(snap_data) > 1:
     comps_table = build_comps_table(list(snap_data.values()))
     terminal_multiple = peer_average_multiple(comps_table, "ev_to_ebitda", exclude_symbol=target, method="median")
+    # Sesión 17: el mismo múltiplo de peers, ahora como método de
+    # valoración independiente (no solo como input del valor terminal
+    # del DCF) -- aplicado al EBITDA/ingresos actuales de la empresa,
+    # ver docs/METHODOLOGY.md sección 23 ("football field").
+    target_ebitda_now = hist["ebit"].iloc[-1] + hist["d_and_a"].iloc[-1]
+    target_revenue_now = hist["revenue"].iloc[-1]
+    comps_valuation = comps_implied_share_price(
+        comps_table, target, target_ebitda_now, target_revenue_now,
+        cash=snap.get("cash") or 0, total_debt=snap.get("total_debt") or 0,
+        diluted_shares=snap["shares_outstanding"],
+    )
 else:
     terminal_multiple = snap.get("ev_to_ebitda")
 
@@ -478,6 +490,78 @@ tab_valoracion, tab_supuestos, tab_fundamentales, tab_memo = st.tabs(
 )
 
 with tab_valoracion:
+    st.subheader("Football field: triangulación de métodos")
+    st.caption(
+        "El rango de cada método de valoración independiente -- DCF, comparables de mercado y "
+        "cotización de las últimas 52 semanas -- frente al precio de mercado y el consenso de "
+        "analistas. Es la vista que encabeza cualquier informe de equity research bancario: "
+        "ningún método se presenta solo."
+    )
+    ff_categories, ff_low, ff_high = [], [], []
+
+    ff_categories.append("DCF (rango de escenarios)")
+    ff_low.append(min(scenario_prices))
+    ff_high.append(max(scenario_prices))
+
+    if comps_valuation is not None:
+        comps_prices = [p for p in (comps_valuation.implied_share_price_from_ebitda,
+                                     comps_valuation.implied_share_price_from_revenue) if p is not None]
+        if comps_prices:
+            ff_categories.append("Comparables de mercado")
+            ff_low.append(min(comps_prices))
+            ff_high.append(max(comps_prices))
+
+    if snap.get("week_52_low") and snap.get("week_52_high"):
+        ff_categories.append("Rango 52 semanas")
+        ff_low.append(snap["week_52_low"])
+        ff_high.append(snap["week_52_high"])
+
+    if len(ff_categories) >= 2:
+        ff_fig = go.Figure()
+        ff_fig.add_bar(
+            y=ff_categories, x=[h - l for h, l in zip(ff_high, ff_low)], base=ff_low,
+            orientation="h", width=0.5, marker_color=COLORS["series"], marker_line_width=0,
+            text=[f"${l:,.0f} – ${h:,.0f}" for l, h in zip(ff_low, ff_high)],
+            textposition="inside", insidetextanchor="middle",
+            textfont=dict(family=FONT_MONO, size=12, color=COLORS["surface"]),
+            hovertemplate="%{y}<extra></extra>",
+        )
+        ff_max_x = max(ff_high + [snap.get("price") or 0, snap.get("analyst_target_price") or 0]) * 1.15
+        if snap.get("price"):
+            ff_fig.add_vline(x=snap["price"], line_dash="dash", line_width=1.5, line_color=COLORS["market_ref"],
+                              annotation_text=f"Mercado ${snap['price']:.2f}", annotation_position="top",
+                              annotation_font=dict(family=FONT_SANS, size=11, color=COLORS["market_ref"]))
+        if snap.get("analyst_target_price"):
+            ff_fig.add_vline(x=snap["analyst_target_price"], line_dash="dot", line_width=1.5, line_color=COLORS["consensus_ref"],
+                              annotation_text=f"Consenso ${snap['analyst_target_price']:.2f}", annotation_position="bottom",
+                              annotation_font=dict(family=FONT_SANS, size=11, color=COLORS["consensus_ref"]))
+        ff_fig.update_layout(
+            height=230, margin=dict(l=10, r=10, t=40, b=40), showlegend=False,
+            plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"],
+            font=dict(family=FONT_SANS, color=COLORS["ink_soft"], size=13),
+            xaxis=dict(title="Precio implícito ($)", range=[0, ff_max_x], gridcolor=COLORS["border"], zeroline=False),
+            yaxis=dict(gridcolor=COLORS["border"], automargin=True),
+        )
+        st.plotly_chart(ff_fig, width="stretch", config={"displayModeBar": False})
+        if comps_valuation is not None:
+            ebitda_txt = (f"${comps_valuation.implied_share_price_from_ebitda:,.2f} vía EV/EBITDA "
+                          f"({comps_valuation.ev_ebitda_multiple:.1f}x de peers)"
+                          if comps_valuation.implied_share_price_from_ebitda is not None
+                          else "EBITDA actual no positivo, EV/EBITDA no es significativo")
+            revenue_txt = (f"${comps_valuation.implied_share_price_from_revenue:,.2f} vía EV/Revenue "
+                           f"({comps_valuation.ev_revenue_multiple:.1f}x de peers)"
+                           if comps_valuation.implied_share_price_from_revenue is not None
+                           else "sin ingresos válidos para EV/Revenue")
+            st.caption(
+                f"Comparables: {ebitda_txt}; {revenue_txt}. EV/EBITDA es el más fiable de los dos — "
+                "normaliza por margen; EV/Revenue puede distorsionarse mucho cuando los peers tienen "
+                "perfiles de margen muy distintos entre sí (un peer de software de alto margen infla "
+                "el múltiplo de ingresos frente a uno de menor margen, aunque coticen a un EV/EBITDA "
+                "parecido)."
+            )
+    else:
+        st.caption("Datos insuficientes para triangular más de un método en este caso.")
+
     st.subheader("Rango de escenarios")
 
     fig = go.Figure()
@@ -512,6 +596,34 @@ with tab_valoracion:
             st.warning(f"Aviso técnico del modelo: {w}")
     else:
         st.info("Sin avisos técnicos: el margen WACC-g es saludable en este cálculo.")
+
+    st.subheader("Valor terminal: Gordon Growth vs. múltiplo de salida")
+    conservative_result = scenario_results.get(CONSERVATIVE_SCENARIO_NAME)
+    if conservative_result is not None:
+        gordon_ev_col, exit_ev_col, blend_col = st.columns(3)
+        gordon_ev_col.metric(
+            "Gordon Growth", f"${conservative_result.gordon_terminal_value:,.0f}",
+            help=f"VT perpetuo a partir del último año explícito, con g={terminal_growth_rate*100:.2f}%.",
+        )
+        if conservative_result.exit_multiple_terminal_value is not None:
+            exit_ev_col.metric(
+                "Múltiplo de salida", f"${conservative_result.exit_multiple_terminal_value:,.0f}",
+                help=f"EBITDA del último año explícito × {terminal_multiple:.1f}x (mediana de peers).",
+            )
+        else:
+            exit_ev_col.metric("Múltiplo de salida", "n/d")
+        blend_col.metric(
+            "Valor terminal usado", f"${conservative_result.terminal_value:,.0f}",
+            help=f"Blend: {gordon_weight*100:.0f}% Gordon Growth + {(1-gordon_weight)*100:.0f}% múltiplo de salida.",
+        )
+        if conservative_result.exit_multiple_terminal_value:
+            gap = conservative_result.gordon_terminal_value / conservative_result.exit_multiple_terminal_value - 1
+            st.caption(
+                f"Gordon Growth implica un valor terminal {gap:+.0%} frente al múltiplo de salida de peers. "
+                "Una brecha grande entre ambos métodos (sobre todo con Gordon Growth muy por encima) es la "
+                "señal de un spread WACC-g estrecho amplificando la perpetuidad — ver aviso técnico arriba "
+                "si aplica."
+            )
 
     st.subheader("Sensibilidad: WACC × tasa de crecimiento terminal")
     if matrix is not None:

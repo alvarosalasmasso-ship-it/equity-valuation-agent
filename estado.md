@@ -1225,7 +1225,47 @@ Documentado en `docs/METHODOLOGY.md` sección 22.
 test_projections.py). Verificado con AppTest que la nueva sección
 renderiza sin excepción.
 
-## 14. Próximo paso inmediato
+## 14. Sesión 17 (continuación) — Comparación contra banca de primer nivel: football field, comparables independientes, transparencia del valor terminal
+
+El usuario pidió comparar el motor contra cómo bancos de primer nivel
+(JP Morgan) presentan una valoración real. Revisión concreta de
+`wacc_builder.py`, `DCFResult`, `comps.py` y datos crudos disponibles
+(no una lista genérica). Confirmado que ya coincidimos con la práctica
+profesional en varios puntos clave (reapalancar a estructura de capital
+actual, crecimiento plano en el horizonte explícito, EBIT ya GAAP sin
+añadir de vuelta el stock-based compensation — comprobado con el dato
+real de AMZN, $19.5bn en 2025). Tres huecos reales cerrados:
+
+1. **`engine.comps.comps_implied_share_price()`** — el múltiplo de
+   peers, hasta ahora solo usado como input del valor terminal del DCF,
+   ahora también se aplica directamente al EBITDA/ingresos actuales de
+   la empresa como método de valoración independiente. Verificado con
+   AMZN real: EV/EBITDA de peers implica $237 (mucho más cerca del
+   mercado, $258.51, que el DCF conservador, ~$104) mientras EV/Revenue
+   implica $631 — hallazgo real de que EV/Revenue se distorsiona entre
+   peers de margen muy distinto (MSFT/GOOGL vs. AMZN), confirmando por
+   qué EV/EBITDA es el múltiplo primario en la práctica bancaria.
+2. **Football field chart** en la pestaña "Valoración": rango DCF +
+   rango de comparables + rango de 52 semanas (nuevo campo
+   `week_52_high`/`week_52_low` en ambos proveedores, sin coste
+   adicional) con mercado/consenso como referencia — la vista que
+   encabeza cualquier informe de equity research bancario.
+3. **Desglose Gordon Growth vs. múltiplo de salida** en la UI —
+   `DCFResult` ya calculaba ambos valores terminales por separado desde
+   la Fase 2 pero nunca se mostraban. Verificado con JNJ real: Gordon
+   Growth $1.00 billones vs. $792 mil millones del múltiplo de salida
+   — brecha +26.4%, ahora visible sin desglosar el DCF a mano.
+
+Transacciones precedentes (M&A comps) documentadas como limitación
+permanente — no hay fuente gratuita de datos de transacciones M&A.
+
+**175 tests en total, todos en verde.** Verificado además con datos
+reales fuera de la suite (yfinance real sobre JNJ, el caso con spread
+WACC-g más estrecho) para confirmar que no hay bugs de `None`/división
+por cero no capturados por los fixtures sintéticos del AppTest.
+Documentado en `docs/METHODOLOGY.md` sección 23.
+
+## 15. Próximo paso inmediato
 
 1. C — Monte Carlo: bandas de confianza probabilísticas (P10/P50/P90)
    sobre el precio implícito, muestreando WACC/margen/CapEx desde su

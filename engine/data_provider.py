@@ -334,6 +334,11 @@ def market_snapshot(client: AlphaVantageClient, symbol: str, use_cache: bool = T
         "analyst_target_price": _to_float(overview.get("AnalystTargetPrice")),
         "cash": _to_float(latest_bs.get("cashAndShortTermInvestments")),
         "total_debt": _to_float(latest_bs.get("shortLongTermDebtTotal")),
+        # Sesión 17: rango de 52 semanas, para el football field bancario
+        # (docs/METHODOLOGY.md sección 23) -- expuesto directamente en
+        # OVERVIEW, sin coste de petición adicional.
+        "week_52_high": _to_float(overview.get("52WeekHigh")),
+        "week_52_low": _to_float(overview.get("52WeekLow")),
         # Auditoría sesión 15/16, hallazgo M5: divisa de reporte de los
         # estados financieros. risk_free_rate y market_risk_premium están
         # calibrados en USD (Treasury americano) -- mezclar una compañía

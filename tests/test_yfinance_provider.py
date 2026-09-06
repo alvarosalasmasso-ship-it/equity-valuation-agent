@@ -74,6 +74,8 @@ INFO = {
     "totalDebt": 60.0,
     "financialCurrency": "USD",
     "currency": "USD",
+    "fiftyTwoWeekHigh": 135.0,
+    "fiftyTwoWeekLow": 82.0,
 }
 
 
@@ -140,13 +142,15 @@ def test_market_snapshot_matches_data_provider_schema():
         "symbol", "sector", "industry", "market_cap", "shares_outstanding",
         "price", "beta", "ev_to_ebitda", "ev_to_revenue", "pe_ratio",
         "price_to_sales", "price_to_book", "analyst_target_price", "cash", "total_debt",
-        "currency",
+        "currency", "week_52_high", "week_52_low",
     }
     assert expected_keys.issubset(snapshot.keys())
     assert snapshot["price"] == pytest.approx(100.0)
     assert snapshot["beta"] == pytest.approx(1.2)
     assert snapshot["symbol"] == "TEST"
     assert snapshot["currency"] == "USD"
+    assert snapshot["week_52_high"] == pytest.approx(135.0)
+    assert snapshot["week_52_low"] == pytest.approx(82.0)
 
 
 def test_market_snapshot_prefers_financial_currency_over_quote_currency():

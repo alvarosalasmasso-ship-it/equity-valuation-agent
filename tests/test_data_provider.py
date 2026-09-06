@@ -81,6 +81,8 @@ OVERVIEW_FIXTURE = {
     "EVToEBITDA": "15.5",
     "AnalystTargetPrice": "120.5",
     "Currency": "USD",
+    "52WeekHigh": "135.0",
+    "52WeekLow": "82.0",
 }
 
 
@@ -158,6 +160,8 @@ def test_market_snapshot_derives_price_from_market_cap_and_shares():
     assert snapshot["total_debt"] == pytest.approx(40.0)
     assert snapshot["sector"] == "TECHNOLOGY"
     assert snapshot["currency"] == "USD"
+    assert snapshot["week_52_high"] == pytest.approx(135.0)
+    assert snapshot["week_52_low"] == pytest.approx(82.0)
 
 
 def test_market_snapshot_exposes_non_usd_currency():

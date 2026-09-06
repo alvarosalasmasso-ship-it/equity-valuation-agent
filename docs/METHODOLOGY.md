@@ -1414,3 +1414,101 @@ el tamaño del bump, `gordon_weight=0` anula el efecto de g terminal;
 pestaña). 171 tests en total, todos en verde. Verificado con AppTest que
 la sección renderiza sin excepción sobre el estado por defecto de la
 app.
+
+## 23. Comparación contra la práctica de banca de primer nivel: football field, comparables independientes y transparencia del valor terminal (sesión 17)
+
+Petición del usuario: comparar el motor contra cómo bancos como JP
+Morgan presentan una valoración real, para encontrar huecos genuinos —
+no una lista de "cosas que suenan a banco", sino una revisión concreta
+de `wacc_builder.py`, `DCFResult`, `comps.py` y los datos crudos ya
+disponibles. Confirmado primero lo que YA coincide con la práctica
+profesional (no solo con teoría): reapalancar a la estructura de capital
+*actual* de la empresa objetivo (igual que el Excel de referencia,
+secciones 3-4); crecimiento plano en el horizonte explícito (sección
+14); y el EBIT ya es GAAP — comprobado con el campo real
+`stockBasedCompensation` de Alpha Vantage ($19.5bn en AMZN, ejercicio
+2025) que no se añade de vuelta en ningún punto del pipeline, a
+diferencia de muchos DCFs de mercado que parten de EBITDA ajustado (SBC
+añadido de vuelta como si fuera gratis) — nuestro motor es, en este
+punto concreto, más riguroso que la práctica común, no menos.
+
+Tres huecos reales identificados y cerrados en esta sesión:
+
+**1. Comparables de mercado como método de valoración independiente
+(`engine.comps.comps_implied_share_price`).** Hasta ahora `comps.py`
+solo usaba el múltiplo mediano de peers para UNA pieza del DCF
+(`exit_multiple_terminal_value`, el valor terminal). Nunca se aplicaba
+directamente al EBITDA/ingresos ACTUALES (último año real) de la
+empresa objetivo para obtener un precio implícito standalone — la
+segunda pata de cualquier valoración bancaria junto al DCF. Aplica
+EV/EBITDA y EV/Revenue de peers (excluyendo el propio ticker) al
+tamaño real de la empresa; `implied_share_price_from_ebitda`/`_revenue`
+es `None` cuando la base no es significativa (EBITDA ≤ 0).
+
+Verificado con datos reales, AMZN (peers Big Tech): EV/EBITDA mediano
+de peers (15.87x) implica **$237.06** — mucho más cerca del precio de
+mercado ($258.51) que el DCF conservador (~$104) — mientras que
+EV/Revenue mediano (9.59x) implica **$630.94**, muy por encima de
+ambos. **Hallazgo real, no solo mecánico:** EV/Revenue se distorsiona
+fuertemente cuando los peers tienen perfiles de margen muy distintos —
+MSFT/GOOGL (software, margen alto) inflan el múltiplo de ingresos
+frente al margen mucho más fino de AMZN (retail + cloud), aunque coticen
+a un EV/EBITDA parecido. Confirma por qué EV/EBITDA es el múltiplo
+primario en la práctica bancaria (normaliza por margen) y EV/Revenue
+uno secundario/de contraste, útil sobre todo con EBITDA negativo. Este
+resultado, además, es una TERCERA confirmación independiente (junto al
+DCF y al precio de mercado) de la tesis de la sección 7: el DCF
+conservador es el más bajo de los tres métodos, consistente con que su
+motor de reversión a la media no extrapola el retorno futuro del
+supercycle de CapEx que sí paga el mercado hoy.
+
+**2. Football field chart.** Combina en un único gráfico horizontal de
+rangos: DCF (min/max de los 3 escenarios), comparables (min/max de
+EV/EBITDA y EV/Revenue) y rango de cotización de 52 semanas (nuevo
+campo `week_52_high`/`week_52_low`, ya expuesto sin coste adicional en
+`OVERVIEW` de Alpha Vantage y en `.info` de yfinance como
+`fiftyTwoWeekHigh`/`fiftyTwoWeekLow`), con el precio de mercado y el
+consenso de analistas como líneas de referencia — exactamente la vista
+que encabeza un informe de equity research bancario, triangulando
+métodos en vez de presentar uno solo. Solo se muestra si hay ≥ 2
+métodos disponibles (en modo "cualquier ticker" sin comparables, cae a
+un aviso explícito en vez de un gráfico de una sola barra sin sentido
+de "triangulación").
+
+**3. Transparencia Gordon Growth vs. múltiplo de salida.**
+`DCFResult` ya calculaba ambos valores terminales por separado
+(`gordon_terminal_value`, `exit_multiple_terminal_value`) desde la Fase
+2, pero la app nunca los mostraba — solo el blend final. Ahora se
+muestran los tres números lado a lado (Gordon Growth, múltiplo de
+salida, valor usado) más el % de brecha entre los dos métodos.
+Verificado con datos reales, JNJ (spread WACC-g estrecho, ya conocido
+de la sección 9): Gordon Growth = $1.00 billones frente a $792 mil
+millones del múltiplo de salida — **brecha de +26.4%**, ahora visible
+directamente en la interfaz en vez de requerir desglosar el DCF a mano
+para descubrirla.
+
+### Lo que queda fuera, documentado como limitación permanente
+
+**Transacciones precedentes (M&A comps).** Estructuralmente imposible
+de replicar sin una base de datos de transacciones M&A de pago — no
+existe una fuente gratuita equivalente a Alpha Vantage/yfinance para
+esto. Documentado aquí como limitación honesta y permanente, no como
+un pendiente de construir.
+
+### Verificación
+
+4 tests nuevos en `test_comps.py` (aplicación del múltiplo mediano,
+`None` cuando EBITDA no es significativo, `diluted_shares` no positivo
+rechazado, caja neta suma en vez de restar al precio). Campo
+`week_52_high`/`week_52_low` añadido a ambos proveedores con tests de
+esquema actualizados. `test_app.py` actualizado: 4 gráficos Plotly en
+el estado por defecto (football field + escenarios + heatmap WACC×g en
+"Valoración", tornado chart en "Supuestos y expectativas"), más los
+nuevos subheaders. **175 tests en total, todos en verde.** Verificado
+además con datos reales fuera de la suite de tests (no solo con los
+fixtures sintéticos del AppTest): JNJ con el proveedor yfinance real,
+confirmando que `comps_implied_share_price` y el desglose Gordon/exit
+multiple producen números coherentes y sin excepciones sobre el
+universo "Consumo defensivo" completo, el caso con el spread WACC-g más
+estrecho y por tanto el más propenso a exponer un bug de división por
+cero o `None` no gestionado.

@@ -185,6 +185,11 @@ def market_snapshot(ticker) -> dict:
         "analyst_target_price": _clean(info.get("targetMeanPrice")),
         "cash": _clean(info.get("totalCash")),
         "total_debt": _clean(info.get("totalDebt")),
+        # Sesión 17: rango de 52 semanas, para el football field bancario
+        # (docs/METHODOLOGY.md sección 23) -- ya expuesto en .info, sin
+        # coste de petición adicional.
+        "week_52_high": _clean(info.get("fiftyTwoWeekHigh")),
+        "week_52_low": _clean(info.get("fiftyTwoWeekLow")),
         # Auditoría sesión 15/16, hallazgo M5: divisa de reporte de los
         # estados financieros -- ver el mismo campo en data_provider.py
         # para la justificación completa. yfinance separa "currency"
