@@ -340,7 +340,7 @@ def test_generic_loader_failure_shows_actionable_message_not_a_traceback():
 # --- Regresión: modo "cualquier ticker" (auditoría sesión 15, hallazgo I3) -
 
 def _switch_to_arbitrary_ticker(at, symbol: str):
-    at.sidebar.radio[0].set_value("Cualquier ticker (yfinance, WACC simplificado)").run()
+    at.sidebar.radio[0].set_value("Cualquier empresa (símbolo suelto)").run()
     at.sidebar.text_input[0].set_value(symbol).run()
 
 

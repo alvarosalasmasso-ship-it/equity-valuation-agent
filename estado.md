@@ -1861,3 +1861,59 @@ para el detalle completo (qué se cambió, el trade-off aceptado en el
 tooltip de cobertura de analistas, y el ajuste de 4 tests de
 `tests/test_app.py`, uno de ellos retirado con justificación
 documentada). **275 tests en total, todos en verde** tras el cambio.
+
+## 35. Sesión 18 (continuación) — Pulido visual de la app: avisos, gráficos que se solapaban, cifras sin formatear, y selector de empresa confuso
+
+El usuario, tras usar la app, reportó cuatro problemas visuales
+concretos: "los avisos salen raros", "las gráficas son feas poco
+profesionales y se solapan datos", y "dos diferenciaciones raras para
+elegir empresas entre alpha y yahoo". Se instaló Playwright + Chromium
+en el venv del proyecto para verificar cada fix con capturas reales de
+la app corriendo (no solo revisión de código), siguiendo la misma
+disciplina de "verificar con datos/evidencia real" de toda la sesión.
+
+**Diagnosticado con capturas reales, 6 problemas concretos:**
+
+1. **Avisos técnicos como párrafos densos sin jerarquía** — `st.warning()`
+   volcaba el texto completo (R², z-score, umbrales citados) de golpe.
+   Corregido con `_split_warning()`: parte el aviso en la primera
+   oración (titular corto, visible) + el resto en un `st.expander("Detalle
+   técnico")` — nunca se pierde información, solo deja de ser lo primero
+   que se lee.
+2. **"Consenso $X" solapado con las etiquetas del eje X** (gráfico
+   "Rango de escenarios") y con "Mercado $X" en el football field —
+   ambas líneas de referencia caen casi siempre cerca en el eje, y
+   cualquier combinación de `annotation_position` dentro del propio
+   plot acababa colisionando en algún caso real. Corregido sacando el
+   texto del área de trazado: `_render_reference_lines_caption()`
+   muestra "▬ Mercado $X   ⋯ Consenso $Y" como leyenda normal debajo
+   del gráfico, no como anotación flotante.
+3. **Cifras de valor terminal sin formatear** (`$961,366,104,666`,
+   ilegible y con pinta de número roto) — `_format_money()` abrevia a
+   K/M/B/T como cualquier terminal financiero profesional
+   (`$961.37B`, `$5.27T`).
+4. **Selector de empresa con lenguaje de proveedor de datos** — el radio
+   "Fuente de datos" con "Universo cacheado (WACC riguroso vía
+   comparables)" / "Cualquier ticker (yfinance, WACC simplificado)", más
+   grupos con sufijo "(yfinance)" repetido dos veces, seguía leyéndose
+   como una elección entre proveedores (herencia de cuando "Big Tech"
+   sí usaba Alpha Vantage, sección 34) aunque ya no lo fuera. Renombrado
+   a "Cómo elegir la empresa" con opciones "Grupo de comparables (WACC
+   riguroso)" / "Cualquier empresa (símbolo suelto)", sin nombrar ningún
+   proveedor; grupos sin el sufijo redundante ("Big Tech / Cloud").
+5. **Etiquetas de ratios truncadas con "..."** (pestaña Fundamentales) —
+   6 columnas en una fila no dejaban espacio para "Deuda bruta/EBITDA".
+   Corregido a 2 filas de 3 columnas.
+6. **Tabla de Comparables en bruto** — columnas `snake_case`
+   (`ev_to_ebitda`), market cap sin formatear (`2788369891328`). Se
+   construye ahora una copia formateada para mostrar (columnas
+   legibles, cifras abreviadas, múltiplos con "x") sin tocar la tabla
+   original que sigue alimentando `peer_average_multiple()`.
+
+**Verificado:** cada fix confirmado visualmente con capturas de
+Playwright antes/después (no solo "los tests pasan") — el primer
+intento de separar "Mercado"/"Consenso" con `annotation_position="top
+left"/"top right"` seguía solapando en la práctica, descubierto
+precisamente gracias a la captura, no asumido correcto por el código.
+275 tests en verde (sin cambios de comportamiento del motor, solo
+presentación). App relanzada limpia entre cada iteración.

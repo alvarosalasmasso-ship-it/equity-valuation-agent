@@ -11,6 +11,7 @@ import sys
 import warnings
 from datetime import date
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -52,6 +53,70 @@ COLORS = {
 }
 FONT_SANS = "IBM Plex Sans, -apple-system, Segoe UI, sans-serif"
 FONT_MONO = "IBM Plex Mono, SFMono-Regular, Consolas, monospace"
+
+
+def _format_money(value: float) -> str:
+    """Cifras a nivel de empresa (valor terminal, enterprise value) caen
+    en el rango de miles de millones/billones para cualquier Big Tech --
+    `f"${value:,.0f}"` las muestra como "$961,366,104,666", que lee como
+    un número roto en vez de una cifra real. Abrevia con sufijo (K/M/B/T,
+    convención US -- "B" son mil millones, no un billón español) igual
+    que cualquier terminal financiero profesional. Los precios por
+    acción (mucho más pequeños) no pasan por aquí -- siguen con
+    f"${{v:,.2f}}" tal cual, sin abreviar."""
+    abs_value = abs(value)
+    sign = "-" if value < 0 else ""
+    if abs_value >= 1e12:
+        return f"{sign}${abs_value / 1e12:,.2f}T"
+    if abs_value >= 1e9:
+        return f"{sign}${abs_value / 1e9:,.2f}B"
+    if abs_value >= 1e6:
+        return f"{sign}${abs_value / 1e6:,.1f}M"
+    if abs_value >= 1e3:
+        return f"{sign}${abs_value / 1e3:,.1f}K"
+    return f"{sign}${abs_value:,.0f}"
+
+
+def _split_warning(text: str) -> tuple[str, str]:
+    """Separa un aviso técnico largo en (titular, detalle) por la primera
+    oración -- los avisos del motor (engine/projections.py,
+    engine/valuation.py) siempre terminan la primera frase en '. ' antes
+    de razonar el porqué en detalle (R², z-score, umbrales citados), así
+    que el punto sí marca un límite de oración real y no un decimal (los
+    decimales del motor nunca llevan espacio tras el punto: '0.92', no
+    '0. 92'). Si no hay una segunda oración, el detalle queda vacío y no
+    se muestra ningún expander."""
+    if ". " not in text:
+        return text, ""
+    headline, _, detail = text.partition(". ")
+    return headline + ".", detail
+
+
+def _render_reference_lines_caption(market_price: Optional[float], consensus_price: Optional[float]) -> None:
+    """Leyenda de las líneas verticales de referencia (mercado/consenso)
+    como texto debajo del gráfico, en vez de `annotation_text` flotando
+    dentro del propio plot. Con dos líneas casi siempre próximas en el
+    eje X (mercado y consenso rara vez difieren mucho), cualquier
+    posición de anotación dentro del plot (arriba/abajo, izquierda/
+    derecha) las hace colisionar entre sí en algún caso real -- sacar el
+    texto del área de trazado a una leyenda normal elimina el problema
+    de raíz en vez de perseguir la combinación de posición que menos
+    colisione."""
+    parts = []
+    if market_price:
+        parts.append(
+            f"<span style='color:{COLORS['market_ref']}'>┃╌╌</span> Mercado ${market_price:,.2f}"
+        )
+    if consensus_price:
+        parts.append(
+            f"<span style='color:{COLORS['consensus_ref']}'>┃⋯⋯</span> Consenso ${consensus_price:,.2f}"
+        )
+    if parts:
+        st.markdown(
+            f"<div style='font-family:{FONT_SANS};font-size:0.85rem;color:{COLORS['ink_soft']};"
+            f"margin-top:-0.5rem;'>{'&nbsp;&nbsp;&nbsp;'.join(parts)}</div>",
+            unsafe_allow_html=True,
+        )
 
 
 def _inject_custom_css() -> None:
@@ -114,8 +179,8 @@ def _inject_custom_css() -> None:
 # automáticamente) para poder reactivarlos añadiendo un grupo con ese
 # nombre si hace falta más adelante.
 CACHED_GROUPS = {
-    "Big Tech / Cloud (yfinance)": ["AMZN", "MSFT", "GOOGL", "META", "AAPL"],
-    "Consumo defensivo (yfinance)": ["KO", "PG", "JNJ"],
+    "Big Tech / Cloud": ["AMZN", "MSFT", "GOOGL", "META", "AAPL"],
+    "Consumo defensivo": ["KO", "PG", "JNJ"],
 }
 
 # Auditoría sesión 15, hallazgo I1: estos dos valores eran constantes
@@ -247,11 +312,14 @@ with st.sidebar:
     st.divider()
 
     mode = st.radio(
-        "Fuente de datos",
-        ["Universo cacheado (WACC riguroso vía comparables)", "Cualquier ticker (yfinance, WACC simplificado)"],
+        "Cómo elegir la empresa",
+        ["Grupo de comparables (WACC riguroso)", "Cualquier empresa (símbolo suelto)"],
+        help="'Grupo de comparables' construye el WACC con peers reales del sector "
+             "(más riguroso). 'Cualquier empresa' acepta cualquier símbolo bursátil, "
+             "pero con un WACC simplificado (beta propio, sin releverage por comparables).",
     )
 
-    if mode.startswith("Universo"):
+    if mode.startswith("Grupo"):
         group_name = st.selectbox("Grupo de comparables", list(CACHED_GROUPS.keys()))
         tickers = CACHED_GROUPS[group_name]
         target = st.selectbox("Ticker", tickers)
@@ -272,14 +340,13 @@ with st.sidebar:
                 f"Alpha Vantage no pudo responder para el grupo '{group_name}': {e}\n\n"
                 "El free tier limita a 25 peticiones/día, compartidas entre todos los "
                 "visitantes de esta app — puede que la cuota esté agotada por hoy. Prueba "
-                "con 'Consumo defensivo (yfinance)' o con 'Cualquier ticker', que no "
-                "dependen de Alpha Vantage."
+                "con otro grupo o con 'Cualquier empresa', que no dependen de Alpha Vantage."
             )
             st.stop()
         except Exception as e:
             st.error(
                 f"No se pudo cargar el grupo '{group_name}': {e}\n\n"
-                "Prueba con otro grupo de comparables o con 'Cualquier ticker'."
+                "Prueba con otro grupo de comparables o con 'Cualquier empresa'."
             )
             st.stop()
         wacc_value = wacc_result.wacc
@@ -735,21 +802,18 @@ with tab_valoracion:
         )
         ff_max_x = max(ff_high + [snap.get("price") or 0, snap.get("analyst_target_price") or 0]) * 1.15
         if snap.get("price"):
-            ff_fig.add_vline(x=snap["price"], line_dash="dash", line_width=1.5, line_color=COLORS["market_ref"],
-                              annotation_text=f"Mercado ${snap['price']:.2f}", annotation_position="top",
-                              annotation_font=dict(family=FONT_SANS, size=11, color=COLORS["market_ref"]))
+            ff_fig.add_vline(x=snap["price"], line_dash="dash", line_width=1.5, line_color=COLORS["market_ref"])
         if snap.get("analyst_target_price"):
-            ff_fig.add_vline(x=snap["analyst_target_price"], line_dash="dot", line_width=1.5, line_color=COLORS["consensus_ref"],
-                              annotation_text=f"Consenso ${snap['analyst_target_price']:.2f}", annotation_position="bottom",
-                              annotation_font=dict(family=FONT_SANS, size=11, color=COLORS["consensus_ref"]))
+            ff_fig.add_vline(x=snap["analyst_target_price"], line_dash="dot", line_width=1.5, line_color=COLORS["consensus_ref"])
         ff_fig.update_layout(
-            height=230, margin=dict(l=10, r=10, t=40, b=40), showlegend=False,
+            height=230, margin=dict(l=10, r=10, t=20, b=40), showlegend=False,
             plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"],
             font=dict(family=FONT_SANS, color=COLORS["ink_soft"], size=13),
             xaxis=dict(title="Precio implícito ($)", range=[0, ff_max_x], gridcolor=COLORS["border"], zeroline=False),
             yaxis=dict(gridcolor=COLORS["border"], automargin=True),
         )
         st.plotly_chart(ff_fig, width="stretch", config={"displayModeBar": False})
+        _render_reference_lines_caption(snap.get("price"), snap.get("analyst_target_price"))
         if comps_valuation is not None:
             ebitda_txt = (f"${comps_valuation.implied_share_price_from_ebitda:,.2f} vía EV/EBITDA "
                           f"({comps_valuation.ev_ebitda_multiple:.1f}x de peers)"
@@ -839,25 +903,26 @@ with tab_valoracion:
     reference_prices = [v for v in (snap.get("price"), snap.get("analyst_target_price")) if v]
     max_x = max(scenario_prices + reference_prices) * 1.18
     if snap.get("price"):
-        fig.add_vline(x=snap["price"], line_dash="dash", line_width=1.5, line_color=COLORS["market_ref"],
-                      annotation_text=f"Mercado ${snap['price']:.2f}", annotation_position="top",
-                      annotation_font=dict(family=FONT_SANS, size=11, color=COLORS["market_ref"]))
+        fig.add_vline(x=snap["price"], line_dash="dash", line_width=1.5, line_color=COLORS["market_ref"])
     if snap.get("analyst_target_price"):
-        fig.add_vline(x=snap["analyst_target_price"], line_dash="dot", line_width=1.5, line_color=COLORS["consensus_ref"],
-                      annotation_text=f"Consenso ${snap['analyst_target_price']:.2f}", annotation_position="bottom",
-                      annotation_font=dict(family=FONT_SANS, size=11, color=COLORS["consensus_ref"]))
+        fig.add_vline(x=snap["analyst_target_price"], line_dash="dot", line_width=1.5, line_color=COLORS["consensus_ref"])
     fig.update_layout(
-        height=280, margin=dict(l=10, r=10, t=50, b=40), showlegend=False,
+        height=280, margin=dict(l=10, r=10, t=20, b=40), showlegend=False,
         plot_bgcolor=COLORS["surface"], paper_bgcolor=COLORS["surface"],
         font=dict(family=FONT_SANS, color=COLORS["ink_soft"], size=13),
         xaxis=dict(title="Precio implícito ($)", range=[0, max_x], gridcolor=COLORS["border"], zeroline=False),
         yaxis=dict(gridcolor=COLORS["border"], automargin=True),
     )
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+    _render_reference_lines_caption(snap.get("price"), snap.get("analyst_target_price"))
 
     if warnings_text:
         for w in warnings_text:
-            st.warning(f"Aviso técnico del modelo: {w}")
+            headline, detail = _split_warning(w)
+            st.warning(f"⚠️ {headline}")
+            if detail:
+                with st.expander("Detalle técnico"):
+                    st.caption(detail)
     else:
         st.info("Sin avisos técnicos: el margen WACC-g es saludable en este cálculo.")
 
@@ -866,18 +931,18 @@ with tab_valoracion:
     if base_result is not None:
         gordon_ev_col, exit_ev_col, blend_col = st.columns(3)
         gordon_ev_col.metric(
-            "Gordon Growth", f"${base_result.gordon_terminal_value:,.0f}",
+            "Gordon Growth", _format_money(base_result.gordon_terminal_value),
             help=f"VT perpetuo a partir del último año explícito, con g={terminal_growth_rate*100:.2f}%.",
         )
         if base_result.exit_multiple_terminal_value is not None:
             exit_ev_col.metric(
-                "Múltiplo de salida", f"${base_result.exit_multiple_terminal_value:,.0f}",
+                "Múltiplo de salida", _format_money(base_result.exit_multiple_terminal_value),
                 help=f"EBITDA del último año explícito × {terminal_multiple:.1f}x (mediana de peers).",
             )
         else:
             exit_ev_col.metric("Múltiplo de salida", "n/d")
         blend_col.metric(
-            "Valor terminal usado", f"${base_result.terminal_value:,.0f}",
+            "Valor terminal usado", _format_money(base_result.terminal_value),
             help=f"Blend: {gordon_weight*100:.0f}% Gordon Growth + {(1-gordon_weight)*100:.0f}% múltiplo de salida.",
         )
         if base_result.exit_multiple_terminal_value:
@@ -1041,9 +1106,14 @@ with tab_supuestos:
 with tab_fundamentales:
     st.subheader("Ratios financieros (último ejercicio disponible)")
     if ratio_snapshot is not None:
-        ratio_cols = st.columns(6)
-        ratio_cols[0].metric("ROE", f"{ratio_snapshot.roe*100:.1f}%")
-        ratio_cols[1].metric(
+        # 3 columnas x 2 filas, no 6 en una sola fila -- con 6 columnas,
+        # etiquetas como "Deuda bruta/EBITDA" no caben en el ancho
+        # disponible y Streamlit las trunca con "..." (poco profesional,
+        # y la etiqueta cortada deja de decir qué ratio es cuál).
+        ratio_row1 = st.columns(3)
+        ratio_row2 = st.columns(3)
+        ratio_row1[0].metric("ROE", f"{ratio_snapshot.roe*100:.1f}%")
+        ratio_row1[1].metric(
             "ROIC vs. WACC", f"{ratio_snapshot.roic*100:.1f}%",
             "Crea valor" if ratio_snapshot.creates_value else "No crea valor",
             # st.metric no puede inferir el signo de un delta de texto libre --
@@ -1056,20 +1126,44 @@ with tab_fundamentales:
         # bruta sin aclarar que lo era -- Net Debt/EBITDA es al menos
         # igual de común en la práctica bancaria real (distingue una
         # empresa con caja neta positiva de una genuinamente apalancada).
-        ratio_cols[2].metric("Deuda bruta/EBITDA", f"{ratio_snapshot.debt_to_ebitda:.2f}x")
-        ratio_cols[3].metric("Deuda neta/EBITDA", f"{ratio_snapshot.net_debt_to_ebitda:.2f}x",
+        ratio_row1[2].metric("Deuda bruta/EBITDA", f"{ratio_snapshot.debt_to_ebitda:.2f}x")
+        ratio_row2[0].metric("Deuda neta/EBITDA", f"{ratio_snapshot.net_debt_to_ebitda:.2f}x",
                               help="Deuda total menos caja, dividido por EBITDA. Puede salir negativo "
                                    "(caja neta positiva) -- no es un error, significa que la caja supera a la deuda.")
-        ratio_cols[4].metric("Cobertura de intereses",
+        ratio_row2[1].metric("Cobertura de intereses",
                               f"{ratio_snapshot.interest_coverage:.1f}x" if ratio_snapshot.interest_coverage != float("inf") else "∞")
-        ratio_cols[5].metric("Current ratio", f"{ratio_snapshot.current_ratio:.2f}")
+        ratio_row2[2].metric("Current ratio", f"{ratio_snapshot.current_ratio:.2f}")
         st.caption(f"Ejercicio fiscal {ratio_snapshot.fiscal_year}")
     else:
         st.caption(f"No se pudieron calcular los ratios: {ratio_error}")
 
     st.subheader("Comparables")
     if comps_table is not None:
-        st.dataframe(comps_table, width="stretch")
+        # Tabla de solo lectura -- se formatea una copia para mostrar (cifras
+        # abreviadas, múltiplos con "x", columnas con nombre legible) sin
+        # tocar comps_table, que sigue en bruto para peer_average_multiple()
+        # y cualquier cómputo que ya haya corrido antes de llegar aquí.
+        comps_display = pd.DataFrame(index=comps_table.index)
+        if "sector" in comps_table:
+            comps_display["Sector"] = comps_table["sector"]
+        if "industry" in comps_table:
+            comps_display["Industria"] = comps_table["industry"]
+        if "market_cap" in comps_table:
+            comps_display["Cap. mercado"] = comps_table["market_cap"].apply(
+                lambda v: _format_money(v) if pd.notna(v) else "n/d")
+        if "price" in comps_table:
+            comps_display["Precio"] = comps_table["price"].apply(
+                lambda v: f"${v:,.2f}" if pd.notna(v) else "n/d")
+        for col, label in [("ev_to_ebitda", "EV/EBITDA"), ("ev_to_revenue", "EV/Revenue"),
+                            ("pe_ratio", "P/E"), ("price_to_sales", "P/S"), ("price_to_book", "P/B")]:
+            if col in comps_table:
+                comps_display[label] = comps_table[col].apply(
+                    lambda v: f"{v:,.1f}x" if pd.notna(v) else "n/d")
+        if "beta" in comps_table:
+            comps_display["Beta"] = comps_table["beta"].apply(
+                lambda v: f"{v:.2f}" if pd.notna(v) else "n/d")
+        comps_display.index.name = "Ticker"
+        st.dataframe(comps_display, width="stretch")
         st.caption(
             f"Múltiplo EV/EBITDA de salida usado en el valor terminal: **{terminal_multiple:.2f}x** "
             f"(mediana de {len(comps_table) - 1} comparables, excluyendo {target} — no el múltiplo de "
