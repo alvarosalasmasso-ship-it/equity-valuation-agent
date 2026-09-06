@@ -38,7 +38,7 @@ import pandas as pd
 from engine.data_provider import AlphaVantageClient
 from engine.data_provider import historical_financials as av_historical_financials
 from engine.data_provider import market_snapshot as av_market_snapshot
-from engine.validation import summarize_deviation, value_ticker
+from engine.validation import bootstrap_deviation_ci, summarize_deviation, value_ticker
 from engine.yfinance_provider import get_ticker as yf_get_ticker
 from engine.yfinance_provider import historical_financials as yf_historical_financials
 from engine.yfinance_provider import live_price as yf_live_price
@@ -171,6 +171,20 @@ def main() -> None:
         print(f"=== Combinado ({combined_summary['n']} tickers) ===")
         print(f"  Desv. media abs. vs. mercado: {combined_summary['mean_abs_deviation_vs_market']:.2%}"
               f"  |  vs. consenso: {combined_summary['mean_abs_deviation_vs_consensus']:.2%}\n")
+
+        # Sesión 17, item E del lote de rigor matemático (estado.md
+        # sección 13): la cifra puntual de arriba no comunica cuánta
+        # incertidumbre de muestreo hay detrás de un universo piloto de
+        # solo n=8 tickers. Semilla fija para que el JSON guardado sea
+        # reproducible entre ejecuciones del mismo día, no solo el
+        # cómputo de por sí determinista salvo por esta semilla.
+        if combined_summary["n"] >= 2:
+            ci = bootstrap_deviation_ci(combined_df, seed=17)
+            report["combined_summary_bootstrap_ci"] = ci
+            print(f"  IC bootstrap (80%, n_bootstrap={ci['n_bootstrap']}): "
+                  f"[{ci['ci_lower']:.2%}, {ci['ci_upper']:.2%}] "
+                  f"alrededor de {ci['point_estimate']:.2%} -- muestra pequeña (n={ci['n']}), "
+                  "intervalo ancho esperado.\n")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output_path = OUTPUT_DIR / f"{valuation_date.isoformat()}.json"

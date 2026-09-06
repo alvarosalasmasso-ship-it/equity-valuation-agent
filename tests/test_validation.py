@@ -8,7 +8,13 @@ import pandas as pd
 import pytest
 
 from engine.reverse_dcf import ImpliedExpectations
-from engine.validation import build_peer_set, summarize_deviation, validate_universe, value_ticker
+from engine.validation import (
+    bootstrap_deviation_ci,
+    build_peer_set,
+    summarize_deviation,
+    validate_universe,
+    value_ticker,
+)
 
 
 def _flat_history(revenue_last: float, ebit_margin: float, tax_rate: float) -> pd.DataFrame:
@@ -144,3 +150,47 @@ def test_summarize_deviation_computes_mean_and_median_absolute():
     assert summary["mean_abs_deviation_vs_market"] == pytest.approx((0.10 + 0.20 + 0.30) / 3)
     assert summary["median_abs_deviation_vs_market"] == pytest.approx(0.20)
     assert summary["mean_abs_deviation_vs_consensus"] == pytest.approx((0.05 + 0.15 + 0.25) / 3)
+
+
+def test_bootstrap_deviation_ci_brackets_the_point_estimate():
+    df = pd.DataFrame({"deviation_vs_market": [0.10, -0.20, 0.30, -0.40, 0.15, -0.25, 0.35, -0.05]})
+    result = bootstrap_deviation_ci(df, n_bootstrap=2000, seed=42)
+    assert result["n"] == 8
+    assert result["point_estimate"] == pytest.approx(df["deviation_vs_market"].abs().mean())
+    assert result["ci_lower"] < result["point_estimate"] < result["ci_upper"]
+    assert result["confidence"] == pytest.approx(0.80)
+
+
+def test_bootstrap_deviation_ci_is_deterministic_with_seed():
+    df = pd.DataFrame({"deviation_vs_market": [0.10, -0.20, 0.30, -0.40, 0.15, -0.25, 0.35, -0.05]})
+    first = bootstrap_deviation_ci(df, n_bootstrap=500, seed=7)
+    second = bootstrap_deviation_ci(df, n_bootstrap=500, seed=7)
+    assert first == second
+
+
+def test_bootstrap_deviation_ci_collapses_to_point_estimate_with_zero_variance():
+    """Todas las desviaciones iguales -> cualquier remuestra da la misma
+    media -> el intervalo colapsa sobre el propio punto estimado."""
+    df = pd.DataFrame({"deviation_vs_market": [0.20] * 8})
+    result = bootstrap_deviation_ci(df, n_bootstrap=500, seed=1)
+    assert result["ci_lower"] == pytest.approx(0.20)
+    assert result["ci_upper"] == pytest.approx(0.20)
+
+
+def test_bootstrap_deviation_ci_raises_with_fewer_than_two_tickers():
+    df = pd.DataFrame({"deviation_vs_market": [0.10]})
+    with pytest.raises(ValueError, match="al menos 2 tickers"):
+        bootstrap_deviation_ci(df)
+
+
+def test_bootstrap_deviation_ci_widens_with_more_dispersion():
+    """Misma media, mayor dispersión entre tickers -> intervalo más
+    ancho -- confirma que el CI refleja incertidumbre real, no un
+    número decorativo fijo."""
+    tight = pd.DataFrame({"deviation_vs_market": [0.19, 0.20, 0.21, 0.20, 0.19, 0.21, 0.20, 0.20]})
+    wide = pd.DataFrame({"deviation_vs_market": [0.02, 0.38, 0.05, 0.35, 0.03, 0.37, 0.04, 0.36]})
+    tight_result = bootstrap_deviation_ci(tight, n_bootstrap=5000, seed=3)
+    wide_result = bootstrap_deviation_ci(wide, n_bootstrap=5000, seed=3)
+    tight_width = tight_result["ci_upper"] - tight_result["ci_lower"]
+    wide_width = wide_result["ci_upper"] - wide_result["ci_lower"]
+    assert wide_width > tight_width

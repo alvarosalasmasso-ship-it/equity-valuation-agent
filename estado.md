@@ -1660,13 +1660,34 @@ explica la causa raíz.
 queda ningún hallazgo importante ni moderado abierto** en
 `docs/AUDIT.md`.
 
-## 29. Próximo paso inmediato
+## 29. Sesión 17 (continuación) — Item E: intervalo de confianza bootstrap, cierra el lote de rigor matemático
 
-0. Commitear el cierre de I15 con confirmación explícita del usuario.
-1. E — Intervalo de confianza (bootstrap) sobre la desviación agregada
-   del universo piloto (n=8) — la única pieza del lote de rigor
-   matemático que queda sin construir; bajo esfuerzo.
-2. Seguir analizando más empresas/sectores si el usuario lo pide —
+Última de las 5 palancas propuestas en la sección 13 (A-D ya cerradas).
+`engine.validation.bootstrap_deviation_ci()` (nueva): remuestrea con
+reemplazo las desviaciones absolutas individuales 10.000 veces y
+reporta el rango percentil de la media de cada remuestra — confianza
+80% por defecto (P10-P90), consistente con las bandas de Monte Carlo
+ya existentes en la app.
+
+**Resultado real**, calculado sobre `data/validation_history/2026-09-06.json`
+ya guardado (sin gastar cuota nueva de Alpha Vantage ni de yfinance):
+la cifra puntual de "desviación media abs. vs. mercado: 34.21%" (n=8)
+tiene un **IC bootstrap del 80% de [24.84%, 43.65%]** (95%: [20.01%,
+48.37%]) — un intervalo ancho, matemáticamente correcto para n=8, no
+un fallo del método. La lectura honesta: "34.21%" debe entenderse como
+"entre ~25% y ~44%", no como una cifra precisa a dos decimales.
+
+Integrado en `scripts/validate_universe.py` (semilla fija=17, se
+calculará automáticamente en la próxima ejecución real). 5 tests
+nuevos. **235 tests en total, todos en verde.** Documentado en
+`docs/METHODOLOGY.md` sección 32. Con esto se cierra el lote completo
+de 5 palancas de rigor matemático de la sección 13.
+
+## 30. Próximo paso inmediato
+
+0. Commitear el item E (bootstrap CI) con confirmación explícita del
+   usuario.
+1. Seguir analizando más empresas/sectores si el usuario lo pide —
    sectores ya cubiertos: Big Tech (MSFT dogfooding), semiconductores,
    utilities reguladas, biotech/farma, small/mid-cap consumo.
    Candidatos naturales sin cubrir: financiero/cíclico internacional

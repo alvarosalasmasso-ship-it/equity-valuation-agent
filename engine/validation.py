@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 from engine.comps import build_comps_table, peer_average_multiple
@@ -169,4 +170,56 @@ def summarize_deviation(results: pd.DataFrame) -> dict:
         "median_abs_deviation_vs_market": results["deviation_vs_market"].abs().median(),
         "mean_abs_deviation_vs_consensus": results["deviation_vs_consensus"].abs().mean(),
         "median_abs_deviation_vs_consensus": results["deviation_vs_consensus"].abs().median(),
+    }
+
+
+DEFAULT_BOOTSTRAP_ITERATIONS = 10_000
+
+# 80% (percentiles 10/90) para que la lectura sea consistente con las
+# bandas P10/P50/P90 ya usadas en engine.monte_carlo, no un 95%
+# introducido sin motivo aparte de "es lo habitual".
+DEFAULT_BOOTSTRAP_CONFIDENCE = 0.80
+
+
+def bootstrap_deviation_ci(results: pd.DataFrame, column: str = "deviation_vs_market",
+                            confidence: float = DEFAULT_BOOTSTRAP_CONFIDENCE,
+                            n_bootstrap: int = DEFAULT_BOOTSTRAP_ITERATIONS,
+                            seed: Optional[int] = None) -> dict:
+    """Intervalo de confianza bootstrap (percentil) sobre la desviación
+    absoluta media agregada (sesión 17, item E del lote de rigor
+    matemático propuesto en la sección 13 de `estado.md`).
+
+    Motivo: `summarize_deviation()` reporta un único número puntual
+    (p.ej. "34.21%" sobre el universo piloto, n=8) sin comunicar cuánta
+    incertidumbre de muestreo hay detrás de una muestra tan pequeña --
+    dos universos de 8 tickers distintos podrían dar cifras bastante
+    distintas por puro azar de qué compañías caen dentro. Remuestrea
+    con reemplazo `n_bootstrap` veces sobre las desviaciones absolutas
+    individuales y reporta el rango percentil de la media de cada
+    remuestra -- el método estándar (Efron, 1979) para estimar
+    incertidumbre sin asumir una distribución paramétrica conocida.
+
+    RNG inyectable (`numpy.random.default_rng`) para tests
+    deterministas, mismo patrón que `engine.monte_carlo.run_monte_carlo`.
+    """
+    values = results[column].abs().to_numpy(dtype=float)
+    n = len(values)
+    if n < 2:
+        raise ValueError(
+            "Se necesitan al menos 2 tickers para un intervalo de confianza bootstrap "
+            f"(recibidos: {n})"
+        )
+    rng = np.random.default_rng(seed)
+    resamples = rng.choice(values, size=(n_bootstrap, n), replace=True)
+    resample_means = resamples.mean(axis=1)
+    alpha = 1.0 - confidence
+    lower = float(np.percentile(resample_means, 100 * alpha / 2))
+    upper = float(np.percentile(resample_means, 100 * (1 - alpha / 2)))
+    return {
+        "point_estimate": float(values.mean()),
+        "confidence": confidence,
+        "n": n,
+        "n_bootstrap": n_bootstrap,
+        "ci_lower": lower,
+        "ci_upper": upper,
     }

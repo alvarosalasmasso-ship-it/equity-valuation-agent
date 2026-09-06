@@ -2160,3 +2160,71 @@ al resto de diagnósticos técnicos, dando la causa raíz real en vez de
 solo el síntoma (FCF negativo, ya cubierto por I10). **230 tests en
 total, todos en verde.** Con esto, `docs/AUDIT.md` no tiene ningún
 hallazgo importante ni moderado abierto.
+
+## 32. Intervalo de confianza bootstrap sobre la desviación agregada (sesión 17, item E -- última palanca del lote de rigor matemático)
+
+Última de las 5 palancas propuestas en la sección 13 (A: ancla robusta
+a outliers, B: elasticidades, C: Monte Carlo, D: backtesting, E: este
+apartado). La cifra citada repetidamente en este documento ("desviación
+media absoluta vs. mercado del universo piloto: 34.21%") es un único
+número puntual sobre solo **n=8 tickers** — no comunica cuánta
+incertidumbre de muestreo hay detrás de una muestra tan pequeña, ni
+permite distinguir "esta cifra es una estimación razonablemente
+estable" de "con 8 compañías distintas podría haber salido cualquier
+cosa".
+
+### `engine.validation.bootstrap_deviation_ci()`
+
+Remuestrea con reemplazo las desviaciones absolutas individuales
+`n_bootstrap` veces (10.000 por defecto) y reporta el rango percentil
+de la media de cada remuestra — el método bootstrap estándar (Efron,
+1979) para estimar incertidumbre sin asumir una distribución
+paramétrica conocida de antemano. Confianza por defecto: **80%**
+(percentiles 10/90), elegida para que la lectura sea consistente con
+las bandas P10/P50/P90 ya usadas en `engine.monte_carlo`, no un 95%
+introducido sin motivo aparte de "es lo habitual". RNG inyectable
+(`numpy.random.default_rng`), mismo patrón que Monte Carlo, para tests
+deterministas.
+
+### Resultado real (sobre el universo piloto ya guardado, sin gastar cuota nueva)
+
+Calculado directamente sobre `data/validation_history/2026-09-06.json`
+— los mismos 8 tickers y desviaciones ya reportados en la sección 30,
+sin ninguna llamada nueva a Alpha Vantage ni a yfinance:
+
+| Métrica | Valor |
+|---|---|
+| Desviación media absoluta (punto estimado) | **34.21%** |
+| IC bootstrap 80% (P10-P90) | **[24.84%, 43.65%]** |
+| IC bootstrap 95% | [20.01%, 48.37%] |
+
+**Lectura honesta**: el intervalo es ancho — ±9-10pp alrededor del
+punto central al 80% de confianza, ±14pp al 95%. Esto no es un defecto
+del cálculo, es lo que corresponde matemáticamente a n=8: la cifra
+"34.21%" debe leerse como "en algún punto entre aproximadamente 25% y
+44%", no como un número preciso a dos decimales. Los ocho valores
+individuales van de -0.56% (GOOGL, esencialmente en su valor justo tras
+el fix de I13) a -65.9% (AAPL) — un rango con dispersión real entre
+tickers, no ruido de cálculo, así que un intervalo ancho es el
+resultado correcto y esperado, no un fallo del método.
+
+**Por qué esto importa más allá del número en sí**: es exactamente el
+tipo de honestidad estadística que este proyecto ha perseguido desde
+las secciones 13-16 (rigor matemático) — presentar una única cifra
+puntual sin su incertidumbre asociada habría sido, en sí mismo, un
+tipo sutil de precisión falsa, la misma categoría de problema que
+motivó `MIN_PRUDENT_WACC_GROWTH_SPREAD` y
+`EXTREME_FLAT_GROWTH_WARNING_THRESHOLD`.
+
+### Verificación
+
+5 tests nuevos en `test_validation.py` (el intervalo contiene el punto
+estimado; determinismo con semilla fija; colapsa al punto estimado con
+varianza cero; lanza `ValueError` con menos de 2 tickers; un universo
+con más dispersión entre tickers da un intervalo más ancho que uno con
+poca dispersión, confirmando que el CI refleja incertidumbre real).
+Integrado en `scripts/validate_universe.py` (semilla fija=17 para que
+el JSON guardado sea reproducible entre ejecuciones del mismo día) —
+se calculará automáticamente en la próxima ejecución real del script.
+**235 tests en total, todos en verde.** Con esto se cierra el lote
+completo de 5 palancas de rigor matemático propuesto en la sección 13.
