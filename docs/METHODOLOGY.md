@@ -2500,3 +2500,119 @@ tax_rate de AMZN pasa de 100% `None` a 54.1%/19.0%/13.7%/20.2% -- cifras
 que coinciden EXACTAS con las ya documentadas en M6 meses atrás
 ("AMZN 54.2%/19.0%/13.5%/19.7%"), confirmando consistencia con
 trabajo previo. 2 tests de regresión nuevos (uno por proveedor).
+
+## 36. Capa de supuestos del analista: combinar el criterio humano con la base objetiva del motor (sesión 18)
+
+Tras cerrar I16 y evaluar el grupo Big Tech con la herramienta ya
+corregida, el usuario preguntó directamente si la herramienta ya
+funciona "a nivel profesional". La respuesta, calibrada con la
+auditoría real (`docs/AUDIT.md`, cero hallazgos críticos/importantes/
+moderados abiertos en ese momento): sí como motor de cálculo y
+disciplina de supuestos -- probablemente más riguroso que el DCF ad-hoc
+de un analista junior bajo presión de tiempo --, pero no sustituye el
+juicio cualitativo de un analista senior. El propio Excel de AMZN,
+investigado a petición del usuario en la misma sesión, es el ejemplo
+perfecto: el analista de referencia modela el margen EBIT expandiéndose
+6 años seguidos (9.80%→11.02%→12.46%→13.64%→14.34%→15.00%), informado
+por criterio cualitativo (guidance, apalancamiento operativo esperado de
+AWS) que ningún análisis puramente estadístico del histórico puede
+replicar. Nuestro motor, incluso con I16 (detección objetiva de
+tendencia estructural), solo reconoce y MANTIENE el nivel actual (11.2%
+para AMZN) -- nunca extrapola más allá, por diseño, para evitar el
+riesgo de valores implausibles ya documentado en I12.
+
+Se le ofreció al usuario cerrar esa brecha con contexto externo
+estructurado y verificable (consenso de analistas por partida vía
+`EARNINGS_ESTIMATES` de Alpha Vantage, o extracción de guidance de
+management desde transcripciones de earnings calls con Claude, citando
+la fuente exacta). **Lo rechazó explícitamente**: quiere en su lugar una
+casilla donde el propio analista (el usuario) escriba sus supuestos y
+expectativas a mano, para combinarlos con los datos auditables que ya
+deriva la herramienta -- "para crear una herramienta muy poderosa".
+
+### Diseño: una cuarta lectura, nunca una sustitución
+
+El principio que gobierna todo el cambio es el mismo que ha regido el
+proyecto entero desde el principio: nunca ajustar un supuesto para
+acercar el precio a una cifra externa sin evidencia objetiva, y nunca
+mezclar un override manual en silencio con los supuestos objetivos.
+El escenario del analista se añade AL LADO de los 3 escenarios
+objetivos (`Base (histórico)`, `Mantener nivel actual`, `Alcista`) --
+nunca los sustituye, y queda etiquetado como juicio humano en cada
+superficie donde aparece: color distinto en el gráfico de barras,
+tabla dedicada "objetivo vs. analista" en la pestaña de supuestos, y una
+regla nueva en el prompt de sistema del memo que instruye al LLM a
+citar la justificación del analista tal cual y a no presentarla como si
+viniera del mismo mecanismo objetivo que las otras tres.
+
+`engine/scenarios.py::analyst_scenario(base, overrides, rationale)`
+anula solo el AÑO N (`end`) de los drivers elegidos -- el AÑO 1
+(`start`, el dato real del último ejercicio) nunca se puede tocar,
+mismo principio de separación "hecho vs. juicio" que rige toda la
+proyección. Requiere justificación obligatoria (lanza `ValueError` si
+se omite) y avisa, sin bloquear, si el valor cae muy fuera de un rango
+plausible (`ANALYST_OVERRIDE_PLAUSIBLE_RANGE = (-0.50, 1.00)`, mismo
+espíritu de regla de pulgar que `TAX_RATE_PLAUSIBLE_RANGE`) -- protege
+contra un fat-finger típico (escribir 50 en vez de 0.50) sin impedir
+que el analista use su criterio.
+
+### 3 hallazgos reales de un agente de planificación, antes de escribir código
+
+Mismo patrón de revisión que I16: un agente de planificación revisó el
+diseño contra el código real antes de implementarlo y encontró 3
+problemas concretos, no bugs a descubrir después.
+
+1. **Colisión de nombre silenciosa.** `run_scenarios()` indexa sus
+   resultados en un `dict[str, DCFResult]` por `Scenario.name`. Si el
+   nombre del escenario del analista se hubiera generado dinámicamente
+   (p. ej. a partir de qué drivers anuló), podía coincidir por accidente
+   con uno de los 3 nombres objetivos y sobrescribir su `DCFResult` en
+   silencio -- el mismo tipo de colapso silencioso que motivó parte de
+   I16. Corregido con una constante exportada y fija,
+   `ANALYST_SCENARIO_NAME`, nunca construida a partir de los overrides.
+2. **Información irrecuperable en `build_memo_input()`.**
+   `run_scenarios()` devuelve solo `DCFResult` por nombre, sin el objeto
+   `Scenario` completo (que sí lleva la `description` con la
+   justificación) -- `build_memo_input()` no tiene forma de reconstruir
+   "qué anuló el analista y por qué" a partir de ese dict. Corregido
+   recibiendo `analyst_overrides`/`analyst_rationale` como parámetros
+   explícitos, las mismas variables que ya se le pasan a
+   `run_scenarios()`, en vez de intentar inferirlos.
+3. **Descripción falsa para `revenue_growth`.** Ese driver nunca
+   revierte a una media histórica -- queda plano al CAGR reciente por
+   diseño, verificado contra el Excel de referencia (sección 14).
+   Reutilizar mecánicamente el patrón de descripción de los otros 4
+   drivers (`_describe_base_scenario()`) para un `revenue_growth` no
+   anulado habría generado la frase "revierte hacia su media
+   histórica" -- falsa para este driver en concreto. Corregido con una
+   rama de descripción propia y distinta ("permanece plano al CAGR
+   reciente").
+
+### Verificado con datos reales de AMZN
+
+Sin gastar cuota nueva de Alpha Vantage (WACC vía comparables reales,
+9.11%): sin override, los 3 escenarios objetivos dan
+$126.73/$81.56/$105.04. Anulando el margen EBIT a 16% -- informado
+directamente por el guidance del propio Excel de referencia, que
+proyecta 15% en el año 5 -- el escenario del analista da **$193.03**,
+sustancialmente más cerca tanto del precio implícito del Excel ($216.41)
+como del precio de mercado actual ($258.51) que cualquiera de los 3
+escenarios objetivos. Es precisamente la brecha que motivó este cambio,
+ahora cuantificable dentro de la propia herramienta en vez de solo
+explicada en una conversación.
+
+También verificado: el aviso de rango plausible dispara con un valor de
+fat-finger (500% en vez de 5%); el `ValueError` por justificación vacía
+se lanza correctamente y no se propaga con un mensaje confuso hasta el
+`except` genérico de sector de la UI (mensaje dedicado); sin overrides,
+`run_scenarios()` sigue devolviendo exactamente los 3 escenarios de
+siempre -- retrocompatibilidad confirmada; la app Streamlit real se
+lanzó sin tracebacks tras el cambio.
+
+**Alcance explícitamente fuera de este cambio:** `driver_sensitivities`,
+`run_monte_carlo` y `compute_implied_expectations` (reverse DCF) no se
+tocan -- operan sobre el `ProjectionAssumptions` base objetivo
+directamente, no sobre el dict de escenarios. Solo se puede anular el
+año N, nunca el año 1. Solo un escenario de analista a la vez, no una
+lista de alternativas. 14 tests nuevos, **276 tests en total, todos en
+verde.**

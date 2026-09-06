@@ -22,7 +22,7 @@ from ai.memo_generator import build_memo_input, build_prompt, run_scenarios_capt
 from engine.data_provider import AlphaVantageClient, AlphaVantageError
 from engine.data_provider import historical_financials as av_historical_financials
 from engine.data_provider import market_snapshot as av_market_snapshot
-from engine.scenarios import BASE_SCENARIO_NAME
+from engine.scenarios import ANALYST_SCENARIO_NAME, BASE_SCENARIO_NAME, _is_blank
 from engine.validation import build_peer_set
 from engine.valuation import DCFInputs, sensitivity_matrix
 from engine.wacc_builder import build_wacc
@@ -353,6 +353,49 @@ with st.sidebar:
              "resultado cuanto más avanzado estuviera el año real.",
     )
 
+    st.divider()
+    # Sesión 18: el usuario pidió una capa donde el propio analista pueda
+    # introducir sus supuestos/expectativas -- no una fuente externa (se le
+    # ofreció consenso de analistas/earnings call transcripts y lo rechazó
+    # explícitamente). Vive en el sidebar, no dentro de una pestaña: Streamlit
+    # ejecuta el script de arriba a abajo, y el bloque de cómputo (más abajo)
+    # necesita este valor ANTES de que se definan las pestañas -- mismo motivo
+    # por el que n_years/lookback_years/gordon_weight ya viven aquí.
+    _ANALYST_DRIVER_LABELS = {
+        "revenue_growth": "Crecimiento de ingresos",
+        "ebit_margin": "Margen EBIT",
+        "da_pct_revenue": "D&A % ventas",
+        "capex_pct_revenue": "CapEx % ventas",
+        "nwc_change_pct_revenue": "ΔNWC % ventas",
+    }
+    with st.expander("🧑‍💼 Supuestos del analista (opcional)"):
+        st.caption(
+            "Anula el valor objetivo (año N) de cualquier supuesto con tu propio criterio -- "
+            "el año 1 (dato real) nunca se toca. Se añade como un 4º escenario, separado y "
+            "etiquetado como juicio propio, nunca mezclado con los 3 objetivos."
+        )
+        analyst_overrides_input = {}
+        for _driver, _label in _ANALYST_DRIVER_LABELS.items():
+            _col1, _col2 = st.columns([1, 2])
+            _enabled = _col1.checkbox("Anular", key=f"analyst_override_enabled_{_driver}_{target}")
+            _value = _col2.number_input(
+                _label, value=0.0, step=0.005, format="%.3f", disabled=not _enabled,
+                key=f"analyst_override_value_{_driver}_{target}",
+                help="Fracción, no porcentaje (0.15 = 15%).",
+            )
+            if _enabled:
+                analyst_overrides_input[_driver] = _value
+        analyst_rationale_input = st.text_area(
+            "Justificación (obligatoria si anulas algún supuesto)",
+            key=f"analyst_rationale_{target}",
+        )
+        if analyst_overrides_input and _is_blank(analyst_rationale_input):
+            st.warning(
+                "Hay al menos un supuesto anulado sin justificación -- el escenario del "
+                "analista no se incluirá hasta que la escribas."
+            )
+            analyst_overrides_input = {}
+
 if not target:
     st.stop()
 
@@ -521,7 +564,26 @@ try:
         diluted_shares=snap["shares_outstanding"], n_years=n_years, terminal_growth_rate=terminal_growth_rate,
         lookback_years=lookback_years, terminal_ev_ebitda_multiple=terminal_multiple,
         gordon_weight=gordon_weight, valuation_date=valuation_date,
+        analyst_overrides=analyst_overrides_input, analyst_rationale=analyst_rationale_input,
     )
+except ValueError as e:
+    # analyst_scenario() (engine/scenarios.py) solo lanza ValueError si falta
+    # justificación o hay un driver no reconocido -- ninguno de los dos puede
+    # ocurrir dado cómo el sidebar construye analyst_overrides_input (la
+    # justificación ya se valida ahí con el mismo _is_blank(), y las claves
+    # vienen fijas de _ANALYST_DRIVER_LABELS), pero se distingue este caso del
+    # genérico igualmente -- red de seguridad con un mensaje que no confunda
+    # un problema del supuesto del analista con uno de sector no estándar.
+    if analyst_overrides_input:
+        st.error(f"No se pudo aplicar el supuesto del analista: {e}")
+    else:
+        st.error(
+            f"No se pudo construir la proyección para '{target}': {e}\n\n"
+            "Frecuente en sectores con estados financieros no estándar (bancos/financieras, "
+            "REITs) que un DCF genérico de flujo de caja libre no modela bien -- considera "
+            "otro ticker o revisa `docs/AUDIT.md` para las limitaciones conocidas por sector."
+        )
+    st.stop()
 except Exception as e:
     st.error(
         f"No se pudo construir la proyección para '{target}': {e}\n\n"
@@ -607,6 +669,7 @@ memo_input = build_memo_input(
     market_price=snap.get("price"), analyst_target_price=snap.get("analyst_target_price"),
     warnings_raised=warnings_text, ratios=ratio_snapshot,
     implied_expectations=implied_expectations, sensitivities=sensitivities,
+    analyst_overrides=analyst_overrides_input, analyst_rationale=analyst_rationale_input,
 )
 
 # --- Presentación, organizada en pestañas ---------------------------------------
@@ -746,9 +809,16 @@ with tab_valoracion:
     st.subheader("Rango de escenarios")
 
     fig = go.Figure()
+    # El escenario del analista (si está presente) lleva un color distinto --
+    # es la única barra que refleja juicio manual, no el mismo mecanismo
+    # objetivo (reversión a la media / tendencia detectada) que las demás.
+    scenario_bar_colors = [
+        COLORS["accent"] if name == ANALYST_SCENARIO_NAME else COLORS["series"]
+        for name in scenario_names
+    ]
     fig.add_bar(
         y=scenario_names, x=scenario_prices, orientation="h", width=0.5,
-        marker_color=COLORS["series"], marker_line_width=0,
+        marker_color=scenario_bar_colors, marker_line_width=0,
         text=[f"${p:,.2f}" for p in scenario_prices], textposition="outside",
         textfont=dict(family=FONT_MONO, size=13, color=COLORS["ink"]),
         hovertemplate="%{y}<br>$%{x:,.2f}<extra></extra>",
@@ -877,6 +947,23 @@ with tab_supuestos:
          "Año N": f"{assumptions.nwc_change_pct_revenue.end*100:.2f}%"},
     ])
     st.dataframe(assumptions_df, hide_index=True, width="stretch")
+
+    if analyst_overrides_input:
+        st.subheader("Supuestos del analista")
+        st.caption(
+            "Cuarta lectura, separada de las 3 anteriores: refleja tu propio criterio, no un "
+            "mecanismo objetivo derivado del histórico. Se incluye en el memo etiquetada como tal."
+        )
+        analyst_df = pd.DataFrame([
+            {
+                "Driver": _ANALYST_DRIVER_LABELS[driver],
+                "Año N objetivo": f"{getattr(assumptions, driver).end*100:.2f}%",
+                "Año N del analista": f"{value*100:.2f}%",
+            }
+            for driver, value in analyst_overrides_input.items()
+        ])
+        st.dataframe(analyst_df, hide_index=True, width="stretch")
+        st.caption(f"Justificación: {analyst_rationale_input}")
 
     st.subheader("Expectativas implícitas del mercado (reverse DCF)")
     st.caption(

@@ -274,6 +274,41 @@ def test_build_memo_input_omits_sensitivities_when_not_provided():
     assert payload["sensibilidad_del_precio_por_supuesto"] is None
 
 
+def test_build_memo_input_includes_analyst_override_when_provided():
+    """Sesión 18: analyst_overrides/analyst_rationale se reciben explícitos
+    (no inferidos de scenario_results, que solo trae DCFResult sin el
+    objeto Scenario -- hallazgo del agente de planificación)."""
+    from engine.scenarios import ANALYST_SCENARIO_NAME
+
+    memo_input = build_memo_input(
+        ticker="AMZN", wacc=0.0827, terminal_growth_rate=0.025,
+        scenario_results=_sample_scenario_results(), key_assumptions={},
+        analyst_overrides={"ebit_margin": 0.16},
+        analyst_rationale="Guidance del propio Excel de referencia (15% año 5).",
+    )
+    assert memo_input.analyst_override == {
+        "nombre_escenario": ANALYST_SCENARIO_NAME,
+        "drivers_anulados": {"ebit_margin": 0.16},
+        "justificacion": "Guidance del propio Excel de referencia (15% año 5).",
+    }
+    _, user_prompt = build_prompt(memo_input)
+    json_start = user_prompt.index("{")
+    payload = json.loads(user_prompt[json_start:])
+    assert payload["supuesto_manual_del_analista"]["nombre_escenario"] == ANALYST_SCENARIO_NAME
+
+
+def test_build_memo_input_omits_analyst_override_when_not_provided():
+    memo_input = build_memo_input(
+        ticker="TEST", wacc=0.08, terminal_growth_rate=0.025,
+        scenario_results=_sample_scenario_results(), key_assumptions={},
+    )
+    assert memo_input.analyst_override is None
+    _, user_prompt = build_prompt(memo_input)
+    json_start = user_prompt.index("{")
+    payload = json.loads(user_prompt[json_start:])
+    assert payload["supuesto_manual_del_analista"] is None
+
+
 # --- build_prompt -------------------------------------------------------------
 
 def _sample_memo_input() -> MemoInput:

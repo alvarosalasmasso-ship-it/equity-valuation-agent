@@ -1779,13 +1779,13 @@ como genuinamente volátiles).
 Provision" — corregido derivándolo de `pretax_income - net_income`,
 una identidad contable siempre válida).
 
-## 32. Próximo paso inmediato
+## 32. Próximo paso inmediato (histórico, sesión 17)
 
 0. Commitear el hallazgo I16 (detección de tendencia + fix de tax_rate
-   de AMZN) con confirmación explícita del usuario.
+   de AMZN) con confirmación explícita del usuario. ✅ hecho.
 1. Decidir si se rehacen los análisis sectoriales de esta sesión con
    el EBIT corregido (C2) y la detección de tendencia (I16), o se
-   dejan como referencia histórica — pendiente de indicación del
+   dejan como referencia histórica — sigue pendiente de indicación del
    usuario.
 2. Seguir analizando más empresas/sectores si el usuario lo pide —
    sectores ya cubiertos: Big Tech (MSFT dogfooding), semiconductores,
@@ -1796,9 +1796,42 @@ una identidad contable siempre válida).
    app (panel opcional en la pestaña Fundamentales) — por ahora es un
    script standalone (`scripts/cross_validate_edgar.py`), no forma
    parte del flujo interactivo.
-4. Fase 9 (sentiment en earnings calls) — extensión opcional.
+4. Fase 9 (sentiment en earnings calls) — extensión opcional, y
+   explícitamente descartada en su forma original (consenso/earnings
+   call vía LLM) a favor de la capa de la sección 33.
 5. Probar la capa generativa con una llamada real — aparcado por ahora
    a petición del usuario, no es una prioridad activa.
 6. Universo de comparables más amplio/mejor segmentado — se evaluó como
    opción de "rigor técnico" pero no se priorizó frente a lo demás;
    sigue disponible como línea futura si se retoma.
+
+## 33. Sesión 18 — Capa de supuestos del analista: un 4º escenario construido a mano, al lado de los 3 objetivos
+
+Tras cerrar I16 y evaluar el grupo Big Tech (memo de AMZN entregado en
+el chat), el usuario preguntó si la herramienta ya funciona "a nivel
+profesional" y, tras compararla contra el precio implícito real del
+Excel de referencia ($216.41, WACC 8.33%, margen EBIT modelado
+expandiéndose hasta 15.0% en el año 5 por criterio del banquero),
+preguntó cómo aumentar la fiabilidad de los supuestos. Se le ofreció
+contexto externo estructurado (consenso de analistas vía Alpha Vantage,
+extracción de guidance de earnings calls) — **lo rechazó explícitamente**
+a favor de una casilla donde el propio analista escriba sus supuestos a
+mano, para combinarlos con los datos auditables de la herramienta.
+
+Implementado en modo plan (agente de planificación encontró 3 problemas
+reales antes de escribir código, mismo patrón que I16 — ver detalle
+completo en `docs/AUDIT.md` hallazgo N3 y `docs/METHODOLOGY.md` sección
+36): `engine.scenarios.analyst_scenario()` (nombre fijo
+`ANALYST_SCENARIO_NAME`, año 1 intocable, justificación obligatoria,
+aviso de rango plausible), `run_scenarios()`/`build_memo_input()` con
+parámetros opcionales retrocompatibles, expander en el sidebar de
+`app/streamlit_app.py` namespaceado por ticker, y una regla nueva en el
+prompt de sistema del memo. Verificado con datos reales de AMZN: sin
+override, $126.73/$81.56/$105.04; anulando el margen a 16% (guidance
+del propio Excel) el escenario del analista da **$193.03**, mucho más
+cerca del Excel ($216.41) y del mercado ($258.51) — la brecha que
+motivó el cambio, ahora cuantificable dentro de la propia herramienta.
+14 tests nuevos, **276 tests en total, todos en verde**. App Streamlit
+lanzada y verificada sin tracebacks.
+
+**Pendiente:** commitear con confirmación explícita del usuario.

@@ -16,7 +16,9 @@ import pytest
 
 from engine.projections import default_assumptions_from_history
 from engine.scenarios import (
+    ANALYST_SCENARIO_NAME,
     BASE_SCENARIO_NAME,
+    analyst_scenario,
     base_scenario,
     bullish_scenario,
     hold_current_scenario,
@@ -169,3 +171,101 @@ def test_run_scenarios_applies_real_stub_when_history_has_fiscal_dates():
     # a mitad de año el stub es ~0.5 -> menos de un año completo de descuento
     # en el primer flujo -> el primer periodo de descuento es menor
     assert results_with_stub[name].discount_periods[0] < results_no_stub[name].discount_periods[0]
+
+
+# --- Sesión 18: supuestos del analista -----------------------------------
+
+
+def test_analyst_scenario_overrides_only_specified_drivers_preserving_start():
+    """Solo el margen EBIT se anula -- start (año 1, dato real) se
+    conserva intacto, y los demás drivers quedan exactamente igual que en
+    base_scenario() (el analista no tocó nada ahí)."""
+    base = _base_assumptions()
+    base_result = base_scenario(base)
+    scenario = analyst_scenario(base, {"ebit_margin": 0.30}, "Espero mejora adicional por escala.")
+    assert scenario.name == ANALYST_SCENARIO_NAME
+    assert scenario.assumptions.ebit_margin.start == pytest.approx(base.ebit_margin.start)
+    assert scenario.assumptions.ebit_margin.end == pytest.approx(0.30)
+    assert scenario.assumptions.da_pct_revenue == base_result.assumptions.da_pct_revenue
+    assert scenario.assumptions.capex_pct_revenue == base_result.assumptions.capex_pct_revenue
+    assert scenario.assumptions.nwc_change_pct_revenue == base_result.assumptions.nwc_change_pct_revenue
+    assert scenario.assumptions.revenue_growth == base.revenue_growth
+
+
+@pytest.mark.parametrize("rationale", ["", "   ", None])
+def test_analyst_scenario_raises_without_rationale(rationale):
+    base = _base_assumptions()
+    with pytest.raises(ValueError, match="justificación"):
+        analyst_scenario(base, {"ebit_margin": 0.30}, rationale)
+
+
+def test_analyst_scenario_empty_overrides_does_not_require_rationale():
+    """Sin overrides, no hay nada que justificar -- no debe lanzar aunque
+    la justificación esté vacía (defensivo: run_scenarios() ya evita
+    llamar aquí en ese caso, pero la función no debe depender de eso)."""
+    base = _base_assumptions()
+    scenario = analyst_scenario(base, {}, "")
+    assert scenario.name == ANALYST_SCENARIO_NAME
+
+
+def test_analyst_scenario_name_never_collides_with_objective_scenarios():
+    """Regresión directa (hallazgo del agente de planificación): un nombre
+    de escenario del analista generado dinámicamente podría colisionar con
+    uno de los 3 objetivos en el dict indexado por nombre de
+    run_scenarios(), sobrescribiendo su DCFResult en silencio."""
+    assert ANALYST_SCENARIO_NAME not in {
+        BASE_SCENARIO_NAME, "Mantener nivel actual", "Alcista (continúa la tendencia reciente)",
+    }
+
+
+def test_analyst_scenario_revenue_growth_description_reflects_flat_design_when_not_overridden():
+    """revenue_growth NUNCA revierte a una media histórica (queda plano al
+    CAGR reciente por diseño) -- la descripción no debe afirmar lo
+    contrario cuando no se anula (hallazgo del agente de planificación:
+    reutilizar el patrón de los otros 4 drivers generaría una frase
+    falsa: 'revierte hacia su media histórica')."""
+    base = _base_assumptions()
+    scenario = analyst_scenario(base, {"ebit_margin": 0.30}, "Justificación de prueba.")
+    assert "permanece plano" in scenario.description
+    assert "Crecimiento de ingresos: revierte hacia su media histórica" not in scenario.description
+
+
+def test_analyst_scenario_description_cites_rationale_and_overridden_driver():
+    base = _base_assumptions()
+    scenario = analyst_scenario(base, {"capex_pct_revenue": 0.05}, "Guidance de management en el 10-K.")
+    assert "CapEx % ventas" in scenario.description
+    assert "0.05" in scenario.description or "5.0%" in scenario.description
+    assert "Guidance de management en el 10-K." in scenario.description
+
+
+def test_analyst_scenario_warns_when_override_outside_plausible_range():
+    base = _base_assumptions()
+    with pytest.warns(UserWarning, match="rango plausible"):
+        analyst_scenario(base, {"ebit_margin": 5.0}, "Fat-finger deliberado para el test.")
+
+
+def test_analyst_scenario_rejects_unknown_driver():
+    base = _base_assumptions()
+    with pytest.raises(ValueError, match="no reconocido"):
+        analyst_scenario(base, {"wacc": 0.10}, "Driver inexistente.")
+
+
+def test_run_scenarios_without_analyst_overrides_is_unchanged():
+    """Retrocompatibilidad: sin analyst_overrides, run_scenarios() sigue
+    devolviendo exactamente los 3 escenarios objetivos, ni uno más."""
+    results = run_scenarios(HISTORY, wacc=0.09, cash=100, total_debt=50, diluted_shares=100)
+    assert set(results.keys()) == {
+        BASE_SCENARIO_NAME, "Mantener nivel actual", "Alcista (continúa la tendencia reciente)",
+    }
+
+
+def test_run_scenarios_includes_analyst_scenario_when_overrides_given():
+    results = run_scenarios(
+        HISTORY, wacc=0.09, cash=100, total_debt=50, diluted_shares=100,
+        analyst_overrides={"ebit_margin": 0.30}, analyst_rationale="Justificación de prueba.",
+    )
+    assert set(results.keys()) == {
+        BASE_SCENARIO_NAME, "Mantener nivel actual", "Alcista (continúa la tendencia reciente)",
+        ANALYST_SCENARIO_NAME,
+    }
+    assert results[ANALYST_SCENARIO_NAME].implied_share_price > 0

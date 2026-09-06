@@ -19,7 +19,7 @@ from typing import Optional
 
 from engine.ratios import RatioSnapshot
 from engine.reverse_dcf import ImpliedExpectations
-from engine.scenarios import BASE_SCENARIO_NAME, run_scenarios
+from engine.scenarios import ANALYST_SCENARIO_NAME, BASE_SCENARIO_NAME, run_scenarios
 from engine.sensitivity import DriverSensitivity
 from engine.valuation import DCFResult
 
@@ -55,6 +55,7 @@ class MemoInput:
     ratios: Optional[dict] = None
     implied_expectations: Optional[list[dict]] = None
     sensitivities: Optional[list[dict]] = None
+    analyst_override: Optional[dict] = None
 
 
 def run_scenarios_capturing_warnings(history, **kwargs) -> tuple[dict[str, DCFResult], list[str]]:
@@ -76,7 +77,9 @@ def build_memo_input(ticker: str, wacc: float, terminal_growth_rate: float,
                       warnings_raised: Optional[list[str]] = None,
                       ratios: Optional[RatioSnapshot] = None,
                       implied_expectations: Optional[list[ImpliedExpectations]] = None,
-                      sensitivities: Optional[list[DriverSensitivity]] = None) -> MemoInput:
+                      sensitivities: Optional[list[DriverSensitivity]] = None,
+                      analyst_overrides: Optional[dict] = None,
+                      analyst_rationale: str = "") -> MemoInput:
     """Ensambla el MemoInput. La desviación vs. mercado/consenso se mide
     sobre el escenario conservador (el valor por defecto del motor).
 
@@ -97,7 +100,24 @@ def build_memo_input(ticker: str, wacc: float, terminal_growth_rate: float,
     (sesión 17) -- cuánto se mueve el precio implícito por cada supuesto
     (WACC, g terminal, margen, D&A, CapEx, crecimiento), de mayor a menor
     impacto. Le da al memo la palanca que domina la valoración de esta
-    empresa en concreto, en vez de una lista genérica de supuestos."""
+    empresa en concreto, en vez de una lista genérica de supuestos.
+
+    analyst_overrides/analyst_rationale (sesión 18): las MISMAS variables
+    ya pasadas a engine.scenarios.run_scenarios() -- se reciben explícitas
+    aquí, no se infieren de scenario_results (que solo trae DCFResult, sin
+    el objeto Scenario completo ni su descripción/justificación). Si
+    analyst_overrides no está vacío, se puebla MemoInput.analyst_override
+    con el nombre exacto del escenario (ANALYST_SCENARIO_NAME) para que el
+    prompt de sistema pueda vincular sin ambigüedad cuál de las entradas de
+    `escenarios_dcf` es la del analista."""
+    analyst_override_dict = None
+    if analyst_overrides:
+        analyst_override_dict = {
+            "nombre_escenario": ANALYST_SCENARIO_NAME,
+            "drivers_anulados": dict(analyst_overrides),
+            "justificacion": analyst_rationale,
+        }
+
     base_result = scenario_results.get(BASE_SCENARIO_NAME)
     base_price = base_result.implied_share_price if base_result else None
 
@@ -161,7 +181,7 @@ def build_memo_input(ticker: str, wacc: float, terminal_growth_rate: float,
         analyst_target_price=analyst_target_price, deviation_vs_market=dev_market,
         deviation_vs_consensus=dev_consensus, warnings_raised=warnings_raised or [],
         ratios=ratios_dict, implied_expectations=implied_expectations_list,
-        sensitivities=sensitivities_list,
+        sensitivities=sensitivities_list, analyst_override=analyst_override_dict,
     )
 
 
@@ -187,6 +207,7 @@ def build_prompt(memo_input: MemoInput) -> tuple[str, str]:
         "ratios_financieros": memo_input.ratios,
         "expectativas_implicitas_del_mercado": memo_input.implied_expectations,
         "sensibilidad_del_precio_por_supuesto": memo_input.sensitivities,
+        "supuesto_manual_del_analista": memo_input.analyst_override,
     }
     user_prompt = (
         "Redacta el Investment Memo para el siguiente paquete de datos. "

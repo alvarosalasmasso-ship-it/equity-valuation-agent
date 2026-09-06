@@ -17,6 +17,7 @@ Ninguna transformación aquí inventa una cifra desde cero — todas parten
 de `FadeAssumption(start, end)` ya derivado del histórico real.
 """
 
+import warnings
 from dataclasses import dataclass, replace
 from datetime import date
 from typing import Optional
@@ -41,6 +42,36 @@ class Scenario:
 
 
 BASE_SCENARIO_NAME = "Base (histórico)"
+
+# Sesión 18: el usuario pidió una capa donde el propio analista pueda
+# introducir sus supuestos/expectativas, para combinarlos con los datos
+# auditables que ya deriva el motor (en vez de una fuente externa tipo
+# consenso de analistas o transcripciones de earnings call, que se le
+# ofreció y rechazó explícitamente). Nombre FIJO y único -- nunca generado
+# dinámicamente a partir de los drivers anulados: run_scenarios() indexa
+# los resultados en un dict por Scenario.name, así que un nombre variable
+# podría colisionar con uno de los 3 nombres objetivos y sobrescribir en
+# silencio su DCFResult (encontrado por un agente de planificación antes
+# de escribir código, mismo tipo de hallazgo que el colapso de
+# bullish_scenario() en I16).
+ANALYST_SCENARIO_NAME = "Analista (supuestos manuales)"
+
+# Regla de pulgar (no una ley exacta, mismo espíritu que
+# TAX_RATE_PLAUSIBLE_RANGE/EXTREME_FLAT_GROWTH_WARNING_THRESHOLD en
+# engine.projections): un override del analista que caiga muy fuera de este
+# rango probablemente sea un fat-finger (p. ej. escribir 50 en vez de 0.50
+# para un margen) -- se avisa, nunca se bloquea ni se ajusta el número.
+ANALYST_OVERRIDE_PLAUSIBLE_RANGE = (-0.50, 1.00)
+
+
+def _is_blank(text: str) -> bool:
+    """Único predicado de '¿está vacía la justificación?', compartido entre
+    analyst_scenario() y app/streamlit_app.py -- evitar dos chequeos
+    independientes que puedan divergir (p. ej. uno con .strip() y otro sin
+    él) fue un hallazgo real del agente de planificación: si divergen, un
+    ValueError podía propagarse hasta el except genérico de la UI con un
+    mensaje engañoso sobre sectores no estándar."""
+    return not text or not text.strip()
 
 # Sesión 17 (hallazgo I16): antes se llamaba "Conservador (reversión a
 # la media)" -- desde que default_assumptions_from_history() puede
@@ -176,6 +207,87 @@ def bullish_scenario(base: ProjectionAssumptions) -> Scenario:
     )
 
 
+_OVERRIDABLE_FADE_DRIVERS = frozenset(_DRIVER_LABELS)  # ebit_margin/da_pct_revenue/capex_pct_revenue/nwc_change_pct_revenue
+_ALL_OVERRIDABLE_DRIVERS = _OVERRIDABLE_FADE_DRIVERS | {"revenue_growth"}
+
+
+def analyst_scenario(base: ProjectionAssumptions, overrides: dict[str, float],
+                      rationale: str) -> Scenario:
+    """Escenario adicional, opcional, construido a partir de supuestos que
+    el propio analista humano fija a mano -- no derivados del histórico.
+    Se añade AL LADO de los 3 escenarios objetivos (nunca los sustituye,
+    ver docstring del módulo): es una cuarta lectura, explícitamente
+    etiquetada como juicio del analista.
+
+    `overrides`: subconjunto de {"revenue_growth", "ebit_margin",
+    "da_pct_revenue", "capex_pct_revenue", "nwc_change_pct_revenue"} -> el
+    nuevo valor de AÑO N (`end`) que el analista quiere imponer. El AÑO 1
+    (`start`, el dato real del último ejercicio) de cada driver se hereda
+    intacto de `base` y nunca se puede anular -- mismo principio que rige
+    todo el motor ("el último año real es el mejor estimador del estado
+    actual", ver engine.projections). Cualquier driver no presente en
+    `overrides` usa el fade objetivo de `base` sin cambios (el mismo que
+    usaría base_scenario()).
+
+    `rationale`: justificación en texto libre, obligatoria si `overrides`
+    no está vacío -- nunca se permite un override sin explicar el motivo
+    (ValueError si no se proporciona). Se cita tal cual en la descripción
+    del escenario y se propaga hasta el memo (ai/memo_generator.py) para
+    que quede trazable de principio a fin.
+
+    Avisa (sin bloquear) si algún override cae muy fuera de
+    ANALYST_OVERRIDE_PLAUSIBLE_RANGE -- señal de un posible fat-finger,
+    mismo criterio que el resto de avisos técnicos del motor."""
+    if overrides and _is_blank(rationale):
+        raise ValueError(
+            "La justificación es obligatoria cuando se anula al menos un supuesto -- "
+            "no se permite un override del analista sin explicar el motivo."
+        )
+    unknown = set(overrides) - _ALL_OVERRIDABLE_DRIVERS
+    if unknown:
+        raise ValueError(f"Driver(es) no reconocido(s) para override del analista: {sorted(unknown)}")
+
+    for driver, value in overrides.items():
+        if not (ANALYST_OVERRIDE_PLAUSIBLE_RANGE[0] <= value <= ANALYST_OVERRIDE_PLAUSIBLE_RANGE[1]):
+            warnings.warn(
+                f"Override del analista para '{_DRIVER_LABELS.get(driver, driver)}' ({value:.1%}) cae muy "
+                f"fuera de un rango plausible ({ANALYST_OVERRIDE_PLAUSIBLE_RANGE[0]:.0%} a "
+                f"{ANALYST_OVERRIDE_PLAUSIBLE_RANGE[1]:.0%}) -- revisa que no sea un error de escritura "
+                "(p. ej. 50 en vez de 0.50). Se mantiene el valor tal cual, sin ajustar.",
+                stacklevel=2,
+            )
+
+    updates = {}
+    clauses = []
+    for driver in _OVERRIDABLE_FADE_DRIVERS:
+        fade = getattr(base, driver)
+        label = _DRIVER_LABELS[driver]
+        if driver in overrides:
+            updates[driver] = FadeAssumption(start=fade.start, end=overrides[driver])
+            clauses.append(f"{label}: anulado por el analista a {overrides[driver]:.1%}")
+        else:
+            clauses.append(f"{label}: sin anular, usa el valor objetivo ({fade.end:.1%})")
+
+    # revenue_growth NUNCA revierte a una media histórica -- queda plano al
+    # CAGR reciente por diseño (ver engine.projections, verificado contra el
+    # Excel de referencia). Reutilizar mecánicamente la frase de los otros
+    # 4 drivers generaría una descripción falsa (hallazgo del agente de
+    # planificación) -- rama propia y distinta.
+    if "revenue_growth" in overrides:
+        updates["revenue_growth"] = FadeAssumption(
+            start=base.revenue_growth.start, end=overrides["revenue_growth"])
+        clauses.append(f"Crecimiento de ingresos: anulado por el analista a {overrides['revenue_growth']:.1%}")
+    else:
+        clauses.append(f"Crecimiento de ingresos: permanece plano al CAGR reciente ({base.revenue_growth.start:.1%})")
+
+    description = ". ".join(clauses) + f". Justificación del analista: {rationale}"
+    return Scenario(
+        name=ANALYST_SCENARIO_NAME,
+        description=description,
+        assumptions=replace(base, **updates),
+    )
+
+
 def default_scenarios(base: ProjectionAssumptions) -> list[Scenario]:
     return [
         base_scenario(base),
@@ -187,7 +299,9 @@ def default_scenarios(base: ProjectionAssumptions) -> list[Scenario]:
 def run_scenarios(history: pd.DataFrame, wacc: float, cash: float, total_debt: float,
                    diluted_shares: float, n_years: int = 5, terminal_growth_rate: float = 0.025,
                    lookback_years: int = 3, terminal_ev_ebitda_multiple: Optional[float] = None,
-                   gordon_weight: float = 1.0, valuation_date: Optional[date] = None) -> dict[str, DCFResult]:
+                   gordon_weight: float = 1.0, valuation_date: Optional[date] = None,
+                   analyst_overrides: Optional[dict[str, float]] = None,
+                   analyst_rationale: str = "") -> dict[str, DCFResult]:
     """Corre run_dcf bajo los 3 escenarios por defecto sobre el mismo
     histórico. Devuelve {nombre_escenario: DCFResult}.
 
@@ -198,15 +312,24 @@ def run_scenarios(history: pd.DataFrame, wacc: float, cash: float, total_debt: f
     stub_fraction (auditoría sesión 15, hallazgo C1) se calcula a partir
     del cierre de ejercicio fiscal real del último año de `history` y de
     `valuation_date` (por defecto, hoy) — no se asume ya "1 de enero del
-    primer año proyectado" de forma implícita."""
+    primer año proyectado" de forma implícita.
+
+    analyst_overrides/analyst_rationale (sesión 18): si `analyst_overrides`
+    no es None ni vacío, se añade un 4º escenario (ver analyst_scenario())
+    a los 3 objetivos -- retrocompatible: sin este argumento, el resultado
+    es idéntico al de antes de este cambio."""
     base = default_assumptions_from_history(
         history, n_years=n_years, lookback_years=lookback_years,
     )
     last_revenue = history["revenue"].iloc[-1]
     stub_fraction = stub_fraction_from_history(history, valuation_date=valuation_date)
 
+    scenarios = default_scenarios(base)
+    if analyst_overrides:
+        scenarios.append(analyst_scenario(base, analyst_overrides, analyst_rationale))
+
     results = {}
-    for scenario in default_scenarios(base):
+    for scenario in scenarios:
         projection = project_financials(last_revenue, scenario.assumptions)
         inputs = DCFInputs(
             ebit=projection.ebit, tax_rate=projection.tax_rate, d_and_a=projection.d_and_a,

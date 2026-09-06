@@ -59,7 +59,10 @@ evidencia de fragilidad sistemática de Gordon Growth en todo el sector
 Utilities, no solo un caso puntual), y M6 recién investigado con
 evidencia directa del Excel de referencia y también cerrado), 3
 informativos (1
-✅ corregido — N2 —, 2 sin acción necesaria). Con esto, **no queda
+✅ corregido — N2 —, 2 sin acción necesaria), más una capa nueva no
+correctiva — N3 (sesión 18): supuestos del analista, un 4º escenario
+opcional construido a mano por el usuario, al lado de los 3 objetivos,
+nunca mezclado en silencio con ellos. Con esto, **no queda
 ningún hallazgo moderado o importante abierto** — I12 e I15 se
 corrigieron parcialmente (avisan, sin ajuste automático por falta de
 evidencia objetiva suficiente para justificarlo); I16 se corrigió
@@ -1080,6 +1083,88 @@ antes afirmaba justo lo contrario) + 4 en `test_scenarios.py`
 (incluida la regresión directa del colapso de `bullish_scenario()`) +
 ajustes en `test_memo_generator.py`/`app/streamlit_app.py` para el
 renombrado. **262 tests en total, todos en verde.**
+
+---
+
+### N3. Capa de supuestos del analista: un 4º escenario, construido a mano por el usuario, al lado de los 3 objetivos — ✅ AÑADIDO (sesión 18)
+
+**Qué es:** tras cerrar I16 y evaluar el grupo Big Tech, el usuario
+preguntó si la herramienta ya funciona "a nivel profesional". La
+respuesta calibrada fue: sí como motor de cálculo y disciplina de
+supuestos, pero no sustituye el juicio cualitativo de un analista senior
+— el caso del Excel de AMZN es el ejemplo concreto (margen EBIT modelado
+expandiéndose 6 años seguidos por criterio del banquero, 9.8%→15.0%,
+frente a nuestro motor que solo mantiene el nivel actual sin extrapolar,
+ver sección 36 de `docs/METHODOLOGY.md`). Se le ofreció aumentar la
+fiabilidad con contexto externo estructurado (consenso de analistas vía
+Alpha Vantage `EARNINGS_ESTIMATES`, o extracción de guidance de earnings
+calls) — lo rechazó explícitamente: quiere una casilla donde el propio
+analista escriba sus supuestos, para combinarlos con los datos auditables
+que ya usa la herramienta.
+
+**Principio de diseño que gobierna todo el cambio** (mismo que ha regido
+el proyecto entero): el override del analista nunca sustituye ni se
+mezcla en silencio con los 3 escenarios objetivos (`Base`, `Mantener
+nivel actual`, `Alcista`) — se añade como una CUARTA lectura, separada,
+etiquetada explícitamente como juicio humano, tanto en el gráfico (color
+distinto), como en la pestaña de supuestos (tabla objetivo vs. analista)
+y en el memo generado (regla nueva del prompt de sistema que cita la
+justificación tal cual).
+
+**Cómo funciona:** `engine.scenarios.analyst_scenario(base, overrides,
+rationale)` anula solo el AÑO N (`end`) de los drivers que el analista
+elige — el AÑO 1 (`start`, dato real del último ejercicio) nunca se
+puede tocar, mismo principio que todo el resto del motor. Requiere
+justificación obligatoria (`ValueError` si se omite) y avisa (sin
+bloquear) si el valor cae muy fuera de un rango plausible
+(`ANALYST_OVERRIDE_PLAUSIBLE_RANGE = (-0.50, 1.00)`, mismo espíritu que
+`TAX_RATE_PLAUSIBLE_RANGE`). `run_scenarios()` gana
+`analyst_overrides`/`analyst_rationale` opcionales, retrocompatibles
+(sin ellos, comportamiento idéntico al de antes). En
+`app/streamlit_app.py`, los inputs (checkbox + valor por driver, más la
+justificación) viven en un expander del sidebar, namespaceados por
+ticker para que cambiar de empresa no arrastre en silencio el override
+de otra.
+
+**3 hallazgos reales encontrados por un agente de planificación antes de
+escribir código** (mismo patrón que I16): (1) sin un nombre de escenario
+FIJO, un nombre generado dinámicamente podía colisionar con uno de los 3
+objetivos y sobrescribir su `DCFResult` en silencio en el `dict`
+indexado por nombre — corregido con la constante exportada
+`ANALYST_SCENARIO_NAME`; (2) `build_memo_input()` no puede reconstruir
+la justificación/drivers-anulados a partir de `scenario_results`
+(`dict[str, DCFResult]`, sin el objeto `Scenario` completo) — corregido
+recibiéndolos como parámetros explícitos, las mismas variables ya
+pasadas a `run_scenarios()`; (3) `revenue_growth` nunca revierte a una
+media histórica (queda plano al CAGR reciente por diseño, verificado
+contra el Excel) — reutilizar mecánicamente el patrón de descripción de
+los otros 4 drivers habría generado la frase falsa "revierte hacia su
+media histórica" — corregido con una rama de descripción propia para
+ese driver.
+
+**Verificado con datos reales de AMZN** (WACC 9.11% vía comparables,
+sin gastar cuota de Alpha Vantage): sin override, los 3 escenarios
+objetivos dan $126.73/$81.56/$105.04. Anulando el margen EBIT a 16%
+(informado por el propio guidance del Excel de referencia, que proyecta
+15% en el año 5) el escenario del analista da **$193.03** — sustancialmente
+más cerca del precio implícito del Excel ($216.41) y del precio de
+mercado actual ($258.51) que cualquiera de los 3 escenarios objetivos,
+justo la brecha que motivó este cambio. También verificado: el aviso de
+rango plausible dispara con un valor de fat-finger (500% en vez de 5%);
+el `ValueError` por justificación vacía se lanza correctamente; sin
+overrides, `run_scenarios()` sigue devolviendo exactamente los 3
+escenarios de siempre (retrocompatibilidad confirmada).
+
+**Alcance explícitamente fuera de este cambio:** `driver_sensitivities`,
+`run_monte_carlo`, `compute_implied_expectations` (reverse DCF) no se
+tocan — operan sobre el `ProjectionAssumptions` base objetivo, no sobre
+el dict de escenarios. Solo se puede anular el AÑO N, nunca el AÑO 1.
+Solo un escenario de analista a la vez.
+
+**Verificado:** 14 tests nuevos (`tests/test_scenarios.py`,
+`tests/test_memo_generator.py`) + verificación manual con la app real
+(Streamlit lanzada, sin tracebacks) y con datos reales de AMZN vía
+script de dogfooding. **276 tests en total, todos en verde.**
 
 ---
 
