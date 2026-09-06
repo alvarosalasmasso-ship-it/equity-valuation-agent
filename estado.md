@@ -1002,14 +1002,40 @@ Proceso (con obstáculos reales, no trivial):
 `README.md` actualizado con el enlace a la app en vivo. Detalle completo
 en `docs/PROGRESS_REVIEW.md` sección 7.
 
-## 9. Próximo paso inmediato
+## 9. Sesión 16 (continuación) — Script de validación reproducible
 
-1. **Probar la capa generativa con una llamada real** (ahora con la
-   sección de expectativas implícitas incluida en el memo) — puede
-   probarse directamente en la app ya desplegada.
-2. **Crear `scripts/validate_universe.py`** reproducible, con historial
-   fechado de la desviación media y las expectativas implícitas.
-3. Hallazgos técnicos moderados que siguen abiertos, sin urgencia: M2
+El usuario pidió no seguir con la prueba en vivo de la capa generativa
+por ahora ("olvida lo del memo en tiempo real"). Se preguntó qué
+recomendaba seguir desarrollando; recomendación: `scripts/validate_universe.py`
+(mayor valor para defender cifras del CV/entrevista de forma
+reproducible) frente a cerrar M2 (rápido pero bajo impacto) o Fase 9
+(alcance nuevo antes de agotar lo ya construido). Aceptado.
+
+- **`engine/validation.py`:** `value_ticker()` ahora también calcula y
+  adjunta las expectativas implícitas del mercado (`engine/reverse_dcf.py`)
+  al `ValuationCheck` resultante — reutiliza los `assumptions`/`base_inputs`
+  que ya calculaba, no reconstruye nada.
+- **`scripts/validate_universe.py`** (nuevo): corre el pipeline completo
+  sobre Big Tech/Cloud (Alpha Vantage) y Consumo defensivo (yfinance) con
+  el risk-free rate en vivo del día, aislando fallos por ticker (uno
+  problemático no tira abajo todo el grupo), y guarda un snapshot fechado
+  en `data/validation_history/<fecha>.json` — este sí versionado en el
+  repo, a diferencia de `data/cache/`.
+
+**Verificado con datos reales:** el script reproduce exactamente el
+41.82% de desviación media combinada (46.94% Big Tech, 33.27% Consumo
+defensivo) medido a mano en sesiones anteriores, y las expectativas
+implícitas de AMZN en el JSON coinciden con las usadas en el memo de
+ejemplo de esta sesión (31.8% de crecimiento implícito vs. mercado).
+
+2 tests de regresión nuevos. **144 tests en total, todos en verde.**
+Commit y push hechos.
+
+## 10. Próximo paso inmediato
+
+1. Hallazgos técnicos moderados que siguen abiertos, sin urgencia: M2
    (`gordon_weight=0.8` sin justificación propia), M5 (sin verificación
    de divisa de reporte), I2/I4 (estructurales).
-4. Fase 9 (sentiment en earnings calls) — extensión opcional, al final.
+2. Fase 9 (sentiment en earnings calls) — extensión opcional, al final.
+3. Probar la capa generativa con una llamada real — aparcado por ahora
+   a petición del usuario, no es una prioridad activa.

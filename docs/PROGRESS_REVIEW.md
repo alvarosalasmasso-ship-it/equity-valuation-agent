@@ -194,13 +194,14 @@ técnica:
    memo (ahora con la sección de expectativas implícitas) se genera
    correctamente end-to-end, no solo que el payload se ensambla bien.
    Puede probarse directamente en la app ya desplegada.
-4. **Crear `scripts/validate_universe.py`** que reproduzca la
-   medición de la sección 2 de forma reproducible y la guarde con
-   fecha (p. ej. `data/validation_history/2026-09-06.json`) — para que
-   la cifra de "desviación media" del CV se pueda regenerar y
-   defender en cualquier momento, no reconstruir a mano. Candidato
-   natural para incluir también las expectativas implícitas del reverse
-   DCF en el mismo historial fechado.
+4. ~~**Crear `scripts/validate_universe.py`**~~ ✅ **Hecho** (sesión 16,
+   continuación) — corre `value_ticker()` sobre ambos universos piloto
+   con el risk-free rate en vivo, aislando fallos por ticker, y guarda
+   un snapshot fechado en `data/validation_history/<fecha>.json`
+   (versionado en el repo, a diferencia de `data/cache/`). Incluye las
+   expectativas implícitas del reverse DCF de cada ticker, no solo la
+   desviación. Verificado con datos reales: reproduce exactamente el
+   41.82% de desviación media combinada medido a mano en la sección 2.
 5. **Decidir M2 como una decisión de producto, no dejarlo pendiente
    indefinidamente:** o se justifica `gordon_weight=0.8` como default
    razonado (p. ej. documentando por qué es razonable para el caso
