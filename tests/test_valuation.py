@@ -374,6 +374,37 @@ def test_gordon_growth_does_not_warn_on_healthy_spread():
         gordon_growth_terminal_value(final_year_fcf=100, wacc_=0.09, terminal_growth_rate=0.025)
 
 
+def test_gordon_growth_warns_on_negative_final_year_fcf():
+    """Auditoría sesión 17: caso real encontrado con TSLA (ΔNWC
+    proyectado crece más rápido que EBIT+D&A-CapEx, UFCF negativo todos
+    los años del horizonte) y BA (margen EBIT revierte a una media
+    histórica con años de pérdidas reales). El valor terminal sale
+    negativo -- matemáticamente consistente, pero merece un aviso
+    explícito, no pasar desapercibido como si fuera un resultado normal."""
+    from engine.valuation import gordon_growth_terminal_value
+
+    with pytest.warns(UserWarning, match="negativo"):
+        result = gordon_growth_terminal_value(final_year_fcf=-100, wacc_=0.09, terminal_growth_rate=0.025)
+    assert result < 0
+
+
+def test_gordon_growth_warns_on_zero_final_year_fcf():
+    from engine.valuation import gordon_growth_terminal_value
+
+    with pytest.warns(UserWarning, match="cero"):
+        result = gordon_growth_terminal_value(final_year_fcf=0, wacc_=0.09, terminal_growth_rate=0.025)
+    assert result == 0.0
+
+
+def test_gordon_growth_does_not_warn_on_positive_final_year_fcf():
+    from engine.valuation import gordon_growth_terminal_value
+    import warnings as warnings_module
+
+    with warnings_module.catch_warnings():
+        warnings_module.simplefilter("error")
+        gordon_growth_terminal_value(final_year_fcf=1.0, wacc_=0.09, terminal_growth_rate=0.025)
+
+
 # --- Matriz de sensibilidad WACC x g -----------------------------------------
 
 def _amzn_blended_inputs() -> DCFInputs:

@@ -278,6 +278,27 @@ def test_arbitrary_ticker_mode_with_empty_history_shows_actionable_error():
     assert "ZZZZINVALID" in at.error[0].value
 
 
+def test_arbitrary_ticker_mode_with_missing_capex_shows_actionable_error():
+    """Regresión sesión 17: prueba de estrés con tickers reales (JPM,
+    banco sin CapEx/EBIT tradicionales; PLD, REIT sin CapEx; XOM, sin
+    D&A en yfinance) encontró un IndexError sin capturar en la sección
+    de cómputo compartida por ambos modos -- fuera de cualquier
+    try/except existente. Reproduce con CapEx=None en todos los años."""
+    def history_without_capex(ticker):
+        symbol = getattr(ticker, "symbol", "TEST")
+        df = _fake_history(_REVENUE_BY_SYMBOL.get(symbol, 100.0))
+        df["capex"] = None
+        return df
+
+    at = _run_app(
+        extra_patches=[patch("engine.yfinance_provider.historical_financials", side_effect=history_without_capex)],
+        interact=lambda at: _switch_to_arbitrary_ticker(at, "JPM"),
+    )
+    assert not at.exception
+    assert len(at.error) >= 1
+    assert "CapEx" in at.error[0].value
+
+
 def test_arbitrary_ticker_mode_with_missing_beta_shows_actionable_error():
     """Regresión I3: sin beta (frecuente en small caps/IPOs) no debe
     lanzar un TypeError sin capturar."""

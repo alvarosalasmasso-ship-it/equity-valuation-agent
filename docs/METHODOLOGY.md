@@ -1712,3 +1712,89 @@ El usuario decidió priorizar investigar y corregir esta inconsistencia
 proveedor no se ha retomado todavía. Queda documentado el trabajo real
 ya invertido (qué tags funcionan, cuáles no, y por qué) para no tener
 que rehacerlo si se retoma más adelante.
+
+## 27. Prueba de estrés "como si un banco la usara": 11 tickers reales fuera del universo piloto (sesión 17)
+
+Petición explícita del usuario: probar la herramienta con más empresas,
+"como si de verdad un banco fuese a usarla", para encontrar y diseñar
+un análisis de debilidades y fortalezas real. Hasta ahora toda la
+validación (Fase 7, secciones 7-16) se había hecho sobre el mismo
+universo piloto de 8 empresas (Big Tech + Consumo defensivo) — nunca
+contra un conjunto deliberadamente diverso y desconocido para el motor.
+
+### Metodología
+
+11 tickers elegidos a propósito para estresar ejes distintos, ninguno
+en el universo piloto: **NVDA** (hiper-crecimiento extremo), **TSLA**
+(alta volatilidad de márgenes), **XOM** (energía, cíclico de
+comodities), **UNH** (salud), **CAT** (industrial cíclico), **SBUX**
+(consumo, mucho leasing), **T** (telecom, muy apalancado), **BA**
+(pérdidas reales recientes, muy apalancado), **PLD** (REIT), **JPM**
+(banco), **BABA** (ADR chino, para reconfirmar M5). Ejecutados en modo
+"cualquier ticker" contra la app REAL vía `streamlit.testing.v1.AppTest`
+**sin mocks, con red real** — a diferencia de `tests/test_app.py`
+(offline por diseño), esto ejercita el código exactamente como lo haría
+un usuario real tecleando un símbolo.
+
+### Resultado: 3 de 11 tickers (27%) crashearon con un traceback real
+
+**XOM** (yfinance no reporta D&A para esta empresa), **PLD** (REIT, sin
+CapEx en el esquema esperado) y **JPM** (banco, sin EBIT ni CapEx
+tradicionales) hacían `crashear` con `IndexError: list index out of
+range` en `_margin_fade_from_recent_to_average()` — una columna
+histórica sin NINGÚN dato válido, nunca contemplada. El fallo ocurre en
+la sección de cómputo compartida por los dos modos de la app, fuera de
+cualquier `try/except` existente (I3 y I5 protegen tramos anteriores,
+no este). **Corregido** (I9, `docs/AUDIT.md`): `ValueError` explícito
+nombrando la partida sin datos + `try/except` alrededor de la primera
+llamada de cómputo compartida.
+
+### Segundo resultado: valores terminales sin sentido, sin ningún aviso
+
+- **NVDA**: Gordon Growth = **$21.7 billones** (trillion en inglés),
+  más que el PIB mundial. Causa investigada: el CAGR reciente de NVDA
+  es de verdad ~100%/año (demanda de chips de IA, no un error), y la
+  metodología de crecimiento plano dentro del horizonte explícito
+  (sección 14, correcta para AMZN ~10-11%) compone eso durante 5 años
+  seguidos sin ninguna desaceleración — ingresos año 5 de $6.9
+  billones, 30x cualquier ingreso empresarial real. **Dejado abierto a
+  propósito** (no hay todavía un umbral objetivo de "growth rate
+  demasiado alto" verificado con datos, y forzar uno sin ese rigor
+  repetiría exactamente lo que se evitó con M2).
+- **TSLA** (-$45.9bn) y **BA** (-$184.1bn): valor terminal de Gordon
+  Growth NEGATIVO. Investigado con el desglose completo del UFCF: en
+  TSLA, el ΔNWC proyectado (consumo de caja creciente) supera a
+  EBIT·(1-t)+D&A-CapEx todos los años; en BA, el margen EBIT revierte
+  hacia la media de un histórico con dos años de pérdidas reales
+  (737 MAX, pandemia). Matemáticamente consistente con la fórmula, pero
+  sin ningún aviso al usuario. **Corregido** (I10): aviso explícito
+  cuando el FCFF del último año explícito es negativo o cero,
+  explicando el mecanismo probable — no se ajusta ningún número.
+
+### Tercer resultado: confirmación de un límite estructural ya conocido en la teoría, nunca antes encontrado en la práctica
+
+JPM (banco) y PLD (REIT) no solo dispararon el crash de I9 — confirman
+que un DCF FCFF genérico no encaja con estos sectores: los bancos no
+separan financiación de operación de la misma forma (los intereses SON
+el negocio), y los REITs se valoran en la práctica real con FFO/AFFO,
+no UFCF. Documentado (I11) como limitación estructural aceptada, mismo
+criterio que I2/I4 — no una limitación de esta herramienta en
+particular, sino de la metodología DCF FCFF aplicada fuera de su
+dominio.
+
+### El resto del universo de estrés funcionó correctamente
+
+NVDA, TSLA, UNH, CAT, SBUX, T y BA (una vez con el aviso I10 añadido)
+corrieron de punta a punta sin excepción, con avisos técnicos
+pertinentes en cada caso (outliers de ancla, spread WACC-g estrecho) —
+el mecanismo de avisos de las secciones 21/22 funcionó exactamente como
+se diseñó sobre tickers nunca antes probados. BABA confirmó M5
+(bloqueo por divisa, CNY) en un ADR distinto de los ya probados (Toyota).
+
+### Verificación
+
+187 tests en total (182 + 5: 1 en `test_projections.py`, 3 en
+`test_valuation.py`, 1 en `test_app.py`), más la prueba de estrés en sí
+(fuera de la suite de CI por diseño, ya que depende de red real) —
+documentada aquí para que sea reproducible sin tener que rehacerla
+desde cero.

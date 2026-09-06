@@ -211,6 +211,18 @@ def gordon_growth_terminal_value(final_year_fcf: float, wacc_: float,
     inestable y probablemente sobrevalora frente al múltiplo de salida —
     considera bajar `terminal_growth_rate` o reducir `gordon_weight` en
     favor del múltiplo de salida.
+
+    También avisa (sesión 17, prueba de estrés con tickers reales fuera
+    del universo piloto) si `final_year_fcf` es negativo o cero: el valor
+    terminal resultante también sale negativo/nulo -- matemáticamente
+    consistente con la fórmula, pero económicamente absurdo si se
+    interpreta como "la empresa vale menos que cero a perpetuidad" sin
+    contexto. Verificado con datos reales: le pasa a TSLA (ΔNWC
+    proyectado crece más rápido que EBIT+D&A-CapEx, consume caja neta
+    todos los años) y a BA (margen EBIT revierte a la media de un
+    histórico con años de pérdidas reales, 2022 y 2024). No se ajusta
+    nada del cálculo -- mismo criterio que el resto del proyecto: avisar,
+    no maquillar.
     """
     if wacc_ <= terminal_growth_rate:
         raise ValueError("WACC debe ser mayor que la tasa de crecimiento terminal (g)")
@@ -221,6 +233,17 @@ def gordon_growth_terminal_value(final_year_fcf: float, wacc_: float,
             f"({MIN_PRUDENT_WACC_GROWTH_SPREAD:.0%}). El valor terminal de Gordon "
             "Growth es muy sensible en este rango y tiende a sobrevalorar frente "
             "al múltiplo de salida. Revisa terminal_growth_rate o gordon_weight.",
+            stacklevel=2,
+        )
+    if final_year_fcf <= 0:
+        warnings.warn(
+            f"El flujo de caja libre del último año explícito es {'negativo' if final_year_fcf < 0 else 'cero'} "
+            f"(${final_year_fcf:,.0f}) -- el valor terminal de Gordon Growth resultante también sale "
+            f"{'negativo' if final_year_fcf < 0 else 'nulo'}, matemáticamente consistente con la fórmula "
+            "pero no interpretable como 'valor de la empresa' de la forma habitual. Suele deberse a un "
+            "consumo de working capital que crece más rápido que el EBIT, o a un margen EBIT que revierte "
+            "hacia una media histórica con años de pérdidas reales -- revisa los supuestos de proyección, "
+            "no solo el resultado final.",
             stacklevel=2,
         )
     return final_year_fcf * (1 + terminal_growth_rate) / spread

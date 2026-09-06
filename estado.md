@@ -1364,7 +1364,40 @@ descartado) — el usuario priorizó corregir I8 antes de retomarlo.
 Documentado en `docs/METHODOLOGY.md` sección 26 y `docs/AUDIT.md`
 hallazgo I8.
 
-## 18. Próximo paso inmediato
+## 18. Sesión 17 (continuación) — Prueba de estrés real: "como si un banco la usara"
+
+El usuario pidió probar la herramienta con más empresas, como lo haría
+un banco de verdad, para encontrar debilidades y fortalezas reales.
+11 tickers deliberadamente diversos y fuera del universo piloto (NVDA,
+TSLA, XOM, UNH, CAT, SBUX, T, BA, PLD, JPM, BABA), ejecutados contra la
+app real (AppTest sin mocks, red real) en modo "cualquier ticker".
+
+**3 de 11 (27%) crashearon** con `IndexError` — XOM (sin D&A en
+yfinance), PLD -REIT- (sin CapEx) y JPM -banco- (sin EBIT ni CapEx).
+Corregido (I9): `ValueError` claro + `try/except` en la sección de
+cómputo compartida por ambos modos, nunca protegida hasta ahora.
+
+**NVDA, TSLA y BA mostraron valores terminales sin sentido.** NVDA:
+Gordon Growth de $21.7 billones (el CAGR real de NVDA, ~100%/año,
+compuesto plano 5 años sin desacelerar) — dejado abierto a propósito,
+sin umbral objetivo verificado todavía. TSLA (-$45.9bn) y BA (-$184.1bn):
+valor terminal negativo por ΔNWC/margen revertido a pérdidas reales —
+corregido (I10) con un aviso explícito, sin ajustar ningún número.
+
+**JPM y PLD confirman un límite estructural** (I11, documentado como
+limitación aceptada, igual que I2/I4): un DCF FCFF genérico no encaja
+con bancos ni REITs — ningún banco real lo aplicaría sin adaptaciones
+(DDM para bancos, FFO-multiple para REITs).
+
+El resto del universo de estrés (NVDA, TSLA, UNH, CAT, SBUX, T, BA)
+corrió sin excepción, con los avisos técnicos pertinentes. BABA
+reconfirmó M5 (bloqueo por divisa) en un ADR distinto de los ya
+probados.
+
+**187 tests en total, todos en verde.** Documentado en
+`docs/METHODOLOGY.md` sección 27 y `docs/AUDIT.md` (I9, I10, I11).
+
+## 19. Próximo paso inmediato
 
 0. M6/M7 (recién abiertos) — investigar el tipo impositivo a largo
    plazo y añadir/aclarar Net Debt/EBITDA, con el mismo rigor que M2.

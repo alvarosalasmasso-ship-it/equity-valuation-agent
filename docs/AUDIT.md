@@ -30,15 +30,21 @@ reflejan "hoy". Es el mismo patrón que los bugs de `interest_expense`
 y de serialización JSON encontrados en sesiones anteriores: no rompen
 nada de forma visible, pero sí introducen un sesgo silencioso.
 
-**1 hallazgo crítico (✅ corregido), 8 importantes (6 ✅ corregidos —
-I6/I7/I8 añadidos en sesión 17: dos crashes reales de división por cero
-y una inconsistencia real de datos (yfinance `.info` vs. `.balance_sheet`
-en desacuerdo hasta un 65% en deuda) encontrados en la auditoría
-técnica/matemática a fondo del motor—, 2 ✅ aceptados como limitación
-documentada), 7 moderados (4 ✅ corregidos, 1 ✅ decisión explícita
-investigada y mantenida, 2 ⏳ abiertos — M6/M7, sesión 17, pendientes de
+**1 hallazgo crítico (✅ corregido), 11 importantes (8 ✅ corregidos —
+I6/I7/I8 de la auditoría matemática/financiera a fondo, más I9/I10 de
+una prueba de estrés con 11 tickers reales fuera del universo piloto
+("como si un banco fuese a usarla"): dos crashes de división por cero,
+una inconsistencia real de datos yfinance, un crash de índice con
+empresas cuyo esquema de estados financieros no encaja (banco, REIT,
+energía) y un valor terminal negativo/nulo sin aviso —, 3 ✅ aceptados
+como limitación documentada — I2, I4, I11, este último nuevo: DCF FCFF
+no encaja con bancos/REITs), 7 moderados (4 ✅ corregidos, 1 ✅ decisión
+explícita investigada y mantenida, 2 ⏳ abiertos — M6/M7, pendientes de
 investigar/decidir), 3 informativos (1 ✅ corregido — N2, tests
-automatizados de la app —, 2 sin acción necesaria).**
+automatizados de la app —, 2 sin acción necesaria). Además, 1 hallazgo
+real dejado deliberadamente abierto (crecimiento plano económicamente
+absurdo en hiper-crecimiento extremo, ver sección Importante) por no
+tener todavía un umbral objetivo verificado con datos.**
 La sesión 17 añadió una auditoría explícita del rigor matemático y
 financiero del motor (`engine/valuation.py`, `wacc_builder.py`,
 `ratios.py`, `comps.py`) verificado fórmula a fórmula contra teoría
@@ -368,7 +374,7 @@ en vez de `snap["total_debt"]` sin guarda (protege además contra
 `None`, no solo contra `0`).
 
 **Verificado:** test de regresión en `tests/test_valuation.py`
-(`cost_of_debt(0.0, 0.0) == 0.0`); suite completa (182 tests) y
+(`cost_of_debt(0.0, 0.0) == 0.0`); suite completa (187 tests) y
 `tests/test_app.py` en verde tras el cambio.
 
 ---
@@ -456,6 +462,128 @@ en KO/PG/JNJ es el esperado, pequeño y en la dirección medida
 (-20.4%→-22.3% KO, PG y JNJ casi sin cambio) — no una sorpresa, la
 magnitud coincide exactamente con la del desajuste `.info` vs.
 `.balance_sheet` encontrado por ticker.
+
+---
+
+### I9. `IndexError` sin capturar cuando una partida histórica no tiene ningún dato válido — ✅ CORREGIDO (sesión 17)
+
+**Qué es:** a petición del usuario, se probó la herramienta "como si de
+verdad un banco fuese a usarla" — 11 tickers reales, deliberadamente
+diversos (hiper-crecimiento, cíclicos, apalancados, en pérdidas,
+bancos, REITs, ADRs), fuera del universo piloto de 8 empresas ya
+conocido, en modo "cualquier ticker" vía `AppTest` contra la app real
+(sin mocks, red real). 3 de 11 (27%) crashearon con
+`IndexError: list index out of range`: **XOM** (yfinance no reporta
+D&A para esta empresa, en ningún año del histórico), **PLD** (REIT —
+sin CapEx en el esquema esperado, se reporta de otra forma) y **JPM**
+(banco — sin EBIT ni CapEx en el sentido tradicional, en ningún año).
+`_margin_fade_from_recent_to_average()` hacía `ratios[-1]` sin
+comprobar que `ratios` no estuviera vacío.
+
+**Por qué importa:** el crash ocurre en la sección de cómputo
+compartida por AMBOS modos ("cualquier ticker" y "universo cacheado"),
+fuera de cualquier `try/except` existente (el de "cualquier ticker"
+termina antes de este punto; I5 solo cubre la construcción del WACC en
+"universo cacheado"). Un traceback real y sin capturar, alcanzable con
+tickers de primera línea (Exxon, Prologis, JPMorgan), no con casos de
+laboratorio.
+
+**Cómo se corrigió:** `_margin_fade_from_recent_to_average()` lanza un
+`ValueError` explícito, nombrando la partida sin datos, en vez de
+`IndexError`; la primera llamada de cómputo en `app.py` (compartida
+por ambos modos) ahora está protegida con `try/except` + `st.error` +
+`st.stop()`, mismo patrón que I3/I5/I8.
+
+**Verificado:** 1 test de regresión en `test_projections.py` (CapEx
+`None` en todos los años → `ValueError` nombrando "CapEx"), 1 en
+`test_app.py` (mismo caso vía `AppTest`, confirma cero excepciones y
+mensaje accionable). Re-verificado con datos reales: XOM, PLD y JPM ya
+no crashean, muestran un mensaje claro.
+
+---
+
+### I10. Valor terminal de Gordon Growth negativo/nulo sin ningún aviso — ✅ CORREGIDO (sesión 17)
+
+**Qué es:** en la misma prueba de estrés, **TSLA** y **BA** mostraron
+un "Gordon Growth" de **-$45.9 mil millones** y **-$184.1 mil
+millones** respectivamente — valores terminales negativos, sin ningún
+aviso al usuario. Investigado con el desglose completo del UFCF
+proyectado: en TSLA, el ΔNWC proyectado (consumo de caja creciente,
+$6.6bn→$9.7bn/año) supera a EBIT·(1-t)+D&A-CapEx todos los años del
+horizonte, dando UFCF negativo de forma sostenida; en BA, el margen
+EBIT revierte hacia la media de un histórico con dos años de pérdidas
+reales (2022, 2024 — era de crisis 737 MAX/pandemia), arrastrando el
+EBIT proyectado a territorio negativo hacia el año 5.
+
+**Por qué importa:** matemáticamente consistente con la fórmula de
+Gordon Growth (`TV = FCFF_n×(1+g)/(WACC-g)`, un FCFF_n negativo da un
+TV negativo) — no es un bug de cálculo. Pero un valor terminal negativo
+presentado sin contexto es indistinguible, para un analista que no
+desglose el DCF a mano, de un resultado roto. Mismo espíritu que
+`MIN_PRUDENT_WACC_GROWTH_SPREAD`: la fórmula no está mal, pero el
+régimen merece una señal explícita.
+
+**Cómo se corrigió:** `gordon_growth_terminal_value()` emite un
+`warnings.warn()` cuando `final_year_fcf <= 0`, explicando el mecanismo
+más probable (consumo de working capital que crece más rápido que el
+EBIT, o margen revertido a una media con pérdidas reales) — no se
+ajusta ningún número, mismo principio de "avisar, no maquillar" que el
+resto del proyecto.
+
+**Verificado:** 3 tests de regresión en `test_valuation.py` (FCF
+negativo avisa y menciona "negativo"; FCF cero avisa y menciona "cero";
+FCF positivo no avisa). Re-verificado con datos reales vía `AppTest`
+contra la app real: el aviso aparece en el panel "Aviso técnico del
+modelo" para TSLA y BA, sin excepciones.
+
+### Hallazgo abierto (no corregido): "flat CAGR" se vuelve económicamente absurdo en compañías de hiper-crecimiento extremo
+
+**NVDA** mostró un "Gordon Growth" de **$21.7 billones** (trillion en
+inglés) — más que el PIB mundial. Investigado: el CAGR reciente de
+NVDA (2023→2026, motor de la sección 14 — crecimiento plano durante
+todo el horizonte explícito, sin fade) es de verdad ~100%/año (demanda
+real de chips de IA, no un error de datos), pero mantenerlo PLANO
+durante 5 años seguidos compone los ingresos hasta $6.9 billones en el
+año 5 — 30 veces cualquier ingreso empresarial real registrado. La
+metodología "crecimiento plano, sin decaer dentro del horizonte
+explícito" (sección 14, validada contra el Excel de referencia para
+AMZN, ~10-11% de crecimiento) es correcta para el caso que la motivó,
+pero se rompe en el extremo opuesto: ningún analista real modelaría 5
+años seguidos de +90% de crecimiento sin ninguna desaceleración.
+
+**Por qué no se ha corregido todavía:** no hay un umbral objetivo,
+verificable con datos, de "a partir de qué tasa de crecimiento el flat
+CAGR deja de ser razonable" — inventar uno sin el mismo rigor que M2
+(medir el impacto real, no solo intuirlo) sería exactamente el tipo de
+ajuste sin verificar que este proyecto ha evitado siempre. Queda
+documentado como hallazgo real y abierto, no como pendiente de
+"corrección obvia".
+
+---
+
+### I11. DCF de flujo de caja libre no encaja con bancos ni REITs — ✅ DOCUMENTADO como limitación estructural (sesión 17)
+
+**Qué es:** la misma prueba de estrés confirmó (I9) que **JPM**
+(banco) y **PLD** (REIT) no tienen EBIT/CapEx en el esquema que asume
+un DCF FCFF genérico — no es solo un hueco de datos de yfinance, es
+que estos sectores estructuralmente no encajan con la metodología: los
+bancos no separan "coste de financiación" de "actividad operativa" de
+la misma forma (los intereses SON el negocio, no un coste de
+financiación externo al negocio), y los REITs se valoran en la
+práctica real con métricas propias (FFO/AFFO, no UFCF) precisamente
+porque su CapEx y depreciación no se comportan como los de una empresa
+operativa normal.
+
+**Por qué se documenta así, no se "corrige":** un banco de primer
+nivel real NUNCA aplicaría un DCF FCFF genérico a un banco o un REIT
+sin adaptaciones metodológicas específicas (Dividend Discount Model /
+Excess Return Model para bancos; FFO-multiple para REITs) — no es una
+limitación de esta herramienta en particular, es una limitación de la
+metodología DCF FCFF en sí misma aplicada fuera de su dominio. Mismo
+criterio que I2/I4: limitación estructural aceptada, señalada con
+claridad (ahora con un mensaje de error específico, ver I9) en vez de
+dejar que la herramienta finja que puede valorar cualquier sector por
+igual.
 
 ---
 
@@ -786,10 +914,12 @@ aviso en la interfaz.
 - **El múltiplo de salida se corrigió** de "propio de la empresa" a
   "mediana de comparables" (sesión 14), con el efecto mixto reportado
   con honestidad en vez de maquillado.
-- **182 tests, cero dependen de red** — toda la suite corre offline con
-  fixtures fieles al formato real de las APIs, incluidos 11 tests de la
+- **187 tests, cero dependen de red** — toda la suite corre offline con
+  fixtures fieles al formato real de las APIs, incluidos 12 tests de la
   app en sí (`streamlit.testing.v1.AppTest`, sesión 16-17) y CI en
-  GitHub Actions corriéndolos en cada push.
+  GitHub Actions corriéndolos en cada push. Complementado con una
+  prueba de estrés puntual (11 tickers reales, red real, sesión 17) que
+  la suite offline no puede replicar por diseño.
 - **Capa generativa desacoplada del cálculo por diseño**, no como
   parche — el LLM nunca ve datos crudos, solo un paquete ya cerrado.
 - **Auditoría matemática/financiera a fondo (sesión 17) confirmó
@@ -864,6 +994,20 @@ aviso en la interfaz.
     pequeño (KO/PG/JNJ no tienen mucho leasing), pero potencialmente
     grave en modo "cualquier ticker" con una empresa con mucho leasing
     (retail, aerolíneas).
+15. ~~**I9 (`IndexError` sin capturar con partidas históricas vacías)**~~
+    y ~~**I10 (valor terminal negativo/nulo sin aviso)**~~ — ✅
+    corregidos (sesión 17) — encontrados en una prueba de estrés con 11
+    tickers reales fuera del universo piloto (petición explícita del
+    usuario: probar la herramienta "como si de verdad un banco fuese a
+    usarla"). 3 de 11 tickers (XOM, PLD, JPM) crasheaban con
+    `IndexError`; TSLA y BA mostraban valores terminales negativos
+    (hasta -$184 mil millones) sin ningún aviso.
+16. **I11 (DCF FCFF no encaja con bancos/REITs)** — ✅ documentado como
+    limitación estructural (sesión 17), mismo criterio que I2/I4.
+17. **Hallazgo abierto**: crecimiento plano (sección 14) se vuelve
+    económicamente absurdo en hiper-crecimiento extremo (NVDA, valor
+    terminal de $21.7 billones) — sin corregir a propósito, no hay
+    todavía un umbral objetivo verificado con datos reales.
 
 **Quedan dos hallazgos moderados abiertos a propósito** (M6, M7) —
 requieren investigación con datos reales antes de decidir, no una

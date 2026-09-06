@@ -436,12 +436,33 @@ with st.container(border=True):
 # de presentación es lo que permite reorganizar la UI en pestañas sin tocar
 # ninguna lógica financiera.
 
-scenario_results, warnings_text = run_scenarios_capturing_warnings(
-    hist, wacc=wacc_value, cash=snap.get("cash") or 0, total_debt=snap.get("total_debt") or 0,
-    diluted_shares=snap["shares_outstanding"], n_years=n_years, terminal_growth_rate=terminal_growth_rate,
-    lookback_years=lookback_years, terminal_ev_ebitda_multiple=terminal_multiple,
-    gordon_weight=gordon_weight, valuation_date=valuation_date,
-)
+# Auditoría sesión 17 (prueba de estrés con tickers reales fuera del
+# universo piloto): XOM (sin D&A reportado por yfinance), PLD -REIT-
+# (sin CapEx en el esquema esperado) y JPM -banco- (sin EBIT ni CapEx
+# en el sentido tradicional) hacían crashear esta primera llamada de
+# cómputo sin capturar -- ni el try/except de "cualquier ticker" (ya
+# termina antes de este punto) ni el de "universo cacheado" lo cubrían,
+# y esta sección es compartida por ambos modos. `default_assumptions_
+# from_history()` ahora lanza un ValueError claro en vez de un
+# IndexError críptico (ver engine/projections.py); esto solo evita que
+# ese error se propague sin capturar hasta el usuario. Basta con
+# proteger esta primera llamada: el resto del cómputo depende de ella,
+# así que un fallo aquí ya detiene el script vía st.stop().
+try:
+    scenario_results, warnings_text = run_scenarios_capturing_warnings(
+        hist, wacc=wacc_value, cash=snap.get("cash") or 0, total_debt=snap.get("total_debt") or 0,
+        diluted_shares=snap["shares_outstanding"], n_years=n_years, terminal_growth_rate=terminal_growth_rate,
+        lookback_years=lookback_years, terminal_ev_ebitda_multiple=terminal_multiple,
+        gordon_weight=gordon_weight, valuation_date=valuation_date,
+    )
+except Exception as e:
+    st.error(
+        f"No se pudo construir la proyección para '{target}': {e}\n\n"
+        "Frecuente en sectores con estados financieros no estándar (bancos/financieras, "
+        "REITs) que un DCF genérico de flujo de caja libre no modela bien -- considera "
+        "otro ticker o revisa `docs/AUDIT.md` para las limitaciones conocidas por sector."
+    )
+    st.stop()
 scenario_names = list(scenario_results.keys())
 scenario_prices = [r.implied_share_price for r in scenario_results.values()]
 

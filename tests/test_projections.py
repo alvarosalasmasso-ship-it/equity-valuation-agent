@@ -256,6 +256,28 @@ def test_default_assumptions_requires_at_least_two_revenue_points():
         default_assumptions_from_history(history)
 
 
+def test_default_assumptions_raises_clear_error_when_a_driver_has_no_valid_data():
+    """Auditoría sesión 17: prueba de estrés con tickers reales fuera del
+    universo piloto encontró que XOM (sin D&A en yfinance), PLD -REIT-
+    (sin CapEx) y JPM -banco- (sin EBIT ni CapEx) hacían crashear con
+    IndexError sin capturar en ningún punto del pipeline real. Un
+    histórico donde una partida entera (aquí, CapEx) es None en todos
+    los años debe dar un ValueError claro que nombre la partida, no un
+    IndexError críptico."""
+    revenue = [1000.0, 1100.0, 1210.0, 1331.0]
+    history = pd.DataFrame({
+        "fiscal_year": [2020, 2021, 2022, 2023],
+        "revenue": revenue,
+        "ebit": [r * 0.20 for r in revenue],
+        "d_and_a": [r * 0.05 for r in revenue],
+        "capex": [None, None, None, None],  # p.ej. un banco sin CapEx tradicional
+        "change_in_nwc": [None] + [r * 0.02 for r in revenue[1:]],
+        "tax_rate": [0.25] * 4,
+    })
+    with pytest.raises(ValueError, match="CapEx"):
+        default_assumptions_from_history(history, lookback_years=3)
+
+
 def test_default_assumptions_margin_window_excludes_extra_older_year():
     """Regresión: el CAGR de ingresos necesita lookback_years+1 puntos
     (los extremos), pero la ventana de márgenes debe usar EXACTAMENTE

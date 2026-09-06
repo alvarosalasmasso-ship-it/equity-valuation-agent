@@ -216,8 +216,29 @@ def _margin_fade_from_recent_to_average(window: pd.DataFrame, column: str,
     (fiel al principio "el último año real es el mejor estimador del
     estado actual") y solo señala la anomalía para que el usuario la
     revise -- mismo patrón que MIN_PRUDENT_WACC_GROWTH_SPREAD en
-    engine.valuation: nunca un ajuste silencioso."""
+    engine.valuation: nunca un ajuste silencioso.
+
+    Auditoría (sesión 17, prueba de estrés con tickers reales fuera del
+    universo piloto): con XOM (sin D&A reportado por yfinance), PLD
+    -REIT- (sin CapEx, se reporta de otra forma) o JPM -banco- (sin
+    EBIT ni CapEx en el sentido tradicional), `window[column]` puede no
+    tener NINGÚN valor válido en toda la ventana -- `ratios` sale vacío
+    y `ratios[-1]` crasheaba con `IndexError`, sin capturar en ningún
+    punto del pipeline real (ni en modo "cualquier ticker" ni en
+    "universo cacheado", el `try/except` de ambos termina antes de este
+    punto). Fallar aquí con un ValueError claro, identificando la
+    partida concreta, es intencionadamente la misma señal que ya da
+    esta función para outliers -- pero además interpretable como lo que
+    realmente es: esta empresa/sector no encaja con el esquema de
+    columnas que asume el motor (ver docs/AUDIT.md, nuevo hallazgo)."""
     ratios = _valid_ratio_series(window[column].tolist(), window["revenue"].tolist())
+    if not ratios:
+        raise ValueError(
+            f"Sin ningún dato válido de '{driver_label or column}' en el histórico "
+            f"disponible -- no se puede construir la proyección. Frecuente en sectores "
+            "con estados financieros no estándar (bancos/financieras, REITs) o cuando "
+            "el proveedor de datos no reporta esa partida para esta empresa."
+        )
     recent_value = ratios[-1]
     is_outlier, modified_z = _detect_anchor_outlier(ratios)
     if is_outlier:
