@@ -1,8 +1,8 @@
 """Script de validación reproducible (Fase 7, sesión 16).
 
 Corre el pipeline completo (`engine.validation.value_ticker`) sobre los
-universos piloto -- Big Tech/Cloud (Alpha Vantage) y Consumo defensivo
-(yfinance) -- con el risk-free rate en vivo del día, y guarda un
+universos piloto -- Big Tech/Cloud y Consumo defensivo, ambos vía
+yfinance -- con el risk-free rate en vivo del día, y guarda un
 snapshot fechado en `data/validation_history/`.
 
 Motivo (docs/PROGRESS_REVIEW.md sección 5, ítem 4): la cifra de
@@ -17,10 +17,9 @@ Uso:
     ./.venv/Scripts/python.exe scripts/validate_universe.py
     ./.venv/Scripts/python.exe scripts/validate_universe.py --date 2026-09-06
 
-Requiere `ALPHA_VANTAGE_API_KEY` en `.env` para el grupo "Big Tech /
-Cloud" (usa el caché en disco de 24h si existe, igual que la app --
-no gasta cuota extra en ejecuciones repetidas el mismo día). El grupo
-"Consumo defensivo" usa yfinance, sin API key.
+Sesión 19: se elimina Alpha Vantage como fuente de datos del proyecto
+(cuota de 25 peticiones/día, limitante en la práctica) -- ambos grupos
+usan yfinance, sin API key.
 """
 
 import argparse
@@ -35,13 +34,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
 
-from engine.data_provider import AlphaVantageClient
-from engine.data_provider import historical_financials as av_historical_financials
-from engine.data_provider import market_snapshot as av_market_snapshot
 from engine.validation import bootstrap_deviation_ci, summarize_deviation, value_ticker
 from engine.yfinance_provider import get_ticker as yf_get_ticker
 from engine.yfinance_provider import historical_financials as yf_historical_financials
-from engine.yfinance_provider import live_price as yf_live_price
 from engine.yfinance_provider import market_snapshot as yf_market_snapshot
 from engine.yfinance_provider import treasury_yield_10y
 
@@ -57,28 +52,12 @@ LOOKBACK_YEARS = 3
 GORDON_WEIGHT = 0.8
 
 UNIVERSES = {
-    "Big Tech / Cloud": {"tickers": ["AMZN", "MSFT", "GOOGL", "META", "AAPL"], "provider": "alpha_vantage"},
-    "Consumo defensivo": {"tickers": ["KO", "PG", "JNJ"], "provider": "yfinance"},
+    "Big Tech / Cloud": {"tickers": ["AMZN", "MSFT", "GOOGL", "META", "AAPL"]},
+    "Consumo defensivo": {"tickers": ["KO", "PG", "JNJ"]},
 }
 
 
-def _load_universe(provider: str, tickers: list[str]) -> tuple[dict, dict]:
-    if provider == "alpha_vantage":
-        client = AlphaVantageClient()
-        hist = {t: av_historical_financials(client, t, use_cache=True) for t in tickers}
-        snap = {t: av_market_snapshot(client, t, use_cache=True) for t in tickers}
-        # Auditoría sesión 17: el precio derivado de Alpha Vantage
-        # (MarketCapitalization/SharesOutstanding) resultó mal para 2 de 5
-        # tickers reales de Big Tech (GOOGL 2.08x, META 1.155x -- este
-        # segundo no detectable solo con campos de Alpha Vantage, ver
-        # engine.data_provider._validate_derived_price). yfinance se usa
-        # como fuente PREFERIDA de cotización, con el precio derivado de AV
-        # solo como último recurso -- mismo criterio que app/streamlit_app.py.
-        for t in tickers:
-            fallback = yf_live_price(yf_get_ticker(t))
-            if fallback is not None:
-                snap[t]["price"] = fallback
-        return hist, snap
+def _load_universe(tickers: list[str]) -> tuple[dict, dict]:
     hist, snap = {}, {}
     for t in tickers:
         ticker_obj = yf_get_ticker(t)
@@ -87,14 +66,14 @@ def _load_universe(provider: str, tickers: list[str]) -> tuple[dict, dict]:
     return hist, snap
 
 
-def _run_group(tickers: list[str], provider: str, risk_free_rate: float,
+def _run_group(tickers: list[str], risk_free_rate: float,
                valuation_date: date) -> tuple[list, dict]:
     """Valora cada ticker del grupo de forma aislada: si uno falla (dato
     faltante, fallo de red puntual), se omite con un aviso en stderr en
     vez de tirar abajo todo el grupo -- a diferencia de
     engine.validation.validate_universe(), que no aísla fallos por
     ticker."""
-    hist_data, snap_data = _load_universe(provider, tickers)
+    hist_data, snap_data = _load_universe(tickers)
 
     checks, warnings_by_ticker = [], {}
     for t in tickers:
@@ -144,8 +123,8 @@ def main() -> None:
     all_checks = []
 
     for group_name, cfg in UNIVERSES.items():
-        print(f"=== {group_name} ({cfg['provider']}) ===")
-        checks, warnings_by_ticker = _run_group(cfg["tickers"], cfg["provider"], risk_free_rate, valuation_date)
+        print(f"=== {group_name} ===")
+        checks, warnings_by_ticker = _run_group(cfg["tickers"], risk_free_rate, valuation_date)
         if not checks:
             print("  Sin tickers valorados en este grupo.\n")
             continue

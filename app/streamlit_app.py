@@ -20,15 +20,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from ai.memo_generator import build_memo_input, build_prompt, run_scenarios_capturing_warnings
-from engine.data_provider import AlphaVantageClient, AlphaVantageError
-from engine.data_provider import historical_financials as av_historical_financials
-from engine.data_provider import market_snapshot as av_market_snapshot
 from engine.scenarios import ANALYST_SCENARIO_NAME, BASE_SCENARIO_NAME, _is_blank
 from engine.validation import build_peer_set
 from engine.valuation import DCFInputs, sensitivity_matrix
 from engine.wacc_builder import build_wacc
 from engine.yfinance_provider import get_ticker as yf_get_ticker
 from engine.yfinance_provider import historical_financials as yf_historical_financials
+from engine.yfinance_provider import live_price as yf_live_price
 from engine.yfinance_provider import market_snapshot as yf_market_snapshot
 from engine.yfinance_provider import treasury_yield_10y as yf_treasury_yield_10y
 
@@ -165,19 +163,11 @@ def _inject_custom_css() -> None:
 # Universos con comparables ya validados en sesiones anteriores (ver estado.md)
 # ---------------------------------------------------------------------------
 
-# Sesión 18: a petición del usuario, se abandona Alpha Vantage como fuente
-# AUTOMÁTICA de momento -- cualquiera que abra la app y no toque nada
-# empezaba a gastar su cuota de 25 peticiones/día (compartida entre TODOS
-# los visitantes de la app pública) sin saberlo, solo por el orden de este
-# dict (el primer grupo es el que selecciona por defecto st.selectbox).
-# Ningún nombre de grupo aquí contiene ya "Alpha Vantage", así que
-# `loader = load_av_universe if "Alpha Vantage" in group_name else
-# load_yf_universe` (más abajo) elige yfinance para los dos -- sin límite
-# de cuota, ya verificado con estos mismos 5 tickers en el dogfooding de
-# esta sesión. load_av_universe()/AlphaVantageClient siguen intactos en el
-# código (no se borra la capacidad, solo se deja de invocar
-# automáticamente) para poder reactivarlos añadiendo un grupo con ese
-# nombre si hace falta más adelante.
+# Sesión 18: se retiró Alpha Vantage como fuente automática por consumir
+# una cuota compartida (25 peticiones/día entre TODOS los visitantes de la
+# app pública) sin que el usuario lo supiera. Sesión 19: se elimina del todo
+# como fuente de datos del proyecto -- yfinance ya cubre lo mismo sin límite
+# de cuota, verificado con estos mismos tickers en dogfooding real.
 CACHED_GROUPS = {
     "Big Tech / Cloud": ["AMZN", "MSFT", "GOOGL", "META", "AAPL"],
     "Consumo defensivo": ["KO", "PG", "JNJ"],
@@ -201,12 +191,8 @@ DEFAULT_MARKET_RISK_PREMIUM = 0.0406
 @st.cache_data(ttl=3600, show_spinner="Consultando risk-free rate en vivo (Treasury 10Y)...")
 def get_live_risk_free_rate() -> tuple[float, str]:
     """Devuelve (tasa, descripción de la fuente). Siempre vía yfinance
-    (^TNX), incluso en modo "universo cacheado con Alpha Vantage": es un
-    dato de mercado ambiental, igual para cualquier compañía, y así no
-    consume la cuota de 25 peticiones/día de Alpha Vantage por algo que
-    no depende del ticker. engine.data_provider.AlphaVantageClient.
-    treasury_yield() existe como alternativa y está testeado, pero no se
-    usa aquí por ese motivo de cuota."""
+    (^TNX): es un dato de mercado ambiental, igual para cualquier
+    compañía."""
     try:
         rate = yf_treasury_yield_10y(yf_get_ticker("^TNX"))
         return rate, "Treasury 10Y (^TNX, Yahoo Finance, en vivo)"
@@ -218,23 +204,13 @@ def get_live_risk_free_rate() -> tuple[float, str]:
 
 
 # Sesión 16 (continuación), "rigor técnico restante": sin ttl, el caché de
-# Streamlit (distinto del caché en disco de 24h de AlphaVantageClient, una
-# capa por debajo) vivía tanto como el propio proceso -- en Streamlit Cloud
-# eso son potencialmente días sin reiniciar. Una herramienta que presume de
+# Streamlit vivía tanto como el propio proceso -- en Streamlit Cloud eso son
+# potencialmente días sin reiniciar. Una herramienta que presume de
 # "risk-free rate en vivo" (get_live_risk_free_rate, arriba, sí con ttl=3600)
 # no debería tener el precio de mercado y el consenso de analistas congelados
 # por accidente durante ese tiempo. 3600s (1h) por consistencia con esa misma
-# función -- no agota la cuota de Alpha Vantage porque su propio caché en
-# disco (24h) sigue absorbiendo la mayoría de las re-peticiones.
+# función.
 UNIVERSE_CACHE_TTL_SECONDS = 3600
-
-
-@st.cache_data(ttl=UNIVERSE_CACHE_TTL_SECONDS, show_spinner="Cargando datos cacheados de Alpha Vantage...")
-def load_av_universe(tickers: tuple) -> tuple[dict, dict]:
-    client = AlphaVantageClient()
-    hist = {t: av_historical_financials(client, t, use_cache=True) for t in tickers}
-    snap = {t: av_market_snapshot(client, t, use_cache=True) for t in tickers}
-    return hist, snap
 
 
 @st.cache_data(ttl=UNIVERSE_CACHE_TTL_SECONDS, show_spinner="Descargando datos de yfinance...")
@@ -323,26 +299,15 @@ with st.sidebar:
         group_name = st.selectbox("Grupo de comparables", list(CACHED_GROUPS.keys()))
         tickers = CACHED_GROUPS[group_name]
         target = st.selectbox("Ticker", tickers)
-        loader = load_av_universe if "Alpha Vantage" in group_name else load_yf_universe
         # A diferencia del modo "cualquier ticker" (I3, auditoría sesión 15),
         # este camino -- el que usa cualquier visitante por defecto -- no tenía
-        # manejo de errores: un fallo de Alpha Vantage (cuota de 25 peticiones/día
-        # agotada, COMPARTIDA entre todos los visitantes de esta app ya pública) o
-        # de red se propagaba como un traceback crudo de Streamlit en vez de un
-        # mensaje accionable. Mismo principio que I3: límite del sistema (API
-        # externa que no controlamos), no un error interno -- excepción amplia
-        # deliberada, con un mensaje específico para el caso de cuota agotada.
+        # manejo de errores: un fallo de red se propagaba como un traceback
+        # crudo de Streamlit en vez de un mensaje accionable. Mismo principio
+        # que I3: límite del sistema (API externa que no controlamos), no un
+        # error interno -- excepción amplia deliberada.
         try:
-            hist_data, snap_data = loader(tuple(tickers))
+            hist_data, snap_data = load_yf_universe(tuple(tickers))
             wacc_result = build_peer_wacc(target, hist_data, snap_data, risk_free_rate, market_risk_premium)
-        except AlphaVantageError as e:
-            st.error(
-                f"Alpha Vantage no pudo responder para el grupo '{group_name}': {e}\n\n"
-                "El free tier limita a 25 peticiones/día, compartidas entre todos los "
-                "visitantes de esta app — puede que la cuota esté agotada por hoy. Prueba "
-                "con otro grupo o con 'Cualquier empresa', que no dependen de Alpha Vantage."
-            )
-            st.stop()
         except Exception as e:
             st.error(
                 f"No se pudo cargar el grupo '{group_name}': {e}\n\n"
@@ -482,27 +447,13 @@ if not target:
 hist = hist_data[target]
 snap = snap_data[target]
 
-# --- Cotización en vivo vía yfinance, preferida sobre el precio derivado de --
-# --- Alpha Vantage (auditoría sesión 17) -------------------------------------
+# --- Cotización en vivo vía yfinance ------------------------------------------
 #
-# engine.data_provider.market_snapshot() (Alpha Vantage) deriva "price" como
-# MarketCapitalization/SharesOutstanding, y ya descarta ese cociente a None
-# cuando queda muy fuera del rango de 52 semanas (caso real: GOOGL,
-# SharesOutstanding solo cuenta una de las dos clases de acciones de Alphabet
-# -- 2.08x inflado). Pero esa detección es parcial: verificado con datos
-# reales que META también sale mal (1.155x inflado, $712.53 vs $616.77 real)
-# sin disparar la comprobación, porque el precio erróneo cae igualmente
-# dentro del rango de 52 semanas -- no hay forma fiable de detectarlo solo
-# con campos de Alpha Vantage. yfinance ya es una dependencia transversal de
-# la app (el risk-free rate en vivo se usa sin importar el modo) y ha dado el
-# precio correcto en el 100% de los tickers verificados -- se usa como fuente
-# PREFERIDA para la cotización, con el precio derivado de Alpha Vantage solo
-# como último recurso si yfinance no responde.
-from engine.yfinance_provider import get_ticker as _yf_get_ticker_for_price
-from engine.yfinance_provider import live_price as _yf_live_price
-
+# El precio de `market_snapshot()` puede quedar algo desfasado respecto a la
+# cotización real en el momento de valorar -- se refresca aquí con la última
+# cotización en vivo cuando está disponible.
 try:
-    live_market_price = _yf_live_price(_yf_get_ticker_for_price(target))
+    live_market_price = yf_live_price(yf_get_ticker(target))
 except Exception:
     live_market_price = None
 if live_market_price is not None:
@@ -584,20 +535,11 @@ stub_fraction = stub_fraction_from_history(hist, valuation_date=valuation_date)
 
 st.markdown(f"### {target}")
 with st.container(border=True):
-    # Cobertura de analistas: Alpha Vantage da el desglose por tramo de
-    # rating (Strong Buy/.../Strong Sell); yfinance da la recomendación
-    # consenso como texto + media 1-5 + nº de analistas -- formatos
-    # distintos, se muestra el que esté disponible como tooltip del
-    # precio de consenso (sesión 17, docs/METHODOLOGY.md sección 24).
+    # Cobertura de analistas: yfinance da la recomendación consenso como
+    # texto + media 1-5 + nº de analistas (sesión 17, docs/METHODOLOGY.md
+    # sección 24).
     analyst_coverage_help = None
-    rating_counts = [snap.get(k) for k in (
-        "analyst_rating_strong_buy", "analyst_rating_buy", "analyst_rating_hold",
-        "analyst_rating_sell", "analyst_rating_strong_sell",
-    )]
-    if all(c is not None for c in rating_counts):
-        sb, b, h, s, ss = (int(c) for c in rating_counts)
-        analyst_coverage_help = f"Recomendaciones: {sb} compra fuerte, {b} compra, {h} mantener, {s} venta, {ss} venta fuerte."
-    elif snap.get("analyst_recommendation_key"):
+    if snap.get("analyst_recommendation_key"):
         n = snap.get("analyst_num_opinions")
         analyst_coverage_help = (
             f"Recomendación consenso: {snap['analyst_recommendation_key']}"

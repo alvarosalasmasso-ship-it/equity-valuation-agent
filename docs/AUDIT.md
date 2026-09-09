@@ -60,12 +60,13 @@ Utilities, no solo un caso puntual), y M6 recién investigado con
 evidencia directa del Excel de referencia y también cerrado), 3
 informativos (1
 ✅ corregido — N2 —, 2 sin acción necesaria), más dos entradas nuevas no
-correctivas de la sesión 18 — N4: supuestos del analista, un 4º
-escenario opcional construido a mano por el usuario, al lado de los 3
-objetivos, nunca mezclado en silencio con ellos; N5: Alpha Vantage
-retirado como fuente automática por defecto de la app, a petición
-explícita del usuario, en favor de yfinance (sin límite de cuota). Con
-esto, **no queda
+correctivas de la sesión 18 (N4 ampliada en sesión 19) — N4: supuestos
+del analista, un 4º escenario opcional construido a mano por el
+usuario, al lado de los 3 objetivos, nunca mezclado en silencio con
+ellos; N5: Alpha Vantage retirado como fuente automática por defecto
+de la app en sesión 18, y eliminado del proyecto por completo en
+sesión 19, a petición explícita del usuario, en favor de yfinance (sin
+límite de cuota). Con esto, **no queda
 ningún hallazgo moderado o importante abierto** — I12 e I15 se
 corrigieron parcialmente (avisan, sin ajuste automático por falta de
 evidencia objetiva suficiente para justificarlo); I16 se corrigió
@@ -1171,7 +1172,7 @@ script de dogfooding. **276 tests en total, todos en verde.**
 
 ---
 
-### N5. Alpha Vantage retirado como fuente automática por defecto de la app — ✅ CAMBIADO (sesión 18)
+### N5. Alpha Vantage retirado como fuente automática, y luego eliminado del todo — ✅ CAMBIADO (sesión 18, ampliado sesión 19)
 
 **Qué es:** el usuario, al probar la app tras el commit de N4, notó que
 seleccionar el grupo por defecto ("Big Tech / Cloud") consumía cuota de
@@ -1221,9 +1222,34 @@ re-ejecuta desde el archivo en cada `.run()`, así que no se puede
 parchear desde fuera). Hueco explícito y documentado: si se reactiva
 un grupo con Alpha Vantage, esa cobertura debe recuperarse.
 
-**Verificado:** suite completa, 275 tests (276 − 1 test retirado, todos
-en verde). App Streamlit relanzada limpia y verificada sin tracebacks
-tras el cambio.
+**Verificado (sesión 18):** suite completa, 275 tests (276 − 1 test
+retirado, todos en verde). App Streamlit relanzada limpia y verificada
+sin tracebacks tras el cambio.
+
+**Ampliación sesión 19 — eliminación completa, no solo dormancia:** el
+usuario, tras usar la app un tiempo, decidió que la cuota gratuita de
+Alpha Vantage (25 peticiones/día, compartida entre todos los
+visitantes de la app pública) es una limitación práctica real, no
+teórica, y pidió eliminarlo del proyecto por completo en vez de
+dejarlo dormido. Se elimina `engine/data_provider.py` (el módulo
+entero: `AlphaVantageClient`, `AlphaVantageError`, `historical_financials`,
+`market_snapshot`), su test dedicado (`tests/test_data_provider.py`),
+la caché en disco (`data/cache/alpha_vantage/`), y la clave
+`ALPHA_VANTAGE_API_KEY` de `.env`. `app/streamlit_app.py` pierde toda
+referencia a Alpha Vantage (import, `load_av_universe()`, el
+`except AlphaVantageError`, y la rama de tramos de rating por analista
+que dependía de campos exclusivos de Alpha Vantage). Los 3 scripts de
+`scripts/` que tenían una rama condicional por proveedor
+(`validate_universe.py`, `run_backtest.py`, `cross_validate_edgar.py`)
+se reescriben para usar solo yfinance. A diferencia del cambio de
+sesión 18, esta vez la capacidad SÍ se borra, no se deja dormida —
+decisión explícita del usuario, no un descuido: reactivar Alpha
+Vantage en el futuro requeriría reescribir el módulo, no solo añadir
+un grupo con ese nombre.
+
+**Verificado (sesión 19):** suite completa, 253 tests (275 − 22 tests
+que solo cubrían código ahora eliminado, todos en verde). App
+Streamlit relanzada limpia sin ninguna referencia a Alpha Vantage.
 
 ---
 

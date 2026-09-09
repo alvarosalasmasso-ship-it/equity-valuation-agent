@@ -1462,170 +1462,43 @@ total, todos en verde. Verificado de punta a punta con AppTest + red
 real: 2.1s de carga total de página. Documentado en
 `docs/METHODOLOGY.md` sección 29.
 
-## 22. Sesión 17 (continuación) — Backtesting walk-forward, y un bug de precio real (GOOGL/META)
 
-`engine/backtest.py` + `scripts/run_backtest.py` (nuevos): backtesting
-walk-forward viable sin fuente "point-in-time" especializada —
-truncar el histórico ya disponible por fecha (con margen de retraso
-de reporting) basta para evitar look-ahead bias. Corriendo el backtest
-sobre Big Tech (fecha 2024-09-06), GOOGL mostró una desviación absurda
-(+188%) que llevó a investigar a fondo en vez de descartarla.
+## 22. Sesión 19 — Eliminación de los análisis sectoriales de dogfooding y retirada completa de Alpha Vantage
 
-**Hallazgo real, más allá del backtest**: `market_snapshot()` de
-Alpha Vantage deriva "price" como `MarketCapitalization/
-SharesOutstanding`, y ese cociente sale **2.08x inflado para GOOGL**
-($705.51 vs. $338.46 reales — `SharesOutstanding` solo cuenta una de
-las dos clases de acciones de Alphabet) y **1.155x inflado para META**
-($712.53 vs. $616.77 reales, otra causa: `MarketCapitalization`
-desincronizada en el tiempo). Este precio alimenta `deviation_vs_market`
-en TODAS las sesiones de validación del proyecto desde el principio.
-Corregido en dos capas: detección propia contra el rango de 52 semanas
-de Alpha Vantage (parcial, detecta GOOGL no META) + yfinance como
-fuente PREFERIDA de cotización para todos los tickers (ya era
-dependencia transversal vía el risk-free rate en vivo).
+A petición explícita del usuario: se eliminan de este documento las
+secciones que antes eran 22-27 (backtesting walk-forward con bug de
+precio GOOGL/META, dogfooding de MSFT, y los grupos de comparables de
+semiconductores, utilities reguladas, biotech/farma y small/mid-cap de
+consumo) — eran conclusiones de valoración sobre empresas concretas
+ejecutadas con versiones del motor anteriores a C2 (el hallazgo más
+importante del proyecto: "EBIT" de ambos proveedores incluía partidas
+no operativas) e I16 (detección objetiva de tendencia), por lo que ya
+no son una referencia fiable de lo que la herramienta produce hoy. Los
+snapshots de datos que sustentaban esos análisis (`data/backtest_history/`,
+`data/validation_history/`) se eliminan por el mismo motivo. El
+hallazgo de arquitectura que sí sigue teniendo valor permanente (C2,
+sección 30 anterior — ahora sección 24) se conserva, porque documenta
+un bug de motor, no una conclusión de valoración de una empresa.
 
-**Efecto real, verificado**: la desviación media del universo piloto
-completo pasa de 41.82% a **34.21%**. GOOGL de -52.3% a -0.56%
-(esencialmente en su valor justo). Backtest final (n=5, Big Tech):
-correlación r=+0.844 entre desviación en 2024 y retorno real
-posterior — una infravaloración marcada por el modelo tendió a
-preceder un retorno MAYOR, sugerente pero muestra pequeña.
+Alpha Vantage se retira del todo del proyecto (no solo como fuente
+automática por defecto, ya hecho en la sesión 18): se elimina
+`engine/data_provider.py`, su test dedicado, la caché en disco
+(`data/cache/alpha_vantage/`), la clave `ALPHA_VANTAGE_API_KEY` de
+`.env`, y todas las referencias en `app/streamlit_app.py` y en los
+scripts de `scripts/` (`validate_universe.py`, `run_backtest.py`,
+`cross_validate_edgar.py`, ahora todos vía yfinance únicamente).
+Motivo del usuario: la cuota gratuita (25 peticiones/día, compartida
+entre todos los visitantes de la app pública) demostró ser una
+limitación práctica real muy rápido — yfinance cubre lo mismo sin ese
+límite, ya verificado en dogfooding real con los mismos tickers.
+`docs/AUDIT.md` hallazgo N5 y `docs/METHODOLOGY.md` sección 37
+actualizados para reflejar la eliminación completa, no solo el
+abandono como valor por defecto.
 
-**225 tests en total, todos en verde.** Documentado en
-`docs/METHODOLOGY.md` sección 30 y `docs/AUDIT.md` hallazgo I13.
+**253 tests en total, todos en verde** (se retiran los tests que solo
+cubrían `engine/data_provider.py`, ya no existe código que cubrir).
 
-## 23. Sesión 17 (continuación) — Evaluación de punta a punta ("dogfooding") con MSFT, memo incluido
-
-A petición explícita del usuario, antes de seguir añadiendo
-funcionalidades: probar la herramienta de cabo a rabo con una empresa
-real y ya cubierta públicamente, para contrastar contra consenso y
-detectar fallos propios. Elegido MSFT. Pipeline completo (WACC vía
-peers, comps, DCF/escenarios, reverse DCF, sensibilidades, ratios) más
-memo de inversión escrito localmente (sin llamada a la API) siguiendo
-`ai/prompts/investment_memo_system.md`, usando solo el JSON real de
-`build_prompt()`.
-
-**Resultado**: DCF conservador $330.43 vs mercado $499.70 (-33.9%) y
-consenso $572.92 (-42.3%). El WACC (9.62%) es la palanca dominante
-(-10.65% por +1pp), por delante de g terminal y crecimiento de
-ingresos. El mercado descuenta un crecimiento implícito de 26.3%
-frente al 16.1% asumido por reversión a la media — brecha de +10.1pp,
-consistente con la narrativa pública de MSFT (Azure/IA) sin que el
-modelo necesite "saberlo". ROIC 24.75% vs WACC 9.62% (crea valor
-claro), apalancamiento bajo (deuda neta/EBITDA 0.52x). Dos avisos
-técnicos correctos (margen EBIT y CapEx del último año, outliers
-estadísticos). Sin hallazgos nuevos de herramienta en este caso — MSFT
-resultó ser un caso "bien portado" para la metodología.
-
-## 24. Sesión 17 (continuación) — Grupo de comparables semiconductores (NVDA/AMD/AVGO/QCOM/INTC), vía yfinance
-
-Extensión del dogfooding a un sector completo, para evaluar la
-herramienta "en conjunto" (petición explícita del usuario). **Aviso
-del usuario a mitad de tarea: no gastar cuota de Alpha Vantage sin
-necesidad ("es muy valiosa", compartida 25/día entre todos los
-visitantes de la app en vivo)** — tarea detenida en cuanto llegó el
-aviso (`TaskStop` sobre el fetch en curso) y pivotada por completo a
-yfinance (ilimitado, gratis) para el resto de esta evaluación y todas
-las posteriores.
-
-Dos hallazgos reales, documentados en `docs/AUDIT.md`:
-- **Addendum a I4** (contaminación de WACC entre comparables
-  heterogéneos): mezclar NVDA/AMD (hiper-crecimiento, beta alto) con
-  QCOM/INTC (maduras) en el mismo grupo de peers infla el WACC
-  relevered de estas últimas por encima de lo que su propio perfil de
-  riesgo justificaría — cuantificado con datos reales.
-- **I14 (nuevo)**: reverse DCF solo resuelve crecimiento de ingresos o
-  g terminal, nunca margen — AMD (ROIC 7.1% < WACC 12.3%, PE 121.8x)
-  es un caso real donde el optimismo de mercado es plausiblemente sobre
-  recuperación de margen (post-amortización Xilinx), y la maquinaria
-  actual no puede articular esa hipótesis, solo devuelve "fuera de
-  rango".
-
-## 25. Sesión 17 (continuación) — Grupo Utilities reguladas (NEE/DUK/SO/D), vía yfinance: un bug real y un hallazgo de fragilidad sistemática
-
-Continuación del mismo "sigue analizando empresas" — sector elegido
-deliberadamente por contraste máximo (bajo crecimiento, bajo beta,
-alto apalancamiento, CapEx estructural sin supercycle).
-
-**Bug real encontrado y corregido (M8)**: el pipeline completo
-crasheaba en D (Dominion Energy) — `historical_financials()` (yfinance)
-solo reconocía la etiqueta `"Depreciation And Amortization"`, y D
-reporta esa partida como `"Depreciation Amortization Depletion"`
-(convención contable de empresas con activos de extracción/depleción).
-El 100% del histórico de D&A salía `None`. Peor aún: el mensaje de
-error que sí llega al usuario (protegido por el try/except ya
-existente) apuntaba a "bancos/REITs" — diagnóstico engañoso para una
-utility con estados financieros estándar. Corregido con fallback de
-etiqueta en `engine/yfinance_provider.py`; 2 tests de regresión
-nuevos. Verificado: D pasa de histórico 100% vacío a datos completos,
-pipeline de las 4 utilities corre sin excepciones.
-
-**Hallazgo de fragilidad sistemática (addendum a M2)**: con el bug
-corregido, el WACC vía peers de las 4 utilities sale muy bajo
-(5.20%-6.16%, beta relevered 0.32-0.65) — con g terminal fija en 2.5%,
-el spread WACC-g cae por debajo del umbral prudente de 3% en 3 de 4
-casos (el aviso ya existente SÍ dispara). El resultado en precio es
-extremo: DUK -75.6% vs mercado, SO -90.5%, y **D da un precio
-implícito NEGATIVO (-$255.48 vs $65.84 real)** — matemáticamente
-consistente (mismo mecanismo que I10) pero inutilizable sin contexto.
-Confirma que la fragilidad de Gordon Growth con spread estrecho, hasta
-ahora ilustrada solo con JNJ (M2), es el comportamiento **esperable de
-cualquier sector regulado de bajo riesgo**, no una excepción aislada.
-
-**227 tests en total, todos en verde.**
-
-## 26. Sesión 17 (continuación) — Grupo biotech/farma (REGN/VRTX/MRNA/BIIB), vía yfinance: hallazgo real sobre `tax_rate`
-
-Sector elegido por contraste: alto I+D, márgenes volátiles año a año
-por cargos de adquisición/impairment, un caso con EBIT negativo real
-(MRNA, colapso de ingresos post-COVID).
-
-**I15 (nuevo, hallazgo abierto)**: **VRTX** — compañía que crea valor
-de forma clara (ROIC=25.4% vs WACC=6.7%), con un crecimiento asumido
-razonable (10.4%/año) — dio un precio implícito conservador **NEGATIVO
-de -$133.78** frente a mercado $546.12. Causa raíz: el `tax_rate`
-proyectado sale **115.9%** (imposible) porque `default_assumptions_
-from_history()` calcula `tax_rate` como media histórica simple, SIN
-ningún guard de outliers (a diferencia de margen/CapEx/D&A/ΔNWC, que
-sí pasan por detección Iglewicz & Hoaglin). El histórico real de VRTX:
-21.5%/17.4%/**315.5%**/14.9% — 2024 es un outlier severo por un cargo
-real de I+D en proceso (adquisición de Alpine Immune Sciences, ~$4.9bn)
-que colapsó el EBIT a $279M sin que el tax_provision colapsara
-proporcionalmente. Mecanismo nuevo, distinto de I10: `tax_rate` divide
-entre `pretax_income` (puede acercarse a cero), no entre ingresos como
-el resto de ratios — inestabilidad estructural del propio ratio, no
-solo de la empresa. Se deja **abierto a propósito**: aplicar el mismo
-detector de outliers no es obvio cuando `tax_rate` se mantiene plano
-por diseño (M6) — qué hacer con el año marcado como outlier necesita
-más casos reales antes de decidir. Único hallazgo importante que queda
-abierto en todo `docs/AUDIT.md` tras esta sesión.
-
-**227 tests en total** (sin cambios de código en esta sección — I15 es
-un hallazgo documentado, no corregido).
-
-## 27. Sesión 17 (continuación) — Grupo small/mid-cap de consumo (MCRI/SHOO/BOOT/FIZZ), vía yfinance: M9 corregido
-
-Último grupo de esta ronda de "sigue analizando empresas", elegido
-para probar el límite inferior de cobertura de datos (menos analistas,
-menos liquidez). Resultados de valoración: MCRI casi en valor justo
-(+0.9%), SHOO y BOOT infravalorados según el modelo pero con avisos
-técnicos reales (SHOO no crea valor: ROIC=4.6%<WACC=9.1%, margen 2024
-comprimido a un outlier estadístico).
-
-**M9 (nuevo, ✅ corregido)**: **FIZZ** (National Beverage, empresa real
-conocida por operar SIN deuda) crasheaba un script de evaluación con
-un `IndexError` crudo de pandas — `interest_expense` 100% vacío en su
-histórico. Investigado contra la app real: el modo "cualquier ticker"
-ya tenía un guard explícito para este caso exacto (mensaje claro), pero
-`build_peer_wacc()` (modo "universo cacheado", el que usa cualquier
-visitante por defecto) no lo tenía — misma inconsistencia de robustez
-que M7/M8, aunque no explotable hoy porque ningún `CACHED_GROUPS`
-actual incluye una empresa sin deuda. Corregido con el mismo guard
-explícito ya usado en el otro modo. 1 test de regresión nuevo.
-
-**228 tests en total, todos en verde.**
-
-## 28. Sesión 17 (continuación) — I15 cerrado: banda de plausibilidad para `tax_rate`, sin exclusión automática
+## 23. Sesión 17 (continuación) — I15 cerrado: banda de plausibilidad para `tax_rate`, sin exclusión automática
 
 Investigado con más casos reales antes de decidir el fix, no solo
 VRTX. Escaneado `tax_rate` histórico de los 24 tickers ya usados en la
@@ -1660,7 +1533,7 @@ explica la causa raíz.
 queda ningún hallazgo importante ni moderado abierto** en
 `docs/AUDIT.md`.
 
-## 29. Sesión 17 (continuación) — Item E: intervalo de confianza bootstrap, cierra el lote de rigor matemático
+## 24. Sesión 17 (continuación) — Item E: intervalo de confianza bootstrap, cierra el lote de rigor matemático
 
 Última de las 5 palancas propuestas en la sección 13 (A-D ya cerradas).
 `engine.validation.bootstrap_deviation_ci()` (nueva): remuestrea con
@@ -1683,7 +1556,7 @@ nuevos. **235 tests en total, todos en verde.** Documentado en
 `docs/METHODOLOGY.md` sección 32. Con esto se cierra el lote completo
 de 5 palancas de rigor matemático de la sección 13.
 
-## 30. Sesión 17 (continuación) — SEC EDGAR como validador cruzado: el hallazgo de mayor impacto de todo el proyecto (C2)
+## 25. Sesión 17 (continuación) — SEC EDGAR como validador cruzado: el hallazgo de mayor impacto de todo el proyecto (C2)
 
 El usuario, tras observar que la mayoría de bugs de código de esta
 sesión (M8, M9, I13) eran huecos del proveedor de datos, pidió retomar
@@ -1728,7 +1601,7 @@ cifras quedan como referencia histórica, no vigentes. No se rehicieron
 esos análisis completos por alcance. Documentado en
 `docs/METHODOLOGY.md` sección 33 y `docs/AUDIT.md` hallazgo C2.
 
-## 31. Sesión 17 (continuación) — Vuelta al núcleo: detección objetiva de tendencia estructural en la selección de supuestos (I16)
+## 26. Sesión 17 (continuación) — Vuelta al núcleo: detección objetiva de tendencia estructural en la selección de supuestos (I16)
 
 El usuario pidió parar de dispersarse y volver al objetivo original:
 la matemática del DCF ya está validada, pero la selección de supuestos
@@ -1779,7 +1652,7 @@ como genuinamente volátiles).
 Provision" — corregido derivándolo de `pretax_income - net_income`,
 una identidad contable siempre válida).
 
-## 32. Próximo paso inmediato (histórico, sesión 17)
+## 27. Próximo paso inmediato (histórico, sesión 17)
 
 0. Commitear el hallazgo I16 (detección de tendencia + fix de tax_rate
    de AMZN) con confirmación explícita del usuario. ✅ hecho.
@@ -1805,7 +1678,7 @@ una identidad contable siempre válida).
    opción de "rigor técnico" pero no se priorizó frente a lo demás;
    sigue disponible como línea futura si se retoma.
 
-## 33. Sesión 18 — Capa de supuestos del analista: un 4º escenario construido a mano, al lado de los 3 objetivos
+## 28. Sesión 18 — Capa de supuestos del analista: un 4º escenario construido a mano, al lado de los 3 objetivos
 
 Tras cerrar I16 y evaluar el grupo Big Tech (memo de AMZN entregado en
 el chat), el usuario preguntó si la herramienta ya funciona "a nivel
@@ -1837,7 +1710,7 @@ lanzada y verificada sin tracebacks.
 **Pendiente:** commitear con confirmación explícita del usuario. ✅ hecho
 (commit `5100c35`).
 
-## 34. Sesión 18 (continuación) — Limpieza de procesos Streamlit huérfanos, push a GitHub, y abandono de Alpha Vantage como fuente automática
+## 29. Sesión 18 (continuación) — Limpieza de procesos Streamlit huérfanos, push a GitHub, y abandono de Alpha Vantage como fuente automática
 
 Tras el commit anterior, el usuario reportó que la app no reflejaba los
 cambios pese a "hacer reboot". Diagnosticado: 9 procesos de Streamlit
@@ -1862,7 +1735,7 @@ tooltip de cobertura de analistas, y el ajuste de 4 tests de
 `tests/test_app.py`, uno de ellos retirado con justificación
 documentada). **275 tests en total, todos en verde** tras el cambio.
 
-## 35. Sesión 18 (continuación) — Pulido visual de la app: avisos, gráficos que se solapaban, cifras sin formatear, y selector de empresa confuso
+## 30. Sesión 18 (continuación) — Pulido visual de la app: avisos, gráficos que se solapaban, cifras sin formatear, y selector de empresa confuso
 
 El usuario, tras usar la app, reportó cuatro problemas visuales
 concretos: "los avisos salen raros", "las gráficas son feas poco
@@ -1897,7 +1770,7 @@ disciplina de "verificar con datos/evidencia real" de toda la sesión.
    comparables)" / "Cualquier ticker (yfinance, WACC simplificado)", más
    grupos con sufijo "(yfinance)" repetido dos veces, seguía leyéndose
    como una elección entre proveedores (herencia de cuando "Big Tech"
-   sí usaba Alpha Vantage, sección 34) aunque ya no lo fuera. Renombrado
+   sí usaba Alpha Vantage, sección 29) aunque ya no lo fuera. Renombrado
    a "Cómo elegir la empresa" con opciones "Grupo de comparables (WACC
    riguroso)" / "Cualquier empresa (símbolo suelto)", sin nombrar ningún
    proveedor; grupos sin el sufijo redundante ("Big Tech / Cloud").
@@ -1917,3 +1790,31 @@ left"/"top right"` seguía solapando en la práctica, descubierto
 precisamente gracias a la captura, no asumido correcto por el código.
 275 tests en verde (sin cambios de comportamiento del motor, solo
 presentación). App relanzada limpia entre cada iteración.
+
+## 31. Sesión 19 — Retirada completa de Alpha Vantage y limpieza de análisis históricos de empresas
+
+Ver sección 22 (arriba) para el detalle completo de ambos cambios,
+documentados ahí en el punto cronológico donde ocurrieron dentro del
+propio historial de sesiones. Resumen de lo tocado en esta sesión:
+
+- `engine/data_provider.py` eliminado (junto con `tests/test_data_provider.py`
+  y `data/cache/alpha_vantage/`).
+- `app/streamlit_app.py`: quitadas todas las referencias a
+  `AlphaVantageClient`/`AlphaVantageError`/`load_av_universe`; la
+  cotización en vivo y la cobertura de analistas simplificadas a
+  yfinance como única fuente.
+- `scripts/validate_universe.py`, `scripts/run_backtest.py`,
+  `scripts/cross_validate_edgar.py`: reescritos para usar solo
+  yfinance (antes tenían una rama condicional por proveedor).
+- `.env`: eliminada `ALPHA_VANTAGE_API_KEY`.
+- `docs/AUDIT.md` (hallazgo N5) y `docs/METHODOLOGY.md` (sección 37)
+  actualizados de "abandonado como automático" a "eliminado del todo".
+- `estado.md`: eliminadas las antiguas secciones 22-27 (backtesting
+  GOOGL/META, dogfooding MSFT, y los 4 grupos sectoriales de
+  comparables) por ser conclusiones de valoración de empresas
+  concretas con un motor anterior a C2/I16, ya no representativas.
+- `data/backtest_history/` y `data/validation_history/` vaciados (eran
+  snapshots de esos mismos análisis obsoletos).
+
+**253 tests en verde** tras el cambio (275 menos los que solo cubrían
+`engine/data_provider.py`, ya inexistente).

@@ -37,9 +37,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.stdout.reconfigure(encoding="utf-8")  # consola Windows (cp1252) no codifica "⚠️" por defecto
 
 from engine.backtest import build_backtest_result, known_history_as_of
-from engine.data_provider import AlphaVantageClient
-from engine.data_provider import historical_financials as av_historical_financials
-from engine.data_provider import market_snapshot as av_market_snapshot
 from engine.projections import default_assumptions_from_history, project_financials, stub_fraction_from_history
 from engine.valuation import DCFInputs, cost_of_debt, cost_of_equity, run_dcf
 from engine.valuation import wacc as wacc_fn
@@ -58,8 +55,8 @@ GORDON_WEIGHT = 0.8
 MIN_YEARS_OF_TRUNCATED_HISTORY = LOOKBACK_YEARS + 1  # el mínimo que exige default_assumptions_from_history
 
 UNIVERSE = {
-    "Big Tech / Cloud": {"tickers": ["AMZN", "MSFT", "GOOGL", "META", "AAPL"], "provider": "alpha_vantage"},
-    "Consumo defensivo": {"tickers": ["KO", "PG", "JNJ"], "provider": "yfinance"},
+    "Big Tech / Cloud": {"tickers": ["AMZN", "MSFT", "GOOGL", "META", "AAPL"]},
+    "Consumo defensivo": {"tickers": ["KO", "PG", "JNJ"]},
 }
 
 
@@ -85,15 +82,10 @@ def _risk_free_rate_at(as_of_date: date) -> float:
     return _historical_price(tnx, as_of_date) / 100.0
 
 
-def _run_one(target: str, provider: str, backtest_date: date, risk_free_rate_at_backtest: float):
-    if provider == "alpha_vantage":
-        client = AlphaVantageClient()
-        history = av_historical_financials(client, target, use_cache=True)
-        snap = av_market_snapshot(client, target, use_cache=True)
-    else:
-        ticker_obj = yf_get_ticker(target)
-        history = yf_historical_financials(ticker_obj)
-        snap = yf_market_snapshot(ticker_obj)
+def _run_one(target: str, backtest_date: date, risk_free_rate_at_backtest: float):
+    ticker_obj = yf_get_ticker(target)
+    history = yf_historical_financials(ticker_obj)
+    snap = yf_market_snapshot(ticker_obj)
 
     truncated = known_history_as_of(history, backtest_date)
     if len(truncated) < MIN_YEARS_OF_TRUNCATED_HISTORY:
@@ -102,11 +94,9 @@ def _run_one(target: str, provider: str, backtest_date: date, risk_free_rate_at_
             f"{backtest_date} (se necesitan {MIN_YEARS_OF_TRUNCATED_HISTORY}) -- omitido."
         )
 
-    # Auditoría sesión 17: price_at_backtest ya viene de yfinance (real,
-    # histórico) -- price_today debe venir de la MISMA fuente, nunca del
-    # precio derivado de Alpha Vantage (MarketCapitalization/SharesOutstanding,
-    # que resultó mal para GOOGL/META reales), o "retorno real" mezclaría dos
-    # convenios de precio distintos, no un cambio de precio real.
+    # price_at_backtest y price_today deben venir de la MISMA fuente (yfinance),
+    # o "retorno real" mezclaría dos convenios de precio distintos, no un
+    # cambio de precio real.
     price_ticker = yf_get_ticker(target)
     price_at_backtest = _historical_price(price_ticker, backtest_date)
     price_today = yf_live_price(price_ticker)
@@ -164,7 +154,7 @@ def main() -> None:
         print(f"=== {group_name} ===")
         for target in cfg["tickers"]:
             try:
-                result = _run_one(target, cfg["provider"], backtest_date, risk_free_rate_at_backtest)
+                result = _run_one(target, backtest_date, risk_free_rate_at_backtest)
             except Exception as e:
                 print(f"  ⚠️  {target}: omitido ({e})")
                 continue

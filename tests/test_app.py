@@ -4,23 +4,23 @@ sin navegador, sin red. Cierra el hallazgo N2 de docs/AUDIT.md (antes
 Streamlit trae un framework de test headless para exactamente esto.
 
 Mismo principio que el resto de la suite: nunca llamar a la API real
-(Alpha Vantage/yfinance). Detalle importante y no obvio de cómo
-funciona `AppTest`: re-ejecuta el script COMPLETO desde cero en cada
-`.run()` (imita de verdad el modelo de rerun de Streamlit), así que
-parchear `app.streamlit_app.load_av_universe` (una referencia ya
+(yfinance). Detalle importante y no obvio de cómo funciona `AppTest`:
+re-ejecuta el script COMPLETO desde cero en cada `.run()` (imita de
+verdad el modelo de rerun de Streamlit), así que parchear
+`app.streamlit_app.historical_financials` (una referencia ya
 importada, potencialmente obsoleta) NO intercepta nada -- hay que
-parchear en el módulo de ORIGEN (`engine.data_provider`,
-`engine.yfinance_provider`), de donde el script vuelve a importar en
-cada ejecución. Confirmado experimentalmente antes de escribir esta
-suite (parchear a nivel de `app.streamlit_app` deja pasar silenciosamente
-llamadas reales a la API con el caché en disco de sesiones anteriores).
+parchear en el módulo de ORIGEN (`engine.yfinance_provider`), de donde
+el script vuelve a importar en cada ejecución. Confirmado
+experimentalmente antes de escribir esta suite (parchear a nivel de
+`app.streamlit_app` deja pasar silenciosamente llamadas reales a la
+API con el caché en disco de sesiones anteriores).
 
 Estos tests fijan como regresión automática lo que hasta ahora solo se
 había verificado a mano con capturas de pantalla de Playwright en cada
 sesión: I3 (ticker inválido), M5 (divisa no USD), y el manejo de
-errores de Alpha Vantage en modo "universo cacheado" (sesión 16,
-continuación) -- exactamente el tipo de bug que una verificación manual
-puede dejar pasar en un cambio futuro sin que nadie se entere.
+errores en modo "universo cacheado" (sesión 16, continuación) --
+exactamente el tipo de bug que una verificación manual puede dejar
+pasar en un cambio futuro sin que nadie se entere.
 """
 
 from contextlib import ExitStack
@@ -58,13 +58,6 @@ _REVENUE_BY_SYMBOL = {"AMZN": 100.0, "MSFT": 120.0, "GOOGL": 140.0, "META": 160.
                        "KO": 90.0, "PG": 110.0, "JNJ": 130.0}
 
 
-class _FakeAlphaVantageClient:
-    """Sustituye a AlphaVantageClient para no requerir ALPHA_VANTAGE_API_KEY
-    real ni tocar el caché en disco."""
-    def __init__(self, *args, **kwargs):
-        pass
-
-
 def _fake_history(revenue_last: float = 100.0) -> pd.DataFrame:
     revenue = [revenue_last / 1.1, revenue_last]
     return pd.DataFrame({
@@ -97,17 +90,7 @@ def _fake_snapshot(symbol: str, revenue_last: float = 100.0, currency: str = "US
         "cash": revenue_last * 0.3, "total_debt": revenue_last * 0.4,
         "currency": currency,
         "week_52_high": revenue_last * 1.3, "week_52_low": revenue_last * 0.7,
-        "analyst_rating_strong_buy": 5, "analyst_rating_buy": 10, "analyst_rating_hold": 3,
-        "analyst_rating_sell": 1, "analyst_rating_strong_sell": 0,
     }
-
-
-def _fake_av_historical_financials(client, symbol, use_cache=True):
-    return _fake_history(_REVENUE_BY_SYMBOL.get(symbol, 100.0))
-
-
-def _fake_av_market_snapshot(client, symbol, use_cache=True):
-    return _fake_snapshot(symbol, _REVENUE_BY_SYMBOL.get(symbol, 100.0))
 
 
 def _fake_yf_historical_financials(ticker):
@@ -133,9 +116,6 @@ def _fake_get_ticker(symbol):
 # app.streamlit_app, ver docstring del archivo).
 def _base_patches():
     return [
-        patch("engine.data_provider.AlphaVantageClient", _FakeAlphaVantageClient),
-        patch("engine.data_provider.historical_financials", side_effect=_fake_av_historical_financials),
-        patch("engine.data_provider.market_snapshot", side_effect=_fake_av_market_snapshot),
         patch("engine.yfinance_provider.get_ticker", side_effect=_fake_get_ticker),
         patch("engine.yfinance_provider.historical_financials", side_effect=_fake_yf_historical_financials),
         patch("engine.yfinance_provider.market_snapshot", side_effect=_fake_yf_market_snapshot),
@@ -161,7 +141,7 @@ def _run_app(extra_patches=None, interact=None):
         return at
 
 
-# --- Camino feliz por defecto (universo cacheado, Alpha Vantage) -----------
+# --- Camino feliz por defecto (universo cacheado, yfinance) ----------------
 
 def test_default_state_loads_without_exception():
     at = _run_app()
@@ -181,15 +161,17 @@ def test_default_state_shows_key_metrics():
 
 
 def test_analyst_coverage_shown_as_consensus_metric_tooltip():
-    """Regresión (sesión 17): la distribución de recomendaciones de
-    analistas (Alpha Vantage: desglose por tramo) se muestra como
-    tooltip del metric 'Consenso analistas', no como un elemento nuevo
-    que desordene el layout ya establecido."""
-    at = _run_app()
+    """Regresión (sesión 17): la recomendación consenso de analistas se
+    muestra como tooltip del metric 'Consenso analistas', no como un
+    elemento nuevo que desordene el layout ya establecido."""
+    at = _run_app(extra_patches=[
+        patch("engine.yfinance_provider.market_snapshot",
+              side_effect=lambda ticker: {**_fake_snapshot(getattr(ticker, "symbol", "TEST")),
+                                           "analyst_recommendation_key": "buy", "analyst_num_opinions": 12}),
+    ])
     consensus_metric = next(m for m in at.main.metric if m.label == "Consenso analistas")
-    assert "5 compra fuerte" in consensus_metric.help
-    assert "10 compra" in consensus_metric.help
-    assert "3 mantener" in consensus_metric.help
+    assert "buy" in consensus_metric.help
+    assert "12 analistas" in consensus_metric.help
 
 
 def test_sensitivity_section_renders_with_five_plotly_charts():
@@ -222,11 +204,11 @@ def test_monte_carlo_histogram_renders_with_enough_history():
     simulación de Monte Carlo sí debe completarse y añadir un 6º
     gráfico Plotly (el histograma), con P10 <= P50 <= P90 mostrados.
 
-    Sesión 18: el grupo por defecto ("Big Tech / Cloud") pasó de Alpha
-    Vantage a yfinance (ver CACHED_GROUPS en app/streamlit_app.py) --
-    el parcheo se mueve de engine.data_provider a
-    engine.yfinance_provider, que es la ruta que el camino feliz por
-    defecto ejecuta ahora."""
+    Sesión 18/19: el grupo por defecto ("Big Tech / Cloud") va por
+    yfinance (ver CACHED_GROUPS en app/streamlit_app.py), única fuente
+    de datos del proyecto -- el parcheo va contra
+    engine.yfinance_provider, la ruta que el camino feliz por defecto
+    ejecuta."""
     def longer_history(symbol):
         revenue_last = _REVENUE_BY_SYMBOL.get(symbol, 100.0)
         revenue = [revenue_last / 1.1**3, revenue_last / 1.1**2, revenue_last / 1.1, revenue_last]
@@ -277,21 +259,10 @@ def test_roic_delta_color_reflects_creates_value():
 
 # --- Regresión: manejo de errores en modo "universo cacheado" (sesión 16) --
 
-# Sesión 18: el usuario pidió abandonar Alpha Vantage como fuente
-# AUTOMÁTICA (ver CACHED_GROUPS en app/streamlit_app.py -- ningún grupo
-# cacheado usa ya Alpha Vantage por defecto, ambos van por yfinance sin
-# límite de cuota). El manejo de error `except AlphaVantageError` del
-# modo "universo cacheado" y load_av_universe() se DEJAN en el código
-# tal cual (no se borran, por si se reactiva un grupo con Alpha Vantage
-# más adelante), pero ya no son alcanzables a través del camino por
-# defecto que AppTest ejecuta -- CACHED_GROUPS se define en el propio
-# script y se re-ejecuta desde el archivo en cada `.run()` (ver
-# docstring de este módulo), así que no hay forma de parchearlo desde
-# fuera para forzar ese camino sin reescribir el archivo fuente durante
-# el test. test_alpha_vantage_error_shows_actionable_message_not_a_traceback
-# (regresión de sesión 16) queda retirado por este motivo -- hueco
-# explícito y documentado, no un olvido: si se reactiva Alpha Vantage
-# como grupo, esa cobertura debe recuperarse.
+# Sesión 18: se abandonó Alpha Vantage como fuente automática. Sesión 19:
+# se elimina del todo del proyecto (engine/data_provider.py, su test
+# dedicado, y el `except AlphaVantageError` correspondiente) -- ambos
+# grupos cacheados van por yfinance, sin límite de cuota.
 
 
 def test_cached_group_mode_with_missing_interest_expense_shows_actionable_error():
